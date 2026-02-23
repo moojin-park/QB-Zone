@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QB Swipe Pass MVP</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game-canvas"></canvas>
+      <div id="hud">
+        <div id="hud-top">
+          <div id="score">Score: 0</div>
+          <div id="meter-wrap">
+            <span>Touchdown</span>
+            <div id="meter-bg"><div id="meter-fill"></div></div>
+            <span id="meter-text">0%</span>
+          </div>
+          <button id="reset-btn" type="button">Reset</button>
+        </div>
+        <div id="last-play">Swipe/drag to aim and throw</div>
+        <div id="help">Swipe/drag to aim and throw</div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
