@@ -5,11 +5,17 @@ import {
   type LaneId,
 } from '../config/gameplayConfig';
 import type { BallState, DefenderState, ReceiverState, WorldPoint } from '../state/GameState';
+import { halfFieldWidthAtDepth, worldToScreen } from '../rendering/projection';
 import {
   createDefenderHitZones,
   hitTestDefenderLocal,
   type DefenderHitZone,
 } from './defenderHitZones';
+
+const COLLISION_PROJECTION = {
+  width: GAMEPLAY_CONFIG.classicLogicalWidth,
+  height: GAMEPLAY_CONFIG.logicalHeight,
+} as const;
 
 export interface CollisionCandidate {
   type: 'receiver' | 'defender';
@@ -49,6 +55,11 @@ export const findReceiverCollision = (
   receivers: readonly ReceiverState[],
 ): CollisionCandidate | null => {
   const candidates: CollisionCandidate[] = [];
+  const flightProgress = ball.durationMs > 0 ? ball.elapsedMs / ball.durationMs : 1;
+  const descendingBallScreen =
+    flightProgress >= GAMEPLAY_CONFIG.throw.catchProgress
+      ? worldToScreen(ball.current, COLLISION_PROJECTION)
+      : null;
   for (const receiver of receivers) {
     const lane = getLaneConfig(receiver.laneId);
     const progress = crossingProgress(
@@ -56,18 +67,57 @@ export const findReceiverCollision = (
       ball.current.depth,
       lane.normalizedDepth,
     );
-    if (progress === null) continue;
-    const point = interpolatePoint(ball.previous, ball.current, progress);
-    const leadAdjustedReceiverX = receiver.x;
-    const withinCatchWidth = Math.abs(point.x - leadAdjustedReceiverX) <= lane.catchWidth;
-    const withinCatchHeight = point.height >= 0.08 && point.height <= 0.92;
-    if (withinCatchWidth && withinCatchHeight) {
+    if (progress !== null) {
+      const point = interpolatePoint(ball.previous, ball.current, progress);
+      const leadAdjustedReceiverX = receiver.x;
+      const withinCatchWidth = Math.abs(point.x - leadAdjustedReceiverX) <= lane.catchWidth;
+      const withinCatchHeight = point.height >= 0.08 && point.height <= 0.92;
+      if (withinCatchWidth && withinCatchHeight) {
+        candidates.push({
+          type: 'receiver',
+          progress,
+          laneId: receiver.laneId,
+          receiver,
+          point,
+        });
+      }
+    }
+
+    if (!descendingBallScreen) continue;
+
+    // Aiming at the visible body of a receiver maps the marker above that
+    // receiver's ground-anchored lane. Once the ball begins its final descent
+    // onto the marker, reconcile collision with the same screen-space catch
+    // area the player sees instead of requiring another depth-plane crossing.
+    const receiverTop = worldToScreen(
+      { x: receiver.x, depth: lane.normalizedDepth, height: 0.92 },
+      COLLISION_PROJECTION,
+    );
+    const receiverBottom = worldToScreen(
+      { x: receiver.x, depth: lane.normalizedDepth, height: 0.08 },
+      COLLISION_PROJECTION,
+    );
+    const halfCatchWidth =
+      lane.catchWidth * halfFieldWidthAtDepth(COLLISION_PROJECTION, lane.normalizedDepth);
+    const withinVisibleCatchWidth =
+      Math.abs(descendingBallScreen.x - receiverBottom.x) <= halfCatchWidth;
+    const withinVisibleCatchHeight =
+      descendingBallScreen.y >= receiverTop.y && descendingBallScreen.y <= receiverBottom.y;
+    if (withinVisibleCatchWidth && withinVisibleCatchHeight) {
+      const catchCenterY = (receiverTop.y + receiverBottom.y) / 2;
+      const horizontalDistance =
+        Math.abs(descendingBallScreen.x - receiverBottom.x) / halfCatchWidth;
+      const verticalDistance =
+        Math.abs(descendingBallScreen.y - catchCenterY) /
+        Math.max(1, (receiverBottom.y - receiverTop.y) / 2);
       candidates.push({
         type: 'receiver',
-        progress,
+        // Swept world-space contacts remain authoritative when both forms of
+        // collision happen in the same simulation step.
+        progress: 1 + horizontalDistance + verticalDistance,
         laneId: receiver.laneId,
         receiver,
-        point,
+        point: { ...ball.current },
       });
     }
   }

@@ -741,6 +741,7 @@ export class GameApp {
   private renderGameToText(): string {
     const projection = this.renderer.getProjection();
     const quarterback = getQuarterbackRect(projection);
+    const ballScreen = this.state.ball ? worldToScreen(this.state.ball.current, projection) : null;
     return JSON.stringify({
       coordinateSystem: `logical pixels, origin top-left, +x right, +y down, ${projection.width}x${projection.height}`,
       phase: this.state.phase,
@@ -793,6 +794,9 @@ export class GameApp {
             height: this.state.ball.current.height,
             elapsedMs: this.state.ball.elapsedMs,
             durationMs: this.state.ball.durationMs,
+            screen: ballScreen ? { x: ballScreen.x, y: ballScreen.y } : null,
+            aimMarker: this.state.ball.aimMarker,
+            landing: this.state.ball.end,
           }
         : null,
       feedback: this.state.feedback?.headline ?? null,

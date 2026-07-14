@@ -335,6 +335,65 @@ try {
   await screenshot(page, '03-gameplay-4x3');
   console.log('[playtest] desktop gameplay ready');
 
+  const landingTarget = { x: 720, y: 610 };
+  await mouseThrow(page, landingTarget, { durationMs: 70 });
+  const landingBall = (await state(page)).ball;
+  check(Boolean(landingBall), 'A landing-accuracy throw must release a ball');
+  if (landingBall) {
+    await advance(page, Math.max(0, landingBall.durationMs - landingBall.elapsedMs - 1));
+    await page.evaluate(() => {
+      const freeze = document.querySelector('[data-debug-action="freeze"]');
+      if (!(freeze instanceof HTMLButtonElement)) throw new Error('Missing freeze-frame control');
+      freeze.click();
+    });
+    const nearLanding = (await state(page)).ball;
+    check(Boolean(nearLanding), 'The accuracy-check ball must remain visible just before landing');
+    check(
+      Boolean(
+        nearLanding &&
+        Math.abs(nearLanding.screen.x - nearLanding.aimMarker.x) <= 4 &&
+        Math.abs(nearLanding.screen.y - nearLanding.aimMarker.y) <= 4,
+      ),
+      `The football must arrive on the destination X (${JSON.stringify(nearLanding)})`,
+    );
+    await screenshot(page, '03b-ball-on-destination-x');
+    await page.evaluate(() => {
+      const freeze = document.querySelector('[data-debug-action="freeze"]');
+      if (!(freeze instanceof HTMLButtonElement)) throw new Error('Missing freeze-frame control');
+      freeze.click();
+    });
+  }
+  await advance(page, 400);
+
+  const bodyAimState = await state(page);
+  const bodyAimReceiver = bodyAimState.receivers.find((receiver) => receiver.lane === 'short');
+  check(Boolean(bodyAimReceiver), 'A short-lane receiver must be available for body-aim QA');
+  if (bodyAimReceiver) {
+    const completedBeforeBodyAim = bodyAimState.stats.completions + bodyAimState.stats.touchdowns;
+    const bodyTarget = {
+      x: bodyAimReceiver.x + bodyAimReceiver.direction * 96,
+      y: bodyAimReceiver.y - 70,
+    };
+    await mouseThrow(page, bodyTarget, { durationMs: 70 });
+    const bodyAimBall = (await state(page)).ball;
+    check(Boolean(bodyAimBall), 'A throw aimed directly at the receiver body must release');
+    check(
+      Boolean(
+        bodyAimBall &&
+        Math.abs(bodyAimBall.aimMarker.x - bodyTarget.x) <= 1 &&
+        Math.abs(bodyAimBall.aimMarker.y - bodyTarget.y) <= 1,
+      ),
+      'The released body-aim throw must preserve the visible X',
+    );
+    await advance(page, (bodyAimBall?.durationMs ?? 1_200) + 80);
+    const afterBodyAim = await state(page);
+    check(
+      afterBodyAim.stats.completions + afterBodyAim.stats.touchdowns > completedBeforeBodyAim,
+      `An X placed on the receiver body must register a catch (${JSON.stringify({ bodyTarget, afterBodyAim })})`,
+    );
+    await screenshot(page, '03c-body-aim-catch');
+  }
+
   await pausedTrackpadThrow(page, { x: 512, y: 500 });
   const trackpadBall = (await state(page)).ball;
   check(Boolean(trackpadBall), 'A slow trackpad drag that pauses before release must throw');
@@ -573,6 +632,11 @@ try {
       y: mobileReceiver.y,
     });
     check(Boolean((await state(mobilePage)).ball), 'A touch swipe must release a ball');
+    await advance(mobilePage, 220);
+    check(
+      Boolean((await state(mobilePage)).ball),
+      'The touch-thrown football must remain visible for a mid-flight spiral check',
+    );
   }
   await screenshot(mobilePage, '09-iphone-landscape-touch');
   await mobilePage.setViewportSize({ width: 390, height: 844 });

@@ -26,6 +26,14 @@ const DEFENDER_FRAME_DURATION_MS = 145;
 const RUN_FRAME_COUNT = 4;
 const RECEIVER_ACTION_HOLD_MS = 360;
 const DEFENDER_ACTION_HOLD_MS = 340;
+const PIXEL_ART_GRID_PX = 2;
+const BALL_END_ON_DIAMETER_PX = 38;
+
+const snapToPixelArtGrid = (value: number): number =>
+  Math.round(value / PIXEL_ART_GRID_PX) * PIXEL_ART_GRID_PX;
+
+const snapPixelArtSize = (value: number): number =>
+  Math.max(PIXEL_ART_GRID_PX, snapToPixelArtGrid(value));
 
 export interface CharacterAnimationFrame {
   frame: number;
@@ -78,10 +86,17 @@ const drawImageCentered = (
   height: number,
 ): void => {
   if (!image) return;
-  context.save();
-  context.translate(x, y);
-  context.drawImage(image, -width / 2, -height, width, height);
-  context.restore();
+  const snappedWidth = snapPixelArtSize(width);
+  const snappedHeight = snapPixelArtSize(height);
+  const centerX = snapToPixelArtGrid(x);
+  const bottom = snapToPixelArtGrid(y);
+  context.drawImage(
+    image,
+    centerX - snappedWidth / 2,
+    bottom - snappedHeight,
+    snappedWidth,
+    snappedHeight,
+  );
 };
 
 export class CanvasRenderer {
@@ -98,10 +113,12 @@ export class CanvasRenderer {
     const context = canvas.getContext('2d');
     if (!context) throw new Error('Canvas 2D is unavailable.');
     this.context = context;
+    this.context.imageSmoothingEnabled = false;
     this.fieldCanvas = document.createElement('canvas');
     const fieldContext = this.fieldCanvas.getContext('2d');
     if (!fieldContext) throw new Error('Field cache canvas is unavailable.');
     this.fieldContext = fieldContext;
+    this.fieldContext.imageSmoothingEnabled = false;
   }
 
   public getProjection(): Projection {
@@ -110,6 +127,7 @@ export class CanvasRenderer {
 
   public setAssets(images: AssetImageMap): void {
     this.images = images;
+    this.rebuildFieldCache();
   }
 
   public resize(devicePixelRatio: number): void {
@@ -118,6 +136,7 @@ export class CanvasRenderer {
     this.canvas.width = Math.round(logicalWidth * devicePixelRatio);
     this.canvas.height = Math.round(GAMEPLAY_CONFIG.logicalHeight * devicePixelRatio);
     this.context.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    this.context.imageSmoothingEnabled = false;
     this.rebuildFieldCache();
   }
 
@@ -127,12 +146,12 @@ export class CanvasRenderer {
     this.drawField(state);
     this.drawEntities(state);
     this.drawQuarterback(state, aim);
+    if (state.ball) this.drawAim(state, null);
     this.drawBall(state);
-    this.drawAim(state, aim);
+    if (aim) this.drawAim(state, aim);
     if (state.debug.showTrajectory && state.ball) this.drawTrajectory(state.ball);
     if (state.debug.showCatchZones) this.drawCatchZones(state);
     if (state.debug.showDefenderHitZones) this.drawDefenderZones(state);
-    this.drawVignette();
   }
 
   private getImage(path: string): HTMLImageElement | undefined {
@@ -151,8 +170,20 @@ export class CanvasRenderer {
     this.fieldCanvas.width = this.projection.width;
     this.fieldCanvas.height = this.projection.height;
     this.fieldContext.setTransform(1, 0, 0, 1, 0, 0);
+    this.fieldContext.imageSmoothingEnabled = false;
     this.fieldContext.clearRect(0, 0, this.projection.width, this.projection.height);
-    renderField(this.fieldContext, this.projection);
+    const pixelBackground = this.getImage(ASSET_MANIFEST.art.pixelBackground);
+    if (pixelBackground) {
+      this.fieldContext.drawImage(
+        pixelBackground,
+        0,
+        0,
+        this.projection.width,
+        this.projection.height,
+      );
+    } else {
+      renderField(this.fieldContext, this.projection);
+    }
   }
 
   private drawEntities(state: GameState): void {
@@ -269,58 +300,67 @@ export class CanvasRenderer {
     const radiusScale = state.ball.radiusPx / DEFAULT_BALL_RADIUS_PX;
     const image = this.getImage(ASSET_MANIFEST.art.football);
     if (!image) return;
+    const x = snapToPixelArtGrid(point.x);
+    const y = snapToPixelArtGrid(point.y);
+    // The football's rear end faces the quarterback/camera. Rotating a square,
+    // end-on sprite reads as a longitudinal spiral instead of a side-on tumble.
+    const diameter = snapPixelArtSize(BALL_END_ON_DIAMETER_PX * scale * radiusScale);
     this.context.save();
-    this.context.translate(point.x, point.y);
+    this.context.translate(x, y);
     this.context.rotate(state.ball.spinRadians);
     this.context.shadowColor = 'rgba(0, 0, 0, 0.45)';
-    this.context.shadowBlur = 8;
-    this.context.drawImage(
-      image,
-      -28 * scale * radiusScale,
-      -17 * scale * radiusScale,
-      56 * scale * radiusScale,
-      34 * scale * radiusScale,
-    );
+    this.context.shadowBlur = 0;
+    this.context.shadowOffsetX = PIXEL_ART_GRID_PX;
+    this.context.shadowOffsetY = PIXEL_ART_GRID_PX;
+    this.context.drawImage(image, -diameter / 2, -diameter / 2, diameter, diameter);
     this.context.restore();
   }
 
   private drawAim(state: GameState, aim: AimPreview | null): void {
-    const marker =
-      aim?.current ?? (state.ball && state.ball.elapsedMs < 220 ? state.ball.aimMarker : null);
+    const marker = aim?.current ?? state.ball?.aimMarker ?? null;
     if (!marker) return;
     const context = this.context;
     const size = aim ? 24 : 18;
+    const highContrast = state.settings.highContrastAim;
     context.save();
     if (aim && Math.hypot(aim.current.x - aim.start.x, aim.current.y - aim.start.y) >= 8) {
       const points = getAimTrajectoryScreenPoints(aim, this.projection);
-      context.beginPath();
-      for (const [index, point] of points.entries()) {
-        if (index === 0) context.moveTo(point.x, point.y);
-        else context.lineTo(point.x, point.y);
+      const trailBlock = highContrast ? 8 : 6;
+      for (let index = 2; index < points.length - 1; index += 3) {
+        const point = points[index];
+        if (!point) continue;
+        const x = snapToPixelArtGrid(point.x) - trailBlock / 2;
+        const y = snapToPixelArtGrid(point.y) - trailBlock / 2;
+        context.fillStyle = 'rgba(2, 8, 18, 0.82)';
+        context.fillRect(x - 2, y - 2, trailBlock + 4, trailBlock + 4);
+        context.fillStyle = aim.valid ? '#3cc6dc' : '#f4bc35';
+        context.fillRect(x, y, trailBlock, trailBlock);
       }
-      context.lineCap = 'round';
-      context.setLineDash([1, state.settings.highContrastAim ? 10 : 12]);
-      context.lineWidth = state.settings.highContrastAim ? 10 : 8;
-      context.strokeStyle = 'rgba(3, 16, 29, 0.68)';
-      context.stroke();
-      context.lineWidth = state.settings.highContrastAim ? 6 : 4;
-      context.strokeStyle = aim.valid ? 'rgba(66, 232, 255, 0.92)' : 'rgba(255, 209, 102, 0.86)';
-      context.stroke();
-      context.setLineDash([]);
     }
-    context.lineCap = 'round';
-    context.lineWidth = state.settings.highContrastAim ? 9 : 7;
-    context.strokeStyle = 'rgba(3, 16, 29, 0.78)';
-    context.beginPath();
-    context.moveTo(marker.x - size, marker.y - size);
-    context.lineTo(marker.x + size, marker.y + size);
-    context.moveTo(marker.x + size, marker.y - size);
-    context.lineTo(marker.x - size, marker.y + size);
-    context.stroke();
-    context.lineWidth = state.settings.highContrastAim ? 5 : 4;
-    context.strokeStyle =
-      aim?.valid === false ? VISUAL_CONFIG.colors.gold : VISUAL_CONFIG.colors.coral;
-    context.stroke();
+
+    const markerBlock = highContrast ? 6 : 4;
+    const markerX = snapToPixelArtGrid(marker.x);
+    const markerY = snapToPixelArtGrid(marker.y);
+    const markerColor = aim?.valid === false ? VISUAL_CONFIG.colors.gold : '#e94b35';
+    const paintMarker = (blockSize: number, color: string): void => {
+      context.fillStyle = color;
+      for (let offset = -size; offset <= size; offset += markerBlock) {
+        context.fillRect(
+          markerX + offset - blockSize / 2,
+          markerY + offset - blockSize / 2,
+          blockSize,
+          blockSize,
+        );
+        context.fillRect(
+          markerX + offset - blockSize / 2,
+          markerY - offset - blockSize / 2,
+          blockSize,
+          blockSize,
+        );
+      }
+    };
+    paintMarker(markerBlock + 4, 'rgba(2, 8, 18, 0.86)');
+    paintMarker(markerBlock, markerColor);
     context.restore();
   }
 
@@ -447,21 +487,5 @@ export class CanvasRenderer {
       );
       context.restore();
     }
-  }
-
-  private drawVignette(): void {
-    const { width, height } = this.projection;
-    const gradient = this.context.createRadialGradient(
-      width / 2,
-      height * 0.5,
-      height * 0.18,
-      width / 2,
-      height * 0.5,
-      Math.max(width, height) * 0.72,
-    );
-    gradient.addColorStop(0, 'rgba(3, 16, 29, 0)');
-    gradient.addColorStop(1, 'rgba(3, 16, 29, 0.34)');
-    this.context.fillStyle = gradient;
-    this.context.fillRect(0, 0, width, height);
   }
 }

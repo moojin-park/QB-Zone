@@ -1,9 +1,10 @@
 # Pocket Vector asset generation
 
-Pocket Vector uses two local asset pipelines. The Node generator creates SVG
-interface art plus original music and SFX. The headless Blender generator
-creates the transparent pre-rendered football-player sprites. Neither pipeline
-downloads source material or embeds external samples.
+Pocket Vector uses two active local asset pipelines. The Node generator creates
+SVG interface art plus original music and SFX. The pixel-character processor
+turns the approved transparent source strips into normalized, lossless WebP
+animation frames. The former headless Blender character generator remains
+available only as a legacy command.
 
 ## Regenerate
 
@@ -14,42 +15,55 @@ npm run generate:assets
 npm run generate:characters
 # or regenerate both:
 npm run generate:all-assets
+
+# previous 3D character set, if specifically needed:
+npm run generate:characters:legacy-3d
 ```
 
 The package scripts invoke:
 
 ```bash
 node scripts/generate-assets.mjs
-blender -b --python scripts/generate-character-sprites.py
+python3 scripts/process-pixel-character-strips.py \
+  --qb-strip art/pixel-source/qb-strip.png \
+  --receiver-strip art/pixel-source/receiver-strip.png \
+  --defender-strip art/pixel-source/defender-strip.png \
+  --force
 ```
 
-Generation writes into `public/assets/` and does not require a browser. Blender
-5.1 or newer is needed only for the character command. Generated files are
-committed, so production builds never invoke either generator at runtime.
+The pixel processor requires Pillow with WebP support. Install it with
+`python3 -m pip install Pillow` if it is not already available. It uses
+nearest-neighbor resampling, one shared scale per role, a 16-pixel safe area,
+and protected replacement through `--force`. Use `--dry-run` to validate every
+frame without writing. Generated files are committed, so production builds do
+not invoke a generator at runtime.
 
 ## Visual direction
 
-The public title is **Pocket Vector**. The offense is the fictional **Nova City
-Comets** and the defense is the fictional **Iron Bay Phantoms**. The palette uses
-warm red/cream offense colors and stadium blue/cream defense colors. The
-athletes use original exaggerated arcade-football proportions with tapered
-torsos, exposed faces and necks, long segmented limbs, modeled pads and
-helmets, restrained highlights, and soft contact shadows. The result is
-pre-rendered stylized 3D rather than a flat outlined illustration or a set of
-chunky toy pawns.
+The public title is **Pocket Vector**. The offense remains the fictional **Nova
+City Comets** and the defense remains the fictional **Iron Bay Phantoms**. The
+presentation is grounded, high-detail pixel-art football with no fantasy
+elements. It is authored around a 512x384 visual density and presented at 2x
+with crisp nearest-neighbor scaling. Warm red/cream offense colors contrast
+with stadium blue/cream defense colors, gunmetal/navy cabinets, cream type,
+cobalt accents, and restrained gold/red status colors.
 
 Player frames are transparent 384x512 WebPs with a shared `[192, 496]` anchor.
-The four QB poses stay square in rear view while the throwing arm winds up,
-releases, and follows through. Receiver legs use a 65-degree route-facing turn
-while the torso counter-rotates to about 37 degrees and the head stays near 42
-degrees toward the quarterback across four sprint phases; defenders use four
-square ready/shuffle phases. Every receiver and
-defender pose has explicit left and right renders, so the runtime never mirrors
-jersey numbers or baked lighting.
+The four QB poses stay in rear view while the throwing arm winds up, releases,
+and follows through. Receivers use four sprint phases plus catch and touchdown
+poses. Their right-facing source art is mirrored for leftward travel; jersey 11
+remains readable in either direction. Defenders use four square shuffle phases
+plus an interception pose. Both defender directions reuse the same front-facing
+art so jersey 24 is never reversed. The processor also removes a detached ball
+from the QB release source frame because the live projectile renderer is the
+authoritative football.
 [`public/assets/characters/sprites.json`](../public/assets/characters/sprites.json)
 records content bounds, role, pose, direction, byte size, and anchor metadata.
-The football remains a rotation-ready SVG. The Canvas field camera is always
-1024x768; widescreen modes letterbox that stage inside decorative side rails.
+The football is a stepped, rotation-ready PNG with an editable SVG source. Its
+foreshortened rear end faces the quarterback/camera, and asymmetric edge
+highlights make runtime rotation read as a longitudinal spiral instead of a
+side-on tumble. The Canvas field camera remains 1024x768; widescreen modes
+letterbox that stage inside decorative pixel-art side rails.
 
 Button artwork deliberately contains no label text. Render localized,
 keyboard-readable labels in the DOM or canvas above it. Meter fill is authored
@@ -57,9 +71,9 @@ at full width and should be clipped to the authoritative meter ratio. Effects
 are static source frames intended for runtime scale, opacity, and rotation
 animation; reduced-motion mode can use a short opacity fade alone.
 
-The reference-style coral destination X lives at
-`/assets/art/aim-destination-x.svg`. Scale and fade it based on the gesture, but
-keep its center at the actual destination point.
+The destination marker and projected trajectory are rendered as stepped canvas
+blocks so their center and physics stay authoritative while matching the pixel
+presentation.
 
 ## Art manifest
 
@@ -68,7 +82,6 @@ The stable runtime paths are:
 ```text
 /assets/art/logo.svg
 /assets/art/aim-destination-x.svg
-/assets/art/football.svg
 /assets/art/effect-score.svg
 /assets/art/effect-completion.svg
 /assets/art/effect-touchdown.svg
@@ -82,7 +95,14 @@ The stable runtime paths are:
 /assets/art/icon-unmute.svg
 /assets/art/icon-pause.svg
 /assets/art/avatar-frame.svg
+/assets/pixel/stadium-field.png
+/assets/pixel/logo.png
+/assets/pixel/football.png
+/assets/pixel/football-source.svg
 ```
+
+The live title, football, and field use the `/assets/pixel/` files. The older
+SVG logo, football, and procedural field remain as legacy/fallback inputs.
 
 Character paths follow this pattern:
 
@@ -103,8 +123,11 @@ Additional original controls are supplied for menus and alternate surfaces:
 ```
 
 `/assets/asset-manifest.json` records the Node-generated SVG/audio source set.
-`/assets/characters/sprites.json` records Blender output. Runtime paths are
-centralized in `src/game/assets/assetManifest.ts`.
+`/assets/characters/sprites.json` records normalized pixel output. Runtime paths
+are centralized in `src/game/assets/assetManifest.ts`. The approved concept and
+three transparent production strips live in `art/pixel-source/`; the prompt set
+and transformation notes live in
+[`docs/pixel-art-direction.md`](pixel-art-direction.md).
 
 ## Audio
 
@@ -144,7 +167,9 @@ fade it when the pass resolves. `ui-hover.wav` is optional on touch devices.
 
 ## Originality and redistribution
 
-Every model, pose, material, shape, melody, sequence, and waveform in this asset
-set is expressed in the repository generators. No proprietary QB Zone, Merit,
-Megatouch, league, team, player, broadcast, music, sample-pack, or downloaded
-asset is included. The generated output is original project source material.
+The pixel stadium and character sources were created for this project with the
+built-in image-generation tool, then normalized locally without downloaded
+game, league, team, player, or broadcast art. The football source, runtime
+rendering, interface styling, melody, sequence, and waveform assets are
+project-authored. The visual direction is inspired by high-detail 16-bit-era
+pixel craft without copying another game's characters, branding, or scenes.

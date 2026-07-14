@@ -14,7 +14,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "generate:assets": "node scripts/generate-assets.mjs",
-    "generate:characters": "blender -b --python scripts/generate-character-sprites.py",
+    "generate:characters": "python3 scripts/process-pixel-character-strips.py --qb-strip art/pixel-source/qb-strip.png --receiver-strip art/pixel-source/receiver-strip.png --defender-strip art/pixel-source/defender-strip.png --force",
+    "generate:characters:legacy-3d": "blender -b --python scripts/generate-character-sprites.py",
     "generate:all-assets": "npm run generate:assets && npm run generate:characters"
   },
   "dependencies": {

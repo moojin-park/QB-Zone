@@ -532,19 +532,29 @@ const drawWarningPulse = (
 ): void => {
   if (amount <= 0) return;
   const { width, height } = projection;
-  const warning = context.createRadialGradient(
-    width / 2,
-    height / 2,
-    width * 0.22,
-    width / 2,
-    height / 2,
-    width * 0.72,
+  const outerBand = 12;
+  const innerBand = 24;
+  context.fillStyle = `rgba(235, 55, 46, ${amount * 0.13})`;
+  context.fillRect(0, 0, width, outerBand);
+  context.fillRect(0, height - outerBand, width, outerBand);
+  context.fillRect(0, outerBand, outerBand, height - outerBand * 2);
+  context.fillRect(width - outerBand, outerBand, outerBand, height - outerBand * 2);
+
+  context.fillStyle = `rgba(235, 55, 46, ${amount * 0.055})`;
+  context.fillRect(outerBand, outerBand, width - outerBand * 2, innerBand);
+  context.fillRect(outerBand, height - outerBand - innerBand, width - outerBand * 2, innerBand);
+  context.fillRect(
+    outerBand,
+    outerBand + innerBand,
+    innerBand,
+    height - outerBand * 2 - innerBand * 2,
   );
-  warning.addColorStop(0, 'rgba(255, 71, 72, 0)');
-  warning.addColorStop(0.72, `rgba(255, 71, 72, ${amount * 0.025})`);
-  warning.addColorStop(1, `rgba(255, 53, 64, ${amount * 0.14})`);
-  context.fillStyle = warning;
-  context.fillRect(0, 0, width, height);
+  context.fillRect(
+    width - outerBand - innerBand,
+    outerBand + innerBand,
+    innerBand,
+    height - outerBand * 2 - innerBand * 2,
+  );
 };
 
 /**

@@ -50,7 +50,7 @@ describe('continuous pass trajectory', () => {
     expect(far.durationMs).toBeGreaterThan(near.durationMs);
   });
 
-  it('extends the trajectory so the intended target occurs at catch progress', () => {
+  it('reaches the intended target at catch progress and lands there at the end', () => {
     const trajectory = createTrajectoryParameters(start, target, 1);
     const atCatch = getTrajectoryPosition(
       start,
@@ -61,6 +61,18 @@ describe('continuous pass trajectory', () => {
 
     expect(atCatch.x).toBeCloseTo(target.x, 10);
     expect(atCatch.depth).toBeCloseTo(target.depth, 10);
+    expect(atCatch.height).toBeGreaterThan(0);
+    expect(trajectory.end).toEqual(target);
+    expect(getTrajectoryPosition(start, trajectory.end, trajectory.arcHeight, 1)).toEqual(target);
+  });
+
+  it('holds the marked horizontal destination while descending after catch progress', () => {
+    const trajectory = createTrajectoryParameters(start, target, 1);
+    const afterCatch = getTrajectoryPosition(start, trajectory.end, trajectory.arcHeight, 0.92);
+
+    expect(afterCatch.x).toBeCloseTo(target.x, 10);
+    expect(afterCatch.depth).toBeCloseTo(target.depth, 10);
+    expect(afterCatch.height).toBeGreaterThan(target.height);
   });
 
   it('returns exact endpoints and clamps out-of-range progress', () => {
@@ -70,12 +82,16 @@ describe('continuous pass trajectory', () => {
     expect(getTrajectoryPosition(start, end, 0.5, 2)).toEqual(end);
   });
 
-  it('adds the configured arc at the midpoint', () => {
+  it('adds the configured arc while advancing toward the catch destination', () => {
     const end = { x: 1, depth: 0.9, height: 0 };
     const midpoint = getTrajectoryPosition(start, end, 0.7, 0.5);
+    const horizontalProgress = 0.5 / GAMEPLAY_CONFIG.throw.catchProgress;
 
-    expect(midpoint.x).toBe(0.5);
-    expect(midpoint.depth).toBeCloseTo((start.depth + end.depth) / 2, 10);
+    expect(midpoint.x).toBeCloseTo(horizontalProgress, 10);
+    expect(midpoint.depth).toBeCloseTo(
+      start.depth + (end.depth - start.depth) * horizontalProgress,
+      10,
+    );
     expect(midpoint.height).toBeCloseTo((start.height + end.height) / 2 + 0.7, 10);
   });
 

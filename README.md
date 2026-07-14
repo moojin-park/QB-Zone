@@ -1,10 +1,10 @@
 # Pocket Vector
 
-Pocket Vector is a standalone-first, pseudo-3D arcade passing game for modern
-desktop and mobile browsers. Press the quarterback, drag toward open grass, and
-release ahead of a moving receiver. Throw speed continuously changes the ball's
-flight time and arc. The same Pointer Events path supports a mouse, trackpad,
-stylus, and touchscreen.
+Pocket Vector is a standalone-first, high-detail pixel-art arcade passing game
+for modern desktop and mobile browsers. Press the quarterback, drag toward open
+grass, and release ahead of a moving receiver. Throw speed continuously changes
+the ball's flight time and arc. The same Pointer Events path supports a mouse,
+trackpad, stylus, and touchscreen.
 
 The game is written in TypeScript, built with Vite, rendered with Canvas 2D, and
 ships with an optional Bounty Board Arcade adapter. Standalone is the default:
@@ -18,9 +18,11 @@ no account, ad provider, or platform handshake is required to play.
   support.
 - Landscape orientation is strongly recommended on phones.
 
-Blender is not required to install, run, test, or build the checked-in game.
-Blender 5.1 or newer is required only to regenerate the pre-rendered character
-sprites. Runtime rendering remains Canvas 2D.
+Pillow with WebP support is needed only to regenerate the checked-in pixel
+character sprites (`python3 -m pip install Pillow`). Blender is not required to
+install, run, test, build, or regenerate the current game; Blender 5.1 or newer
+is used only by the explicitly named legacy 3D character command. Runtime
+rendering remains Canvas 2D.
 
 ## Install and run
 
@@ -45,7 +47,8 @@ npm run format           # format the repository
 npm run build            # type-check and create dist/
 npm run preview          # serve the production artifact locally
 npm run generate:assets  # regenerate SVG interface art and original audio
-npm run generate:characters # regenerate modeled WebP players with Blender
+npm run generate:characters # normalize the approved pixel strips into WebP players
+npm run generate:characters:legacy-3d # regenerate the retired 3D character set
 npm run generate:all-assets # run both asset pipelines
 ```
 
@@ -57,8 +60,8 @@ run the generator. See [docs/asset-generation.md](docs/asset-generation.md).
 ### Mouse, trackpad, stylus, or touch
 
 1. Press directly on the quarterback at the bottom of the field.
-2. Drag upfield. The destination X follows the pointer, and the dotted guide
-   previews the throw's current arc.
+2. Drag upfield. The destination X follows the pointer, and the stepped pixel
+   guide previews the throw's current arc.
 3. Release ahead of a receiver, accounting for the receiver's movement while
    the ball is in flight.
 
@@ -96,24 +99,26 @@ after changing projection, CSS, or gesture thresholds.
 - [Exact scoring rules](docs/scoring.md)
 - [Tuning guide](docs/tuning.md)
 - [Original asset pipeline](docs/asset-generation.md)
+- [Pixel-art direction and prompt set](docs/pixel-art-direction.md)
 - [Bounty Board integration](docs/bounty-board-integration.md)
 
 ## Architecture
 
-| Area                                    | Responsibility                                                                                              |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `src/app/GameApp.ts`                    | Application orchestration, phase transitions, platform lifecycle, input wiring, persistence, and test hooks |
-| `src/game/state/`                       | Authoritative run state, settings, stats, phases, and selectors                                             |
-| `src/game/simulation/`                  | Fixed-step timer, seeded spawning, ball trajectory, swept collision, pass resolution, and scoring           |
-| `src/game/rendering/`                   | Canvas 2D field projection, depth scaling, sprites, football, aim X, and development overlays               |
-| `src/game/ui/`                          | DOM HUD, menus, instructions, settings, continue flow, and results                                          |
-| `src/game/input/`                       | Single-pointer sampling and continuous gesture-speed calculation                                            |
-| `src/game/audio/`                       | Web Audio loading, music/SFX buses, mute, pause, and resume                                                 |
-| `src/game/platform/`                    | Standalone, fake-test, and Bounty Board implementations behind one `ArcadePlatform` contract                |
-| `public/assets/`                        | Shipping SVG interface art, modeled WebP characters, and WAV audio                                          |
-| `scripts/generate-assets.mjs`           | Deterministic SVG interface-art and audio generator                                                         |
-| `scripts/generate-character-sprites.py` | Headless Blender/Eevee character renderer                                                                   |
-| `tests/`                                | Simulation and platform unit coverage                                                                       |
+| Area                                        | Responsibility                                                                                              |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `src/app/GameApp.ts`                        | Application orchestration, phase transitions, platform lifecycle, input wiring, persistence, and test hooks |
+| `src/game/state/`                           | Authoritative run state, settings, stats, phases, and selectors                                             |
+| `src/game/simulation/`                      | Fixed-step timer, seeded spawning, ball trajectory, swept collision, pass resolution, and scoring           |
+| `src/game/rendering/`                       | Canvas 2D field projection, depth scaling, sprites, football, aim X, and development overlays               |
+| `src/game/ui/`                              | DOM HUD, menus, instructions, settings, continue flow, and results                                          |
+| `src/game/input/`                           | Single-pointer sampling and continuous gesture-speed calculation                                            |
+| `src/game/audio/`                           | Web Audio loading, music/SFX buses, mute, pause, and resume                                                 |
+| `src/game/platform/`                        | Standalone, fake-test, and Bounty Board implementations behind one `ArcadePlatform` contract                |
+| `public/assets/`                            | Shipping pixel stadium/logo/football, lossless WebP characters, SVG interface art, and WAV audio            |
+| `scripts/generate-assets.mjs`               | Deterministic SVG interface-art and audio generator                                                         |
+| `scripts/process-pixel-character-strips.py` | Pixel strip validation, normalization, mirroring, and lossless WebP/metadata output                         |
+| `scripts/generate-character-sprites.py`     | Legacy headless Blender/Eevee character renderer                                                            |
+| `tests/`                                    | Simulation and platform unit coverage                                                                       |
 
 The render loop advances gameplay at a fixed 60 Hz simulation step and caps a
 single browser-frame delta at 100 ms. Rendering, DOM UI, audio, and platform

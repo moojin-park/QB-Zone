@@ -11,6 +11,7 @@ import {
   findFirstBallCollision,
   findReceiverCollision,
 } from '../../src/game/simulation/collision';
+import { screenToFieldWorld } from '../../src/game/rendering/projection';
 import {
   createDefenderHitZones,
   hitTestDefenderLocal,
@@ -21,6 +22,7 @@ import {
   distanceSegmentToSegmentSquared,
   segmentIntersectsShape,
 } from '../../src/game/simulation/geometry';
+import { createBallState, getTrajectoryPosition } from '../../src/game/simulation/trajectory';
 
 const world = (x: number, depth: number, height: number): WorldPoint => ({ x, depth, height });
 
@@ -214,6 +216,88 @@ describe('receiver and defender collision ordering', () => {
     expect(
       findReceiverCollision(ball, [receiver('deep', 0, 2), receiver('short', 0, 1)])?.laneId,
     ).toBe('short');
+  });
+
+  it.each([
+    ['slow lob', GAMEPLAY_CONFIG.throw.slowSpeedPxPerMs],
+    ['fast throw', GAMEPLAY_CONFIG.throw.fastSpeedPxPerMs],
+  ] as const)(
+    'catches a %s aimed at the visible receiver body after it misses the lane plane',
+    (_label, releaseSpeed) => {
+      const aimMarker = { x: 512, y: 430 };
+      const target = screenToFieldWorld(aimMarker, {
+        width: GAMEPLAY_CONFIG.classicLogicalWidth,
+        height: GAMEPLAY_CONFIG.logicalHeight,
+      });
+      const ball = createBallState(1, target, releaseSpeed, aimMarker);
+      const flightProgress = 0.97;
+      ball.elapsedMs = ball.durationMs * flightProgress;
+      ball.current = getTrajectoryPosition(ball.start, ball.end, ball.arcHeight, flightProgress);
+      ball.previous = { ...ball.current };
+
+      expect(target.depth).not.toBeCloseTo(0.28, 2);
+
+      expect(findReceiverCollision(ball, [receiver('short')])).toMatchObject({
+        type: 'receiver',
+        laneId: 'short',
+        receiver: { id: 1 },
+        point: ball.current,
+      });
+    },
+  );
+
+  it('catches a descending ball that visibly overlaps a receiver after missing the lane plane', () => {
+    const point = world(0, 0.4, 0.3);
+    const ball = {
+      ...ballBetween(point, point),
+      elapsedMs: 90,
+    };
+
+    expect(findReceiverCollision(ball, [receiver('short')])).toMatchObject({
+      type: 'receiver',
+      laneId: 'short',
+      receiver: { id: 1 },
+      point,
+    });
+  });
+
+  it('catches a body-aimed end-zone throw even when the marker is above the field horizon', () => {
+    const aimMarker = { x: 512, y: 200 };
+    const target = screenToFieldWorld(aimMarker, {
+      width: GAMEPLAY_CONFIG.classicLogicalWidth,
+      height: GAMEPLAY_CONFIG.logicalHeight,
+    });
+    const ball = createBallState(1, target, GAMEPLAY_CONFIG.throw.slowSpeedPxPerMs, aimMarker);
+    const flightProgress = 0.97;
+    ball.elapsedMs = ball.durationMs * flightProgress;
+    ball.current = getTrajectoryPosition(ball.start, ball.end, ball.arcHeight, flightProgress);
+    ball.previous = { ...ball.current };
+
+    expect(target.depth).toBe(1);
+    expect(findReceiverCollision(ball, [receiver('touchdown')])).toMatchObject({
+      type: 'receiver',
+      laneId: 'touchdown',
+    });
+  });
+
+  it('does not use visible receiver overlap before the final descent', () => {
+    const point = world(0, 0.4, 0.3);
+    const ball = {
+      ...ballBetween(point, point),
+      elapsedMs: 50,
+    };
+
+    expect(findReceiverCollision(ball, [receiver('short')])).toBeNull();
+  });
+
+  it('does not catch a descending ball that is visibly clear of the receiver', () => {
+    const point = world(1, 0.4, 0.3);
+    const ball = {
+      ...ballBetween(point, point),
+      elapsedMs: 90,
+    };
+
+    expect(findReceiverCollision(ball, [receiver('short')])).toBeNull();
   });
 
   it('intercepts a ball at the defender torso', () => {

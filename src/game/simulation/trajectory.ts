@@ -29,11 +29,9 @@ export const createTrajectoryParameters = (
     GAMEPLAY_CONFIG.throw.minimumArcHeight,
     speedNormalized,
   );
-  const catchProgress = GAMEPLAY_CONFIG.throw.catchProgress;
   const end = {
-    x: start.x + (target.x - start.x) / catchProgress,
-    depth: Math.min(1.08, start.depth + (target.depth - start.depth) / catchProgress),
-    height: 0,
+    ...target,
+    depth: Math.min(1.08, target.depth),
   };
   return { durationMs, arcHeight, end, speedNormalized };
 };
@@ -45,9 +43,10 @@ export const getTrajectoryPosition = (
   progress: number,
 ): WorldPoint => {
   const t = Math.max(0, Math.min(1, progress));
+  const horizontalProgress = Math.min(1, t / GAMEPLAY_CONFIG.throw.catchProgress);
   return {
-    x: lerp(start.x, end.x, t),
-    depth: lerp(start.depth, end.depth, t),
+    x: lerp(start.x, end.x, horizontalProgress),
+    depth: lerp(start.depth, end.depth, horizontalProgress),
     height: Math.max(0, lerp(start.height, end.height, t) + 4 * arcHeight * t * (1 - t)),
   };
 };

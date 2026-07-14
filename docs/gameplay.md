@@ -15,14 +15,22 @@ offscreen.
 To throw with a mouse, trackpad, stylus, or touchscreen:
 
 1. Press inside the quarterback's on-screen rectangle.
-2. Drag upfield. A destination X and dotted trajectory arc track the pointer.
+2. Drag upfield. A destination X and stepped pixel trajectory arc track the pointer.
 3. Release at the desired destination, normally ahead of a moving receiver.
 
 The release destination maps into world X/depth coordinates. Release speed is
 continuous rather than bucketed: faster releases shorten the flight and lower
-the arc; slower releases lengthen the flight and raise the arc. The ball's path
-is extended so the displayed destination occurs at 82% of its full trajectory,
-allowing the football to continue through a missed target.
+the arc; slower releases lengthen the flight and raise the arc. The ball reaches
+the destination's X/depth at 82% of its flight while still at catchable height.
+If no player touches it, the final 18% descends at that same marked location so
+the football lands on the displayed X instead of carrying beyond it.
+
+The X may be placed directly on a receiver's visible body. Because screen-space
+body height and field depth overlap in this camera, that marker can map to a
+ground point beyond the receiver's fixed lane. The final descent therefore also
+checks the ball against the receiver's projected catch rectangle. Players still
+lead a receiver horizontally, but they do not need to compensate by aiming below
+him just to make the catch register.
 
 A gesture is accepted only when it:
 
@@ -48,6 +56,10 @@ target between frames.
 
 - A receiver catch occurs when the ball crosses that receiver's lane within its
   configured horizontal catch width and a world height of `0.08..0.92`.
+- That swept lane check remains primary. Once the ball begins its final descent
+  at the destination X, a ball visibly inside the same projected receiver catch
+  rectangle also registers. This reconciles body-aimed X placement with what is
+  shown on screen without widening defender collisions or normal flight.
 - A catch in the touchdown/end-zone lane is a touchdown. Catches in the other
   three lanes are completions.
 - Defender head, arm, torso, and hip zones intercept the ball. Explicit helmet

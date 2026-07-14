@@ -7,7 +7,7 @@ Original prompt: Build the complete browser game described in QB_ZONE_CODEX_BUIL
 - Ground-up build in this empty repository.
 - Vite + strict TypeScript + Canvas 2D; no Phaser, React, Three.js, or physics engine.
 - Standalone-first with the Bounty Board SDK isolated and ready for a hosted upload.
-- Pre-rendered Blender character sprites with volumetric arcade-model proportions and original team colors.
+- High-detail pixel-art characters, stadium, football, logo treatment, HUD, and menus with original team colors.
 - Mouse, touch, pen, and stylus share Pointer Events.
 - A canonical 4:3 gameplay camera at every device size; adaptive/wide modes may add side rails but never widen or zoom out the field.
 - Visible destination X while aiming.
@@ -61,12 +61,12 @@ The first complete build passed functional QA but missed the requested visual re
 
 ## Final verification
 
-- 209 deterministic unit and integration tests pass.
+- 218 deterministic unit and integration tests pass.
 - Strict TypeScript compilation, ESLint, Prettier, and Vite production builds pass.
 - Standalone and Bounty Board build modes both compile successfully.
 - Automated browser playtest passes with paused trackpad, mouse, and touch-style pointer input, responsive viewport coverage, rewarded-ad outcomes, and final-ball grace behavior.
 - All captured title, instructions, gameplay, destination-X, pause, bonus, results, overtime, landscape-phone, and portrait-warning screens were visually inspected after the visual reset.
-- The shipping character set contains 26 original 384x512 transparent WebP frames at about 375 KiB total, with a shared bottom-center anchor and explicit left/right runner renders.
+- The shipping character set contains 26 original lossless 384x512 transparent WebP frames at about 1.7 MiB total, with a shared bottom-center anchor, mirrored direction-specific receivers, and number-safe square defenders reused in both directions.
 
 ## On-field motion refinement (2026-07-13)
 
@@ -114,3 +114,58 @@ The first motion pass changed frame cadence and travel direction but retained th
 - [x] Regenerate all 26 WebPs and metadata from the revised Blender model.
 - [x] Re-run 209 deterministic tests, formatting, lint, production build, and the complete desktop/mobile browser playtest.
 - [x] Inspect the final gameplay, aim, action, animation sequence, and responsive screenshots against the 0:17+ source footage; the final browser report contains no failures or console errors.
+
+## High-detail pixel-art transformation (2026-07-14)
+
+User direction: preserve all gameplay mechanics and functionality while completely replacing the presentation with grounded, high-detail pixel-art football visuals. Keep Pocket Vector, Nova City Comets, Iron Bay Phantoms, and the existing fictional branding. Do not introduce fantasy elements.
+
+- [x] Audit the renderer, collision geometry, animation contracts, and responsive camera.
+- [x] Approve a representative 4:3 gameplay concept at a 512x384 authored density with 2x crisp presentation.
+- [x] Build and normalize the full QB, receiver, and defender pixel animation set.
+- [x] Replace the stadium/field, football, aim guide, effects, HUD, menus, logo treatment, and side rails.
+- [x] Add crisp pixel scaling without changing simulation, hit zones, timing, scoring, or input.
+- [x] Run unit, lint, format, production-build, and full screenshot-based gameplay verification.
+
+The approved concept and production strips were generated with the built-in
+image-generation tool and checked into `art/pixel-source/`. The reproducible
+processor emits the unchanged 26-frame runtime contract with a shared anchor.
+The final browser QA covers title, instructions, live play, aim, pause,
+touchdown bonus, results, widescreen, touch landscape, portrait warning,
+continue offer, and overtime results with no console errors.
+
+## End-on football spiral correction (2026-07-14)
+
+User direction: "The ball should spiral with the end of the ball towards the
+quarterback. Right now, it's spinning with the laces of the ball facing the
+quarterback."
+
+- [x] Replace the side-profile, lace-forward football with a foreshortened rear-end pixel view.
+- [x] Keep trajectory, collision radius, flight timing, and spin rate unchanged.
+- [x] Render the end-on asset square so the existing rotation reads as longitudinal spiral rather than tumbling.
+- [x] Move the mobile playtest capture to mid-flight so orientation remains visually inspectable.
+
+## Destination-X landing correction (2026-07-14)
+
+User direction: "The ball doesn't land on the spot of the X making it feel
+inaccurate."
+
+- [x] Trace the pointer marker through screen-to-world projection and released-ball trajectory.
+- [x] Remove the hidden 18% horizontal overshoot after the configured catch point.
+- [x] Preserve the original route/collision timing by reaching the X at catch progress, then descending at that marked location.
+- [x] Keep the destination X visible for the entire flight and paint it beneath the arriving football.
+- [x] Add endpoint projection tests and a frozen browser capture asserting the ball center reaches the X within four logical pixels.
+- [x] Re-run the full mouse, trackpad, touch, responsive, results, and overtime browser playtest with no console errors.
+
+## Destination-X catch reconciliation (2026-07-14)
+
+User direction: "The ball is going where the X is but the catch isn't
+registering" and "the ball still wants to travel higher than the X making me
+have to aim lower in order to have the receiver catch it."
+
+- [x] Trace the mismatch to torso-height screen coordinates being interpreted as deeper height-zero field destinations.
+- [x] Preserve the original swept receiver-lane collision as the primary catch path.
+- [x] Add a final-descent screen-space check against the same projected receiver catch rectangle shown by the debug overlay.
+- [x] Keep defender collision, scoring, trajectory, horizontal lead timing, and exact valid-field X landing unchanged.
+- [x] Cover slow lobs, fast throws, pre-descent non-catches, clear misses, endpoint resolution, and end-zone body targets above the horizon.
+- [x] Add a real browser regression that places the X 70 pixels up the receiver's body and requires a genuine completion.
+- [x] Inspect the completion and destination-X captures; the full browser report passes with no failures or console errors.

@@ -39,6 +39,8 @@ describe('aim trajectory rendering', () => {
       expect(preview[index]!.x).toBeCloseTo(actualScreen.x, 8);
       expect(preview[index]!.y).toBeCloseTo(actualScreen.y, 8);
     }
+    expect(preview.at(-1)!.x).toBeCloseTo(aim.current.x, 8);
+    expect(preview.at(-1)!.y).toBeCloseTo(aim.current.y, 8);
   });
 
   it('shows slower releases with a visibly higher arc', () => {

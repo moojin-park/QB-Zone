@@ -6,6 +6,7 @@ import {
   getLaneConfig,
   type LaneId,
 } from '../../src/game/config/gameplayConfig';
+import { screenToFieldWorld } from '../../src/game/rendering/projection';
 import { createInitialState } from '../../src/game/state/createInitialState';
 import type { GameState, PassOutcome, ReceiverState } from '../../src/game/state/GameState';
 import { advanceBall, createBallState } from '../../src/game/simulation/trajectory';
@@ -203,6 +204,28 @@ describe('pass resolution through updateGame', () => {
     });
     expect(state.stats.incompletions).toBe(1);
     expect(state.ball).toBeNull();
+  });
+
+  it('resolves a body-aimed marker overlap as a catch before endpoint incompletion', () => {
+    const state = quiescentPlayingState();
+    const aimMarker = { x: 512, y: 430 };
+    const target = screenToFieldWorld(aimMarker, {
+      width: GAMEPLAY_CONFIG.classicLogicalWidth,
+      height: GAMEPLAY_CONFIG.logicalHeight,
+    });
+    state.receivers = [stationaryReceiver('short')];
+    state.ball = createBallState(1, target, 1, aimMarker);
+    advanceBall(state.ball, state.ball.durationMs * 0.97);
+
+    const result = updateGame(state, state.ball.durationMs - state.ball.elapsedMs);
+
+    expect(result).toMatchObject({
+      passResolved: 'completion',
+      laneId: 'short',
+      scoreChanged: true,
+    });
+    expect(state.stats.completions).toBe(1);
+    expect(state.stats.incompletions).toBe(0);
   });
 
   it.each([

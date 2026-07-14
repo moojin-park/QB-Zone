@@ -2,6 +2,7 @@ export const ASSET_MANIFEST = {
   art: {
     logo: '/assets/art/logo.svg',
     field: '/assets/art/field.svg',
+    pixelBackground: '/assets/pixel/stadium-field.png',
     quarterback: {
       idle: '/assets/characters/qb-idle.webp',
       aim: '/assets/characters/qb-aim.webp',
@@ -56,7 +57,7 @@ export const ASSET_MANIFEST = {
         right: '/assets/characters/defender-interception-right.webp',
       },
     },
-    football: '/assets/art/football.svg',
+    football: '/assets/pixel/football.png',
     effects: {
       score: '/assets/art/effect-score.svg',
       completion: '/assets/art/effect-completion.svg',

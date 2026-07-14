@@ -183,6 +183,12 @@ export class UiController {
   }
 
   public syncSettings(settings: GameSettings): void {
+    this.muteButton.setAttribute('aria-pressed', String(settings.masterMuted));
+    this.muteButton.title = settings.masterMuted ? 'Unmute audio' : 'Mute audio';
+    this.muteButton.classList.toggle('is-muted', settings.masterMuted);
+    this.muteButtonIcon.src = settings.masterMuted
+      ? '/assets/art/icon-mute.svg'
+      : '/assets/art/icon-unmute.svg';
     getRequired<HTMLInputElement>(this.shell, '#music-volume').value = String(settings.musicVolume);
     getRequired<HTMLInputElement>(this.shell, '#sfx-volume').value = String(settings.sfxVolume);
     getRequired<HTMLInputElement>(this.shell, '#reduced-motion').checked = settings.reducedMotion;
@@ -402,7 +408,7 @@ export class UiController {
 
           <section class="screen title-screen" data-screen="title" hidden>
             <div class="title-copy">
-              <img class="game-logo" src="/assets/art/logo.svg" alt="Pocket Vector" />
+              <img class="game-logo" src="/assets/pixel/logo.png" alt="Pocket Vector" />
               <p id="player-greeting">Read it. Lead it. Rip it.</p>
               <img id="player-avatar" class="player-avatar" alt="Player avatar" hidden />
               <div class="title-actions">
