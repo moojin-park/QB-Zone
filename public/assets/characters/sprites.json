@@ -1,0 +1,543 @@
+{
+  "version": 2,
+  "generator": "scripts/generate-character-sprites.py",
+  "canvas": {
+    "width": 384,
+    "height": 512,
+    "anchor": {
+      "x": 192,
+      "y": 496
+    }
+  },
+  "render": {
+    "engine": "BLENDER_EEVEE",
+    "format": "webp",
+    "quality": 88,
+    "camera": "fixed orthographic rear QB, travel-facing receiver, square defender camera",
+    "background": "transparent"
+  },
+  "teams": {
+    "offense": {
+      "name": "Nova City Comets",
+      "palette": {
+        "jersey": "#E23A31",
+        "pads": "#A7191E",
+        "pants": "#E4E2DA",
+        "helmet": "#D32728",
+        "accent": "#F4F0E8",
+        "socks": "#2B3137",
+        "number": "#F8FBFF",
+        "gloves": "#302729"
+      }
+    },
+    "defense": {
+      "name": "Iron Bay Phantoms",
+      "palette": {
+        "jersey": "#1680CE",
+        "pads": "#07579F",
+        "pants": "#E6E8E4",
+        "helmet": "#0A6FC2",
+        "accent": "#FFF0C8",
+        "socks": "#2A70B4",
+        "number": "#FFFFFF",
+        "gloves": "#E9EEF1"
+      }
+    }
+  },
+  "frames": [
+    {
+      "src": "/assets/characters/qb-idle.webp",
+      "role": "quarterback",
+      "pose": "idle",
+      "direction": "rear",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 92,
+        "y": 40,
+        "width": 223,
+        "height": 432
+      },
+      "bytes": 16334
+    },
+    {
+      "src": "/assets/characters/qb-aim.webp",
+      "role": "quarterback",
+      "pose": "aim",
+      "direction": "rear",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 91,
+        "y": 40,
+        "width": 233,
+        "height": 432
+      },
+      "bytes": 15362
+    },
+    {
+      "src": "/assets/characters/qb-throw.webp",
+      "role": "quarterback",
+      "pose": "throw",
+      "direction": "rear",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 89,
+        "y": 39,
+        "width": 245,
+        "height": 432
+      },
+      "bytes": 15078
+    },
+    {
+      "src": "/assets/characters/qb-recovery.webp",
+      "role": "quarterback",
+      "pose": "recovery",
+      "direction": "rear",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 91,
+        "y": 39,
+        "width": 237,
+        "height": 433
+      },
+      "bytes": 14284
+    },
+    {
+      "src": "/assets/characters/receiver-run-1-left.webp",
+      "role": "receiver",
+      "pose": "run1",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 63,
+        "y": 54,
+        "width": 208,
+        "height": 415
+      },
+      "bytes": 13482
+    },
+    {
+      "src": "/assets/characters/receiver-run-1-right.webp",
+      "role": "receiver",
+      "pose": "run1",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 113,
+        "y": 54,
+        "width": 208,
+        "height": 415
+      },
+      "bytes": 13292
+    },
+    {
+      "src": "/assets/characters/receiver-run-2-left.webp",
+      "role": "receiver",
+      "pose": "run2",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 64,
+        "y": 59,
+        "width": 207,
+        "height": 410
+      },
+      "bytes": 13552
+    },
+    {
+      "src": "/assets/characters/receiver-run-2-right.webp",
+      "role": "receiver",
+      "pose": "run2",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 113,
+        "y": 59,
+        "width": 207,
+        "height": 410
+      },
+      "bytes": 13432
+    },
+    {
+      "src": "/assets/characters/receiver-run-3-left.webp",
+      "role": "receiver",
+      "pose": "run3",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 63,
+        "y": 54,
+        "width": 211,
+        "height": 420
+      },
+      "bytes": 12822
+    },
+    {
+      "src": "/assets/characters/receiver-run-3-right.webp",
+      "role": "receiver",
+      "pose": "run3",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 110,
+        "y": 54,
+        "width": 211,
+        "height": 420
+      },
+      "bytes": 13116
+    },
+    {
+      "src": "/assets/characters/receiver-run-4-left.webp",
+      "role": "receiver",
+      "pose": "run4",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 64,
+        "y": 59,
+        "width": 207,
+        "height": 410
+      },
+      "bytes": 13306
+    },
+    {
+      "src": "/assets/characters/receiver-run-4-right.webp",
+      "role": "receiver",
+      "pose": "run4",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 113,
+        "y": 59,
+        "width": 207,
+        "height": 410
+      },
+      "bytes": 13320
+    },
+    {
+      "src": "/assets/characters/receiver-catch-left.webp",
+      "role": "receiver",
+      "pose": "catch",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 37,
+        "y": 54,
+        "width": 234,
+        "height": 415
+      },
+      "bytes": 13520
+    },
+    {
+      "src": "/assets/characters/receiver-catch-right.webp",
+      "role": "receiver",
+      "pose": "catch",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 113,
+        "y": 54,
+        "width": 234,
+        "height": 415
+      },
+      "bytes": 13296
+    },
+    {
+      "src": "/assets/characters/receiver-touchdown-left.webp",
+      "role": "receiver",
+      "pose": "touchdown",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 12,
+        "y": 53,
+        "width": 259,
+        "height": 416
+      },
+      "bytes": 15106
+    },
+    {
+      "src": "/assets/characters/receiver-touchdown-right.webp",
+      "role": "receiver",
+      "pose": "touchdown",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 113,
+        "y": 53,
+        "width": 259,
+        "height": 416
+      },
+      "bytes": 15292
+    },
+    {
+      "src": "/assets/characters/defender-run-1-left.webp",
+      "role": "defender",
+      "pose": "run1",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 56,
+        "y": 60,
+        "width": 275,
+        "height": 409
+      },
+      "bytes": 16186
+    },
+    {
+      "src": "/assets/characters/defender-run-1-right.webp",
+      "role": "defender",
+      "pose": "run1",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 53,
+        "y": 60,
+        "width": 275,
+        "height": 409
+      },
+      "bytes": 16508
+    },
+    {
+      "src": "/assets/characters/defender-run-2-left.webp",
+      "role": "defender",
+      "pose": "run2",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 62,
+        "y": 65,
+        "width": 260,
+        "height": 407
+      },
+      "bytes": 15764
+    },
+    {
+      "src": "/assets/characters/defender-run-2-right.webp",
+      "role": "defender",
+      "pose": "run2",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 62,
+        "y": 65,
+        "width": 260,
+        "height": 407
+      },
+      "bytes": 15796
+    },
+    {
+      "src": "/assets/characters/defender-run-3-left.webp",
+      "role": "defender",
+      "pose": "run3",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 53,
+        "y": 60,
+        "width": 275,
+        "height": 412
+      },
+      "bytes": 16250
+    },
+    {
+      "src": "/assets/characters/defender-run-3-right.webp",
+      "role": "defender",
+      "pose": "run3",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 56,
+        "y": 60,
+        "width": 275,
+        "height": 412
+      },
+      "bytes": 16276
+    },
+    {
+      "src": "/assets/characters/defender-run-4-left.webp",
+      "role": "defender",
+      "pose": "run4",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 65,
+        "y": 63,
+        "width": 254,
+        "height": 409
+      },
+      "bytes": 15862
+    },
+    {
+      "src": "/assets/characters/defender-run-4-right.webp",
+      "role": "defender",
+      "pose": "run4",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 65,
+        "y": 63,
+        "width": 254,
+        "height": 409
+      },
+      "bytes": 15864
+    },
+    {
+      "src": "/assets/characters/defender-interception-left.webp",
+      "role": "defender",
+      "pose": "interception",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 62,
+        "y": 62,
+        "width": 215,
+        "height": 410
+      },
+      "bytes": 15682
+    },
+    {
+      "src": "/assets/characters/defender-interception-right.webp",
+      "role": "defender",
+      "pose": "interception",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 107,
+        "y": 62,
+        "width": 215,
+        "height": 410
+      },
+      "bytes": 15628
+    }
+  ]
+}

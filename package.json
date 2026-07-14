@@ -1,0 +1,35 @@
+{
+  "name": "pocket-vector",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "playtest": "node scripts/run-playtest.mjs",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "generate:assets": "node scripts/generate-assets.mjs",
+    "generate:characters": "blender -b --python scripts/generate-character-sprites.py",
+    "generate:all-assets": "npm run generate:assets && npm run generate:characters"
+  },
+  "dependencies": {
+    "@bountyboard/arcade-sdk": "1.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.1",
+    "eslint": "^10.0.3",
+    "globals": "^17.3.0",
+    "playwright": "^1.61.1",
+    "prettier": "^3.8.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
+  }
+}

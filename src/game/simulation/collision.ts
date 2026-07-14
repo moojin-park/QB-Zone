@@ -1,0 +1,119 @@
+import {
+  DEFAULT_BALL_RADIUS_PX,
+  GAMEPLAY_CONFIG,
+  getLaneConfig,
+  type LaneId,
+} from '../config/gameplayConfig';
+import type { BallState, DefenderState, ReceiverState, WorldPoint } from '../state/GameState';
+import {
+  createDefenderHitZones,
+  hitTestDefenderLocal,
+  type DefenderHitZone,
+} from './defenderHitZones';
+
+export interface CollisionCandidate {
+  type: 'receiver' | 'defender';
+  progress: number;
+  laneId: LaneId | null;
+  receiver?: ReceiverState;
+  defender?: DefenderState;
+  hitZone?: DefenderHitZone;
+  point: WorldPoint;
+}
+
+const crossingProgress = (
+  previousDepth: number,
+  currentDepth: number,
+  targetDepth: number,
+): number | null => {
+  const delta = currentDepth - previousDepth;
+  if (Math.abs(delta) < 0.000_001) {
+    return Math.abs(currentDepth - targetDepth) <= 0.01 ? 1 : null;
+  }
+  const progress = (targetDepth - previousDepth) / delta;
+  return progress >= 0 && progress <= 1 ? progress : null;
+};
+
+const interpolatePoint = (
+  previous: WorldPoint,
+  current: WorldPoint,
+  progress: number,
+): WorldPoint => ({
+  x: previous.x + (current.x - previous.x) * progress,
+  depth: previous.depth + (current.depth - previous.depth) * progress,
+  height: previous.height + (current.height - previous.height) * progress,
+});
+
+export const findReceiverCollision = (
+  ball: BallState,
+  receivers: readonly ReceiverState[],
+): CollisionCandidate | null => {
+  const candidates: CollisionCandidate[] = [];
+  for (const receiver of receivers) {
+    const lane = getLaneConfig(receiver.laneId);
+    const progress = crossingProgress(
+      ball.previous.depth,
+      ball.current.depth,
+      lane.normalizedDepth,
+    );
+    if (progress === null) continue;
+    const point = interpolatePoint(ball.previous, ball.current, progress);
+    const leadAdjustedReceiverX = receiver.x;
+    const withinCatchWidth = Math.abs(point.x - leadAdjustedReceiverX) <= lane.catchWidth;
+    const withinCatchHeight = point.height >= 0.08 && point.height <= 0.92;
+    if (withinCatchWidth && withinCatchHeight) {
+      candidates.push({
+        type: 'receiver',
+        progress,
+        laneId: receiver.laneId,
+        receiver,
+        point,
+      });
+    }
+  }
+  return candidates.sort((a, b) => a.progress - b.progress)[0] ?? null;
+};
+
+export const findDefenderCollision = (
+  ball: BallState,
+  defenders: readonly DefenderState[],
+): CollisionCandidate | null => {
+  const candidates: CollisionCandidate[] = [];
+  const zones = createDefenderHitZones();
+  for (const defender of defenders) {
+    const progress = crossingProgress(ball.previous.depth, ball.current.depth, defender.depth);
+    if (progress === null) continue;
+    const point = interpolatePoint(ball.previous, ball.current, progress);
+    const localX = (point.x - defender.x) / GAMEPLAY_CONFIG.defenderWidthWorld;
+    const localPrevious = {
+      x: (ball.previous.x - defender.x) / GAMEPLAY_CONFIG.defenderWidthWorld,
+      y: ball.previous.height,
+    };
+    const localCurrent = { x: localX, y: point.height };
+    const ballRadiusWorld = 0.035 * (ball.radiusPx / DEFAULT_BALL_RADIUS_PX);
+    const zone = hitTestDefenderLocal(localPrevious, localCurrent, ballRadiusWorld, zones);
+    if (zone?.interceptsBall) {
+      candidates.push({
+        type: 'defender',
+        progress,
+        laneId: null,
+        defender,
+        hitZone: zone,
+        point,
+      });
+    }
+  }
+  return candidates.sort((a, b) => a.progress - b.progress)[0] ?? null;
+};
+
+export const findFirstBallCollision = (
+  ball: BallState,
+  receivers: readonly ReceiverState[],
+  defenders: readonly DefenderState[],
+): CollisionCandidate | null => {
+  const receiver = findReceiverCollision(ball, receivers);
+  const defender = findDefenderCollision(ball, defenders);
+  if (!receiver) return defender;
+  if (!defender) return receiver;
+  return receiver.progress <= defender.progress ? receiver : defender;
+};

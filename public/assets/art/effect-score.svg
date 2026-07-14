@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Score burst</title>
+  <desc id="desc">Layered arcade burst for score popup animation.</desc>
+  <defs>
+    <linearGradient id="cyanMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b8fbff"/>
+      <stop offset="0.35" stop-color="#1de6ef"/>
+      <stop offset="1" stop-color="#0782b9"/>
+    </linearGradient>
+    <linearGradient id="violetMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b5a1ff"/>
+      <stop offset="0.45" stop-color="#7d4dff"/>
+      <stop offset="1" stop-color="#39257f"/>
+    </linearGradient>
+    <linearGradient id="coralMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffb09f"/>
+      <stop offset="0.42" stop-color="#ff5f61"/>
+      <stop offset="1" stop-color="#a51f45"/>
+    </linearGradient>
+    <linearGradient id="darkMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#36527b"/>
+      <stop offset="0.55" stop-color="#102548"/>
+      <stop offset="1" stop-color="#071326"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#1de6ef" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#1de6ef" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="7" stdDeviation="5" flood-color="#020713" flood-opacity="0.65"/>
+    </filter>
+    <filter id="neon" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <path d="M128 6 L152 52 L198 26 L196 77 L248 75 L215 116 L256 147 L206 161 L223 211 L175 192 L157 246 L124 207 L83 242 L72 190 L18 208 L42 159 L0 130 L49 105 L20 62 L74 61 L81 12Z" fill="url(#violetMetal)" stroke="#1de6ef" stroke-width="8"/>
+    <circle cx="128" cy="128" r="74" fill="#071326" stroke="#ffc857" stroke-width="7"/>
+    <path d="M76 128 H180 M128 76 V180" stroke="#1de6ef" stroke-width="10" stroke-linecap="round"/>
+  </g>
+</svg>

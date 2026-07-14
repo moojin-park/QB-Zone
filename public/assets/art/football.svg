@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 96" role="img" aria-labelledby="title desc">
+  <title id="title">Arcade football</title>
+  <desc id="desc">Rotation-ready original football sprite with transparent background.</desc>
+  <defs>
+    <linearGradient id="cyanMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b8fbff"/>
+      <stop offset="0.35" stop-color="#1de6ef"/>
+      <stop offset="1" stop-color="#0782b9"/>
+    </linearGradient>
+    <linearGradient id="violetMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b5a1ff"/>
+      <stop offset="0.45" stop-color="#7d4dff"/>
+      <stop offset="1" stop-color="#39257f"/>
+    </linearGradient>
+    <linearGradient id="coralMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffb09f"/>
+      <stop offset="0.42" stop-color="#ff5f61"/>
+      <stop offset="1" stop-color="#a51f45"/>
+    </linearGradient>
+    <linearGradient id="darkMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#36527b"/>
+      <stop offset="0.55" stop-color="#102548"/>
+      <stop offset="1" stop-color="#071326"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#1de6ef" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#1de6ef" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="7" stdDeviation="5" flood-color="#020713" flood-opacity="0.65"/>
+    </filter>
+    <filter id="neon" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <ellipse cx="64" cy="67" rx="45" ry="12" fill="#020713" opacity="0.25"/>
+  <g transform="translate(64 58) rotate(-18) scale(1.55)">
+    <path d="M-29 0 Q-15-23 0-24 Q16-23 30 0 Q16 23 0 24 Q-16 22-29 0Z" fill="#9e4328" stroke="#020713" stroke-width="6"/>
+    <path d="M-20-8 Q0-20 21-7" fill="none" stroke="#df7653" stroke-width="5" stroke-linecap="round" opacity="0.8"/>
+    <path d="M-3-12 L-3 12 M-10-7 L4-7 M-10-1 L4-1 M-10 5 L4 5" stroke="#fff5da" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M-22 0 L-15 0 M16 0 L23 0" stroke="#fff5da" stroke-width="4"/>
+  </g>
+  <path d="M14 24 Q2 40 11 59 M111 17 Q126 34 119 51" fill="none" stroke="#1de6ef" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+</svg>

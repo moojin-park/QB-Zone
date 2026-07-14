@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 1,
+  "title": "Pocket Vector",
+  "generation": {
+    "command": "npm run generate:assets",
+    "generator": "scripts/generate-assets.mjs",
+    "deterministic": true,
+    "sampleRateHz": 22050,
+    "musicBpm": 140,
+    "musicBars": 32,
+    "musicDurationSeconds": 54.857143
+  },
+  "teams": {
+    "offense": {
+      "name": "Nova City Comets",
+      "colors": {
+        "primary": "#1de6ef",
+        "secondary": "#7d4dff",
+        "trim": "#f7fcff"
+      }
+    },
+    "defense": {
+      "name": "Iron Bay Phantoms",
+      "colors": {
+        "primary": "#ff5f61",
+        "secondary": "#102548",
+        "trim": "#ffc857"
+      }
+    }
+  },
+  "palette": {
+    "midnight": "#071326",
+    "navy": "#102548",
+    "turf": "#0d5a55",
+    "turfDark": "#073f42",
+    "cyan": "#1de6ef",
+    "cyanLight": "#b8fbff",
+    "violet": "#7d4dff",
+    "violetDark": "#39257f",
+    "coral": "#ff5f61",
+    "coralLight": "#ffb09f",
+    "amber": "#ffc857",
+    "cream": "#fff5da",
+    "white": "#f7fcff",
+    "ink": "#020713"
+  },
+  "spriteGeometry": {
+    "playerViewBox": {
+      "x": 0,
+      "y": 0,
+      "width": 200,
+      "height": 260
+    },
+    "playerAnchor": {
+      "x": 100,
+      "y": 246
+    },
+    "footballViewBox": {
+      "x": 0,
+      "y": 0,
+      "width": 128,
+      "height": 96
+    },
+    "footballAnchor": {
+      "x": 64,
+      "y": 48
+    },
+    "fieldViewBox": {
+      "x": 0,
+      "y": 0,
+      "width": 1024,
+      "height": 768
+    }
+  },
+  "art": {
+    "logo": "/assets/art/logo.svg",
+    "field": "/assets/art/field.svg",
+    "destinationX": "/assets/art/aim-destination-x.svg",
+    "quarterback": {
+      "idle": "/assets/art/qb-idle.svg",
+      "aim": "/assets/art/qb-aim.svg",
+      "throw": "/assets/art/qb-throw.svg",
+      "recovery": "/assets/art/qb-recovery.svg"
+    },
+    "receiver": {
+      "run1": "/assets/art/receiver-run-1.svg",
+      "run2": "/assets/art/receiver-run-2.svg",
+      "catch": "/assets/art/receiver-catch.svg",
+      "touchdown": "/assets/art/receiver-touchdown.svg"
+    },
+    "defender": {
+      "run1": "/assets/art/defender-run-1.svg",
+      "run2": "/assets/art/defender-run-2.svg",
+      "interception": "/assets/art/defender-interception.svg"
+    },
+    "football": "/assets/art/football.svg",
+    "effects": {
+      "scoreBurst": "/assets/art/effect-score.svg",
+      "completion": "/assets/art/effect-completion.svg",
+      "touchdown": "/assets/art/effect-touchdown.svg",
+      "interception": "/assets/art/effect-interception.svg"
+    },
+    "hud": {
+      "meterFrame": "/assets/art/meter-frame.svg",
+      "meterFill": "/assets/art/meter-fill.svg",
+      "multiplier": "/assets/art/multiplier.svg",
+      "timerWarning": "/assets/art/timer-warning.svg"
+    },
+    "controls": {
+      "buttonPrimary": "/assets/art/button.svg",
+      "buttonSecondary": "/assets/art/ui-button-secondary.svg",
+      "mute": "/assets/art/icon-mute.svg",
+      "unmute": "/assets/art/icon-unmute.svg",
+      "pause": "/assets/art/icon-pause.svg",
+      "play": "/assets/art/icon-play.svg",
+      "restart": "/assets/art/icon-restart.svg",
+      "info": "/assets/art/icon-info.svg",
+      "avatarFrame": "/assets/art/avatar-frame.svg"
+    }
+  },
+  "audio": {
+    "music": {
+      "gameplay": "/assets/audio/music/pocket-vector-drive.wav"
+    },
+    "sfx": {
+      "uiHover": "/assets/audio/sfx/ui-hover.wav",
+      "uiSelect": "/assets/audio/sfx/ui-select.wav",
+      "countdown": "/assets/audio/sfx/countdown.wav",
+      "snap": "/assets/audio/sfx/snap.wav",
+      "throwRelease": "/assets/audio/sfx/throw.wav",
+      "ballFlight": "/assets/audio/sfx/flight.wav",
+      "catch": "/assets/audio/sfx/catch.wav",
+      "deepCompletion": "/assets/audio/sfx/deep-completion.wav",
+      "touchdown": "/assets/audio/sfx/touchdown.wav",
+      "tdBonusActivate": "/assets/audio/sfx/bonus-active.wav",
+      "multiplierUp": "/assets/audio/sfx/multiplier.wav",
+      "incompletion": "/assets/audio/sfx/incomplete.wav",
+      "interception": "/assets/audio/sfx/interception.wav",
+      "meterLoss": "/assets/audio/sfx/meter-loss.wav",
+      "timerWarning": "/assets/audio/sfx/timer-warning.wav",
+      "gameOver": "/assets/audio/sfx/game-over.wav",
+      "continueSuccess": "/assets/audio/sfx/continue-success.wav"
+    }
+  }
+}

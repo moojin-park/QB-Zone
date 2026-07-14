@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 260" role="img" aria-labelledby="title desc">
+  <title id="title">Quarterback aim</title>
+  <desc id="desc">Nova City Comets quarterback number 7 in the aim animation pose.</desc>
+  <defs>
+    <linearGradient id="cyanMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b8fbff"/>
+      <stop offset="0.35" stop-color="#1de6ef"/>
+      <stop offset="1" stop-color="#0782b9"/>
+    </linearGradient>
+    <linearGradient id="violetMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b5a1ff"/>
+      <stop offset="0.45" stop-color="#7d4dff"/>
+      <stop offset="1" stop-color="#39257f"/>
+    </linearGradient>
+    <linearGradient id="coralMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffb09f"/>
+      <stop offset="0.42" stop-color="#ff5f61"/>
+      <stop offset="1" stop-color="#a51f45"/>
+    </linearGradient>
+    <linearGradient id="darkMetal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#36527b"/>
+      <stop offset="0.55" stop-color="#102548"/>
+      <stop offset="1" stop-color="#071326"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#1de6ef" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#1de6ef" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="7" stdDeviation="5" flood-color="#020713" flood-opacity="0.65"/>
+    </filter>
+    <filter id="neon" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <ellipse cx="102" cy="239" rx="70" ry="13" fill="#020713" opacity="0.42"/>
+  <g filter="url(#shadow)">
+    <g>
+    <line x1="88" y1="178" x2="62" y2="225" stroke="#020713" stroke-width="33" stroke-linecap="round"/>
+    <line x1="88" y1="178" x2="62" y2="225" stroke="url(#violetMetal)" stroke-width="25" stroke-linecap="round"/>
+    <line x1="90" y1="177" x2="64" y2="224" stroke="#aa90ff" stroke-opacity="0.34" stroke-width="5.5" stroke-linecap="round"/>
+  </g>
+    <g transform="translate(54 231) rotate(-16)">
+    <path d="M-18-8 Q2-14 23-1 Q28 3 22 11 L-19 11 Q-27 5-18-8Z" fill="#020713" stroke="#020713" stroke-width="4"/>
+    <path d="M-14-6 Q1-9 18-1 L21 5 L-18 5Z" fill="#f7fcff"/>
+    <path d="M7-5 L19 0" stroke="#1de6ef" stroke-width="4" stroke-linecap="round"/>
+  </g>
+    <g>
+    <line x1="82" y1="106" x2="60" y2="130" stroke="#020713" stroke-width="28" stroke-linecap="round"/>
+    <line x1="82" y1="106" x2="60" y2="130" stroke="url(#cyanMetal)" stroke-width="20" stroke-linecap="round"/>
+    <line x1="84" y1="105" x2="62" y2="129" stroke="#b8fbff" stroke-opacity="0.34" stroke-width="4.4" stroke-linecap="round"/>
+  </g>
+    <g transform="rotate(-5 102 137)">
+      <path d="M71 97 Q101 82 132 98 L143 157 Q129 183 101 185 Q73 181 61 157Z" fill="url(#cyanMetal)" stroke="#020713" stroke-width="8" stroke-linejoin="round"/>
+      <path d="M75 103 Q102 92 129 104" fill="none" stroke="#b8fbff" stroke-width="8" stroke-linecap="round" opacity="0.7"/>
+      <path d="M69 151 Q101 162 137 150 L134 175 Q101 189 67 173Z" fill="#7d4dff" stroke="#020713" stroke-width="5"/>
+      <text x="101" y="149" text-anchor="middle" font-family="Arial Black, sans-serif" font-size="37" fill="#f7fcff" stroke="#102548" stroke-width="3">7</text>
+    </g>
+    <g>
+    <line x1="112" y1="179" x2="137" y2="224" stroke="#020713" stroke-width="35" stroke-linecap="round"/>
+    <line x1="112" y1="179" x2="137" y2="224" stroke="url(#violetMetal)" stroke-width="27" stroke-linecap="round"/>
+    <line x1="114" y1="178" x2="139" y2="223" stroke="#b6a7ff" stroke-opacity="0.34" stroke-width="5.94" stroke-linecap="round"/>
+  </g>
+    <line x1="137" y1="208" x2="137" y2="226" stroke="#b8fbff" stroke-width="17" stroke-linecap="round"/>
+    <g transform="translate(146 230) rotate(14)">
+    <path d="M-18-8 Q2-14 23-1 Q28 3 22 11 L-19 11 Q-27 5-18-8Z" fill="#020713" stroke="#020713" stroke-width="4"/>
+    <path d="M-14-6 Q1-9 18-1 L21 5 L-18 5Z" fill="#f7fcff"/>
+    <path d="M7-5 L19 0" stroke="#1de6ef" stroke-width="4" stroke-linecap="round"/>
+  </g>
+    <g>
+    <line x1="119" y1="105" x2="149" y2="84" stroke="#020713" stroke-width="29" stroke-linecap="round"/>
+    <line x1="119" y1="105" x2="149" y2="84" stroke="url(#cyanMetal)" stroke-width="21" stroke-linecap="round"/>
+    <line x1="121" y1="104" x2="151" y2="83" stroke="#b8fbff" stroke-opacity="0.34" stroke-width="4.62" stroke-linecap="round"/>
+  </g>
+    <g transform="translate(60 130) rotate(-10)">
+    <path d="M-11 7 Q-15-4-7-12 Q-2-18 5-11 L14-3 Q17 3 11 10 Q1 16-11 7Z" fill="#f7fcff" stroke="#020713" stroke-width="5"/>
+    <path d="M-4-10 L3 6 M2-9 L8 3" stroke="#1de6ef" stroke-opacity="0.55" stroke-width="2"/>
+  </g>
+    <g transform="translate(149 84) rotate(12)">
+    <path d="M-11 7 Q-15-4-7-12 Q-2-18 5-11 L14-3 Q17 3 11 10 Q1 16-11 7Z" fill="#f7fcff" stroke="#020713" stroke-width="5"/>
+    <path d="M-4-10 L3 6 M2-9 L8 3" stroke="#1de6ef" stroke-opacity="0.55" stroke-width="2"/>
+  </g>
+    <g transform="translate(103 62) ">
+    <path d="M-31 6 Q-32-32-3-39 Q26-41 35-13 Q39 5 27 22 L8 20 L-1 7Z" fill="#7d4dff" stroke="#020713" stroke-width="7"/>
+    <path d="M-22-18 Q0-35 23-20" fill="none" stroke="#b9a6ff" stroke-width="7" stroke-linecap="round" opacity="0.78"/>
+    <path d="M14 2 L39 7 L34 25 L18 25" fill="none" stroke="#f7fcff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M28-8 L39 0" stroke="#1de6ef" stroke-width="6" stroke-linecap="round"/>
+    <path d="M-31-2 Q-37 12-27 20" fill="#1de6ef" stroke="#020713" stroke-width="4"/>
+  </g>
+    <g transform="translate(55 120) rotate(-38) scale(0.73)">
+    <path d="M-29 0 Q-15-23 0-24 Q16-23 30 0 Q16 23 0 24 Q-16 22-29 0Z" fill="#9e4328" stroke="#020713" stroke-width="6"/>
+    <path d="M-20-8 Q0-20 21-7" fill="none" stroke="#df7653" stroke-width="5" stroke-linecap="round" opacity="0.8"/>
+    <path d="M-3-12 L-3 12 M-10-7 L4-7 M-10-1 L4-1 M-10 5 L4 5" stroke="#fff5da" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M-22 0 L-15 0 M16 0 L23 0" stroke="#fff5da" stroke-width="4"/>
+  </g>
+  </g>
+  <circle cx="100" cy="246" r="3" fill="#ff5f61" opacity="0.01"/>
+</svg>
