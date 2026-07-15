@@ -6,7 +6,9 @@ struct PocketVectorApp: App {
     @State private var coordinator: AppCoordinator
 
     init() {
-        _coordinator = State(initialValue: AppCoordinator())
+        _coordinator = State(
+            initialValue: AppCoordinator(environment: .live)
+        )
     }
 
     var body: some Scene {

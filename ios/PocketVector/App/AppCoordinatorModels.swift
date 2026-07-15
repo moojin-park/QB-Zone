@@ -114,7 +114,7 @@ struct AppCoordinatorEnvironment {
         self.settleCompletedRun = settleCompletedRun
     }
 
-    static let live = AppCoordinatorEnvironment(
+    static let disconnected = AppCoordinatorEnvironment(
         loadInitialState: nil,
         makeRunID: { RunID() },
         makeSeed: { UInt32.random(in: UInt32.min ... UInt32.max) },
@@ -132,6 +132,25 @@ struct RunResultsPresentation: Equatable {
     let personalBest: Int
     let isNewPersonalBest: Bool
     let rewardedAdOffer: RewardedAdOfferPresentation
+    let achievementUpdates: [AchievementProgressUpdate]
+
+    init(
+        completedRun: CompletedRun,
+        earnedCoins: Int64,
+        pendingCoins: Int64,
+        personalBest: Int,
+        isNewPersonalBest: Bool,
+        rewardedAdOffer: RewardedAdOfferPresentation,
+        achievementUpdates: [AchievementProgressUpdate] = []
+    ) {
+        self.completedRun = completedRun
+        self.earnedCoins = earnedCoins
+        self.pendingCoins = pendingCoins
+        self.personalBest = personalBest
+        self.isNewPersonalBest = isNewPersonalBest
+        self.rewardedAdOffer = rewardedAdOffer
+        self.achievementUpdates = achievementUpdates
+    }
 
     var score: Int { completedRun.score }
     var statistics: RunStatisticsSnapshot { completedRun.statistics }

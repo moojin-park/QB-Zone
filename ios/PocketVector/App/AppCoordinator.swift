@@ -21,7 +21,7 @@ final class AppCoordinator {
     init(
         catalog: LaunchCatalog = .approved,
         state: AppCoordinatorState? = nil,
-        environment: AppCoordinatorEnvironment = .live
+        environment: AppCoordinatorEnvironment = .disconnected
     ) {
         self.catalog = catalog
         self.state = state ?? .launchDefault(catalog: catalog)
@@ -418,9 +418,7 @@ final class AppCoordinator {
     ) async {
         guard pendingRequest == nil else { return }
         guard let performRequest = environment.performExternalRequest else {
-            // Disconnected shell mode is intentionally presentation-only. The
-            // persistence integration supplies the async request handler.
-            state = candidate
+            noticeMessage = "Saved player changes are unavailable in this presentation build."
             return
         }
 

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071326"/>
+      <stop offset="0.58" stop-color="#102548"/>
+      <stop offset="1" stop-color="#291F62"/>
+    </linearGradient>
+    <radialGradient id="cometCore" cx="0.38" cy="0.30" r="0.82">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.44" stop-color="#F7FCFF"/>
+      <stop offset="1" stop-color="#A8F9FD"/>
+    </radialGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M 64 0 L 0 0 0 64" fill="none" stroke="#1DE6EF" stroke-width="3" opacity="0.10"/>
+    </pattern>
+  </defs>
+
+  <!-- Deterministic rendering of the approved Nova City comet/orbit identity. -->
+  <rect width="1024" height="1024" fill="url(#background)"/>
+  <rect width="1024" height="1024" fill="url(#grid)"/>
+
+  <circle cx="491" cy="498" r="303" fill="none" stroke="#7D4DFF" stroke-width="22" opacity="0.25"/>
+  <path d="M 250 576 A 253 253 0 0 0 743 524"
+        fill="none" stroke="#1DE6EF" stroke-width="72" stroke-linecap="round"/>
+
+  <polygon points="230,385 491,533 399,343" fill="#7D4DFF"/>
+  <polygon points="253,390 447,500 380,362" fill="#A78AFF" opacity="0.52"/>
+
+  <circle cx="653" cy="625" r="127" fill="#071326" stroke="#1DE6EF" stroke-width="34"/>
+  <circle cx="653" cy="625" r="99" fill="url(#cometCore)"/>
+  <circle cx="622" cy="591" r="24" fill="#FFFFFF" opacity="0.72"/>
+
+  <path d="M 206 736 C 378 900 677 904 846 725"
+        fill="none" stroke="#7D4DFF" stroke-width="18" stroke-linecap="round" opacity="0.50"/>
+  <circle cx="846" cy="725" r="18" fill="#F7FCFF" opacity="0.82"/>
+</svg>
