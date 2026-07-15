@@ -50,6 +50,14 @@
 		120000000000000000000005 /* TelemetryServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000005 /* TelemetryServices.swift */; };
 		120000000000000000000006 /* DiagnosticsServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000006 /* DiagnosticsServices.swift */; };
 		12000000000000000000000C /* ServiceAccountBindings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22000000000000000000000C /* ServiceAccountBindings.swift */; };
+		130000000000000000000001 /* PersistenceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000001 /* PersistenceModels.swift */; };
+		130000000000000000000002 /* PlayerProfileFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000002 /* PlayerProfileFactory.swift */; };
+		130000000000000000000003 /* PlayerProfileMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000003 /* PlayerProfileMigration.swift */; };
+		130000000000000000000004 /* AtomicProfileFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000004 /* AtomicProfileFileStore.swift */; };
+		130000000000000000000005 /* LocalPlayerProfileRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000005 /* LocalPlayerProfileRepository.swift */; };
+		130000000000000000000006 /* CompletedRunValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000006 /* CompletedRunValidator.swift */; };
+		130000000000000000000007 /* PersistedEconomyRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000007 /* PersistedEconomyRules.swift */; };
+		130000000000000000000008 /* PlayerProfilePersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000008 /* PlayerProfilePersistenceTests.swift */; };
 		120000000000000000000007 /* GameCenterServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000007 /* GameCenterServiceTests.swift */; };
 		120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000008 /* StoreTransactionServiceTests.swift */; };
 		120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000009 /* RewardedAdServiceTests.swift */; };
@@ -113,6 +121,14 @@
 		220000000000000000000005 /* TelemetryServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryServices.swift; sourceTree = "<group>"; };
 		220000000000000000000006 /* DiagnosticsServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsServices.swift; sourceTree = "<group>"; };
 		22000000000000000000000C /* ServiceAccountBindings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceAccountBindings.swift; sourceTree = "<group>"; };
+		230000000000000000000001 /* PersistenceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceModels.swift; sourceTree = "<group>"; };
+		230000000000000000000002 /* PlayerProfileFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerProfileFactory.swift; sourceTree = "<group>"; };
+		230000000000000000000003 /* PlayerProfileMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerProfileMigration.swift; sourceTree = "<group>"; };
+		230000000000000000000004 /* AtomicProfileFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AtomicProfileFileStore.swift; sourceTree = "<group>"; };
+		230000000000000000000005 /* LocalPlayerProfileRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPlayerProfileRepository.swift; sourceTree = "<group>"; };
+		230000000000000000000006 /* CompletedRunValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompletedRunValidator.swift; sourceTree = "<group>"; };
+		230000000000000000000007 /* PersistedEconomyRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistedEconomyRules.swift; sourceTree = "<group>"; };
+		230000000000000000000008 /* PlayerProfilePersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerProfilePersistenceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000007 /* GameCenterServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000008 /* StoreTransactionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTransactionServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000009 /* RewardedAdServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdServiceTests.swift; sourceTree = "<group>"; };
@@ -165,6 +181,7 @@
 				310000000000000000000003 /* Economy */,
 				310000000000000000000004 /* Achievements */,
 				320000000000000000000001 /* Services */,
+				330000000000000000000001 /* Persistence */,
 				300000000000000000000005 /* Game */,
 				300000000000000000000008 /* Resources */,
 			);
@@ -238,6 +255,7 @@
 				220000000000000000000009 /* RewardedAdServiceTests.swift */,
 				22000000000000000000000A /* CloudSyncServiceTests.swift */,
 				22000000000000000000000B /* TelemetryDiagnosticsServiceTests.swift */,
+				230000000000000000000008 /* PlayerProfilePersistenceTests.swift */,
 			);
 			path = PocketVectorTests;
 			sourceTree = "<group>";
@@ -304,6 +322,20 @@
 				22000000000000000000000C /* ServiceAccountBindings.swift */,
 			);
 			path = Services;
+			sourceTree = "<group>";
+		};
+		330000000000000000000001 /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				230000000000000000000001 /* PersistenceModels.swift */,
+				230000000000000000000002 /* PlayerProfileFactory.swift */,
+				230000000000000000000003 /* PlayerProfileMigration.swift */,
+				230000000000000000000004 /* AtomicProfileFileStore.swift */,
+				230000000000000000000005 /* LocalPlayerProfileRepository.swift */,
+				230000000000000000000006 /* CompletedRunValidator.swift */,
+				230000000000000000000007 /* PersistedEconomyRules.swift */,
+			);
+			path = Persistence;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -443,6 +475,13 @@
 				120000000000000000000005 /* TelemetryServices.swift in Sources */,
 				120000000000000000000006 /* DiagnosticsServices.swift in Sources */,
 				12000000000000000000000C /* ServiceAccountBindings.swift in Sources */,
+				130000000000000000000001 /* PersistenceModels.swift in Sources */,
+				130000000000000000000002 /* PlayerProfileFactory.swift in Sources */,
+				130000000000000000000003 /* PlayerProfileMigration.swift in Sources */,
+				130000000000000000000004 /* AtomicProfileFileStore.swift in Sources */,
+				130000000000000000000005 /* LocalPlayerProfileRepository.swift in Sources */,
+				130000000000000000000006 /* CompletedRunValidator.swift in Sources */,
+				130000000000000000000007 /* PersistedEconomyRules.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -459,6 +498,7 @@
 				120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */,
 				12000000000000000000000A /* CloudSyncServiceTests.swift in Sources */,
 				12000000000000000000000B /* TelemetryDiagnosticsServiceTests.swift in Sources */,
+				130000000000000000000008 /* PlayerProfilePersistenceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
