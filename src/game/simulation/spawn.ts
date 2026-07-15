@@ -34,6 +34,7 @@ const spawnReceiver = (state: GameState, laneId: LaneId): ReceiverState => {
       speedJitter.value,
     animationMs: 0,
     pose: 'run',
+    hasCaught: false,
   };
 };
 

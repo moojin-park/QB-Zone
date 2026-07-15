@@ -8,29 +8,32 @@ touchdown streaks.
 
 | Result lane          | Base points | TD Bonus meter gain |
 | -------------------- | ----------: | ------------------: |
-| Short / 15           |         500 |                   1 |
-| Medium / 30          |       1,000 |                   2 |
-| Deep / 45            |       1,500 |                   3 |
-| Touchdown / end zone |       2,500 |                   4 |
+| Short / 15           |         500 |                  15 |
+| Medium / 30          |       1,000 |                  35 |
+| Deep / 45            |       1,500 |                  50 |
+| Touchdown / end zone |       2,500 |                   0 |
 
 An incompletion or interception awards 0 points.
 
 ## TD Bonus meter
 
-- The meter begins at `0` and is full at `12`.
-- Every successful completion adds the caught lane's meter gain, capped at 12.
+- The meter begins at `0` and is full at `100` TD Meter Points.
+- Short, medium, and deep completions add 15, 35, and 50 meter points,
+  respectively, capped at 100.
+- Touchdowns do not build the meter; they are the payoff play for an active TD
+  Bonus.
 - An incompletion or interception immediately resets the meter to 0.
 - Ordinary completions do not spend a full meter and do not receive the
   3,000-point TD bonus.
 - A touchdown receives the 3,000-point bonus only when the meter was already
-  full before that touchdown. Filling the meter with the touchdown itself does
-  not retroactively activate the bonus for that play.
+  full before that touchdown.
 - A successful play leaves a full meter full. It remains active until an
   incompletion or interception resets it.
 
-The pre-play check is intentional. For example, a meter at 8 gains 4 from a
-touchdown and reaches 12, but that touchdown has no TD bonus. The next touchdown
-can receive the bonus if no miss/interception occurs first.
+The pre-play check is intentional. A meter at 85 remains at 85 after a
+touchdown, and that touchdown has no TD bonus. A later 15-point short completion
+activates the meter for the next touchdown if no miss or interception occurs
+first.
 
 ## Touchdown streak multiplier
 

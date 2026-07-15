@@ -49,12 +49,15 @@ fantasy elements.
 
 ### Receiver strip
 
-Create one exact horizontal six-frame sprite strip on a flat #00ff00
+Create one exact horizontal ten-frame sprite strip on a flat #00ff00
 background. Show the same right-facing Nova City receiver, red/cream uniform
 and jersey 11, on one consistent baseline: four distinct running phases, catch,
-and touchdown celebration. Preserve identity, scale, palette, lighting, crisp
-pixel clusters, separated limbs, and football-readable motion. One athlete per
-slot; no labels, overlap, shadows, effects, extra objects, or fantasy elements.
+four post-catch carry phases, and touchdown celebration. Every carry phase must
+show the football tucked securely against the receiver's body while the legs
+repeat the established four-phase sprint cycle. Preserve identity, scale,
+palette, lighting, crisp pixel clusters, separated limbs, and football-readable
+motion. One athlete per slot; no duplicate or floating footballs, labels,
+overlap, shadows, effects, extra objects, or fantasy elements.
 
 ### Defender strip
 
@@ -71,7 +74,7 @@ The source strips were chroma-keyed locally, then processed by
 `scripts/process-pixel-character-strips.py`. The processor validates slot
 counts and transparency, normalizes all frames in a role to one scale, uses
 nearest-neighbor sampling, preserves a 16-pixel safe area, anchors at
-`[192, 496]`, and writes 26 lossless 384x512 WebPs plus metadata. Receiver art
+`[192, 496]`, and writes 34 lossless 384x512 WebPs plus metadata. Receiver art
 is mirrored for travel direction; square defender art is reused unchanged in
 both directions to preserve jersey number 24. A detached ball in the QB release
 source is removed during normalization because the simulated runtime projectile

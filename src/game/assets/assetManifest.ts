@@ -30,6 +30,20 @@ export const ASSET_MANIFEST = {
         left: '/assets/characters/receiver-catch-left.webp',
         right: '/assets/characters/receiver-catch-right.webp',
       },
+      carry: {
+        left: [
+          '/assets/characters/receiver-carry-left.webp',
+          '/assets/characters/receiver-carry-2-left.webp',
+          '/assets/characters/receiver-carry-3-left.webp',
+          '/assets/characters/receiver-carry-4-left.webp',
+        ],
+        right: [
+          '/assets/characters/receiver-carry-right.webp',
+          '/assets/characters/receiver-carry-2-right.webp',
+          '/assets/characters/receiver-carry-3-right.webp',
+          '/assets/characters/receiver-carry-4-right.webp',
+        ],
+      },
       touchdown: {
         left: '/assets/characters/receiver-touchdown-left.webp',
         right: '/assets/characters/receiver-touchdown-right.webp',

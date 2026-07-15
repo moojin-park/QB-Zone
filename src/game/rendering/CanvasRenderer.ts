@@ -1,7 +1,7 @@
 import { ASSET_MANIFEST, type AssetImageMap } from '../assets/assetManifest';
 import { DEFAULT_BALL_RADIUS_PX, GAMEPLAY_CONFIG, getLaneConfig } from '../config/gameplayConfig';
 import { VISUAL_CONFIG } from '../config/visualConfig';
-import type { GameState, ScreenPoint } from '../state/GameState';
+import type { GameState, ReceiverState, ScreenPoint } from '../state/GameState';
 import { createDefenderHitZones } from '../simulation/defenderHitZones';
 import { createTrajectoryParameters, getTrajectoryPosition } from '../simulation/trajectory';
 import { renderField, renderFieldWarning } from './FieldRenderer';
@@ -40,6 +40,20 @@ export interface CharacterAnimationFrame {
   cycleProgress: number;
 }
 
+export type ReceiverVisualPose = 'run' | 'catch' | 'carry' | 'touchdown';
+
+export const getReceiverVisualPose = (
+  receiver: Pick<ReceiverState, 'pose' | 'animationMs' | 'hasCaught'>,
+): ReceiverVisualPose => {
+  if (receiver.pose === 'catch' && receiver.animationMs < RECEIVER_ACTION_HOLD_MS) {
+    return 'catch';
+  }
+  if (receiver.pose === 'celebrate' && receiver.animationMs < RECEIVER_ACTION_HOLD_MS) {
+    return 'touchdown';
+  }
+  return receiver.hasCaught ? 'carry' : 'run';
+};
+
 export const getCharacterAnimationFrame = (
   animationMs: number,
   entityId: number,
@@ -56,6 +70,27 @@ export const getCharacterAnimationFrame = (
     frame: Math.floor(phaseMs / safeFrameDuration),
     cycleProgress: phaseMs / cycleDuration,
   };
+};
+
+export interface ReceiverVisualSelection {
+  pose: ReceiverVisualPose;
+  frame: number;
+}
+
+export const getReceiverVisualSelection = (
+  receiver: Pick<ReceiverState, 'id' | 'pose' | 'animationMs' | 'hasCaught'>,
+): ReceiverVisualSelection => {
+  const pose = getReceiverVisualPose(receiver);
+  const frame =
+    pose === 'run' || pose === 'carry'
+      ? getCharacterAnimationFrame(
+          receiver.animationMs,
+          receiver.id,
+          RECEIVER_FRAME_DURATION_MS,
+          RUN_FRAME_COUNT,
+        ).frame
+      : 0;
+  return { pose, frame };
 };
 
 export const getAimTrajectoryScreenPoints = (
@@ -209,27 +244,22 @@ export class CanvasRenderer {
           { x: receiver.x, depth: entry.depth, height: 0 },
           this.projection,
         );
-        const animation = getCharacterAnimationFrame(
-          receiver.animationMs,
-          receiver.id,
-          RECEIVER_FRAME_DURATION_MS,
-          RUN_FRAME_COUNT,
-        );
+        const visual = getReceiverVisualSelection(receiver);
         const runFrames = [
           ASSET_MANIFEST.art.receiver.run1[direction],
           ASSET_MANIFEST.art.receiver.run2[direction],
           ASSET_MANIFEST.art.receiver.run3[direction],
           ASSET_MANIFEST.art.receiver.run4[direction],
         ] as const;
-        const showCatch =
-          receiver.pose === 'catch' && receiver.animationMs < RECEIVER_ACTION_HOLD_MS;
-        const showCelebration =
-          receiver.pose === 'celebrate' && receiver.animationMs < RECEIVER_ACTION_HOLD_MS;
-        const path = showCatch
-          ? ASSET_MANIFEST.art.receiver.catch[direction]
-          : showCelebration
-            ? ASSET_MANIFEST.art.receiver.touchdown[direction]
-            : (runFrames[animation.frame] ?? runFrames[0]);
+        const carryFrames = ASSET_MANIFEST.art.receiver.carry[direction];
+        const path =
+          visual.pose === 'catch'
+            ? ASSET_MANIFEST.art.receiver.catch[direction]
+            : visual.pose === 'touchdown'
+              ? ASSET_MANIFEST.art.receiver.touchdown[direction]
+              : visual.pose === 'carry'
+                ? (carryFrames[visual.frame] ?? carryFrames[0])
+                : (runFrames[visual.frame] ?? runFrames[0]);
         drawImageCentered(
           this.context,
           this.getImage(path),

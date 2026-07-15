@@ -19,10 +19,10 @@ const scoreState = (patch: Partial<ScoreState> = {}): ScoreState => ({
 
 describe('lane scoring configuration', () => {
   it.each([
-    ['short', 500, 1],
-    ['medium', 1_000, 2],
-    ['deep', 1_500, 3],
-    ['touchdown', 2_500, 4],
+    ['short', 500, 15],
+    ['medium', 1_000, 35],
+    ['deep', 1_500, 50],
+    ['touchdown', 2_500, 0],
   ] as const)('%s lane awards %i points and %i meter', (laneId, points, meterGain) => {
     expect(SCORE_CONFIG.lanes[laneId]).toEqual({
       completionPoints: points,
@@ -37,14 +37,14 @@ describe('lane scoring configuration', () => {
 
 describe('calculatePlayScore', () => {
   it.each([
-    ['short', 500, 1],
-    ['medium', 1_000, 2],
-    ['deep', 1_500, 3],
+    ['short', 500, 15],
+    ['medium', 1_000, 35],
+    ['deep', 1_500, 50],
   ] as const)(
     'scores a %s completion and preserves prior meter progress',
     (laneId, points, gain) => {
       const result = calculatePlayScore(
-        scoreState({ score: 700, tdMeter: 4, touchdownStreak: 3 }),
+        scoreState({ score: 700, tdMeter: 10, touchdownStreak: 3 }),
         'completion',
         laneId,
       );
@@ -56,8 +56,8 @@ describe('calculatePlayScore', () => {
         awardedPoints: points,
         totalScoreBefore: 700,
         totalScoreAfter: 700 + points,
-        tdMeterBefore: 4,
-        tdMeterAfter: 4 + gain,
+        tdMeterBefore: 10,
+        tdMeterAfter: 10 + gain,
         touchdownStreakBefore: 3,
         touchdownStreakAfter: 0,
         tdBonusPoints: 0,
@@ -126,11 +126,29 @@ describe('calculatePlayScore', () => {
     expect(result.tdMeterAfter).toBe(SCORE_CONFIG.tdMeterMaximum);
   });
 
+  it('activates after one short, medium, and deep completion', () => {
+    const state = createInitialState();
+
+    for (const laneId of ['short', 'medium', 'deep'] as const) {
+      applyPlayScore(state, calculatePlayScore(state, 'completion', laneId));
+    }
+
+    expect(state.tdMeter).toBe(100);
+    expect(selectTdBonusActive(state)).toBe(true);
+  });
+
+  it('does not build meter progress on the touchdown payoff play', () => {
+    const result = calculatePlayScore(scoreState({ tdMeter: 85 }), 'touchdown', 'touchdown');
+
+    expect(result.tdBonusWasActive).toBe(false);
+    expect(result.tdMeterAfter).toBe(85);
+  });
+
   it.each(['incompletion', 'interception'] as const)(
     '%s awards zero and clears meter and touchdown streak',
     (outcome) => {
       const result = calculatePlayScore(
-        scoreState({ score: 8_500, tdMeter: 11, touchdownStreak: 4 }),
+        scoreState({ score: 8_500, tdMeter: 85, touchdownStreak: 4 }),
         outcome,
         null,
       );
@@ -144,7 +162,7 @@ describe('calculatePlayScore', () => {
         awardedPoints: 0,
         totalScoreBefore: 8_500,
         totalScoreAfter: 8_500,
-        tdMeterBefore: 11,
+        tdMeterBefore: 85,
         tdMeterAfter: 0,
         touchdownStreakBefore: 4,
         touchdownStreakAfter: 0,
@@ -167,7 +185,7 @@ describe('calculatePlayScore', () => {
 
   it('fills every detail field from the pre-play snapshot', () => {
     const result = calculatePlayScore(
-      scoreState({ score: 4_200, tdMeter: 6, touchdownStreak: 2 }),
+      scoreState({ score: 4_200, tdMeter: 65, touchdownStreak: 2 }),
       'touchdown',
       'touchdown',
     );
@@ -182,8 +200,8 @@ describe('calculatePlayScore', () => {
       awardedPoints: 3_750,
       totalScoreBefore: 4_200,
       totalScoreAfter: 7_950,
-      tdMeterBefore: 6,
-      tdMeterAfter: 10,
+      tdMeterBefore: 65,
+      tdMeterAfter: 65,
       touchdownStreakBefore: 2,
       touchdownStreakAfter: 3,
     });

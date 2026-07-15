@@ -36,6 +36,7 @@ const createReceiver = (
     speedPerMs: (2 * GAMEPLAY_CONFIG.receiverOffscreenX) / (lane.receiverCrossingSeconds * 1_000),
     animationMs: offset * 900,
     pose: 'run',
+    hasCaught: false,
   };
 };
 

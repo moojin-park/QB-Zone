@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 4,
   "generator": "scripts/process-pixel-character-strips.py",
   "canvas": {
     "width": 384,
@@ -319,6 +319,158 @@
         "height": 386
       },
       "bytes": 60134
+    },
+    {
+      "src": "/assets/characters/receiver-carry-left.webp",
+      "role": "receiver",
+      "pose": "carry1",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 34,
+        "y": 119,
+        "width": 316,
+        "height": 377
+      },
+      "bytes": 57084
+    },
+    {
+      "src": "/assets/characters/receiver-carry-right.webp",
+      "role": "receiver",
+      "pose": "carry1",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 34,
+        "y": 119,
+        "width": 316,
+        "height": 377
+      },
+      "bytes": 56976
+    },
+    {
+      "src": "/assets/characters/receiver-carry-2-left.webp",
+      "role": "receiver",
+      "pose": "carry2",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 66,
+        "y": 120,
+        "width": 252,
+        "height": 376
+      },
+      "bytes": 52726
+    },
+    {
+      "src": "/assets/characters/receiver-carry-2-right.webp",
+      "role": "receiver",
+      "pose": "carry2",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 66,
+        "y": 120,
+        "width": 252,
+        "height": 376
+      },
+      "bytes": 52790
+    },
+    {
+      "src": "/assets/characters/receiver-carry-3-left.webp",
+      "role": "receiver",
+      "pose": "carry3",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 16,
+        "y": 125,
+        "width": 352,
+        "height": 371
+      },
+      "bytes": 58756
+    },
+    {
+      "src": "/assets/characters/receiver-carry-3-right.webp",
+      "role": "receiver",
+      "pose": "carry3",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 16,
+        "y": 125,
+        "width": 352,
+        "height": 371
+      },
+      "bytes": 58994
+    },
+    {
+      "src": "/assets/characters/receiver-carry-4-left.webp",
+      "role": "receiver",
+      "pose": "carry4",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 96,
+        "y": 125,
+        "width": 191,
+        "height": 371
+      },
+      "bytes": 50612
+    },
+    {
+      "src": "/assets/characters/receiver-carry-4-right.webp",
+      "role": "receiver",
+      "pose": "carry4",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 97,
+        "y": 125,
+        "width": 191,
+        "height": 371
+      },
+      "bytes": 50560
     },
     {
       "src": "/assets/characters/receiver-touchdown-left.webp",

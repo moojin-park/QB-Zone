@@ -50,13 +50,17 @@ cobalt accents, and restrained gold/red status colors.
 
 Player frames are transparent 384x512 WebPs with a shared `[192, 496]` anchor.
 The four QB poses stay in rear view while the throwing arm winds up, releases,
-and follows through. Receivers use four sprint phases plus catch and touchdown
-poses. Their right-facing source art is mirrored for leftward travel; jersey 11
-remains readable in either direction. Defenders use four square shuffle phases
-plus an interception pose. Both defender directions reuse the same front-facing
-art so jersey 24 is never reversed. The processor also removes a detached ball
-from the QB release source frame because the live projectile renderer is the
-authoritative football.
+and follows through. Receivers use four sprint phases plus catch, four
+post-catch carry phases, and a touchdown pose. The carry cycle keeps the
+football tucked against the receiver's body while the legs continue through the
+normal running cadence, so a player who has already completed a catch remains
+visually distinct from an eligible empty-handed target. Their right-facing
+source art is mirrored for leftward travel; jersey 11 remains readable in either
+direction.
+Defenders use four square shuffle phases plus an interception pose. Both
+defender directions reuse the same front-facing art so jersey 24 is never
+reversed. The processor also removes a detached ball from the QB release source
+frame because the live projectile renderer is the authoritative football.
 [`public/assets/characters/sprites.json`](../public/assets/characters/sprites.json)
 records content bounds, role, pose, direction, byte size, and anchor metadata.
 The football is a stepped, rotation-ready PNG with an editable SVG source. Its
@@ -108,7 +112,7 @@ Character paths follow this pattern:
 
 ```text
 /assets/characters/qb-{idle,aim,throw,recovery}.webp
-/assets/characters/receiver-{run-1,run-2,run-3,run-4,catch,touchdown}-{left,right}.webp
+/assets/characters/receiver-{run-1,run-2,run-3,run-4,catch,carry,carry-2,carry-3,carry-4,touchdown}-{left,right}.webp
 /assets/characters/defender-{run-1,run-2,run-3,run-4,interception}-{left,right}.webp
 /assets/characters/sprites.json
 ```

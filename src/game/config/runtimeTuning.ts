@@ -364,7 +364,7 @@ const scoreControls: InternalTuningControl[] = [
         id: `meter-gain-${lane.id}`,
         label: `${lane.id} meter gain`,
         min: 0,
-        max: 20,
+        max: 100,
         step: 1,
         unit: '',
       },

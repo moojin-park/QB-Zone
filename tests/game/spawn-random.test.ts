@@ -176,6 +176,7 @@ describe('horizontal receiver simulation', () => {
     const spawned = state.receivers.find((item) => item.laneId === 'medium')!;
     expect(Math.abs(spawned.x)).toBe(GAMEPLAY_CONFIG.receiverOffscreenX);
     expect(spawned.pose).toBe('run');
+    expect(spawned.hasCaught).toBe(false);
     expect(state.laneSpawnTimers.medium).toBe(Number.POSITIVE_INFINITY);
   });
 

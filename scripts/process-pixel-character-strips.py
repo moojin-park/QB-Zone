@@ -45,6 +45,10 @@ RECEIVER_POSES = (
     ("run-3", "run3"),
     ("run-4", "run4"),
     ("catch", "catch"),
+    ("carry", "carry1"),
+    ("carry-2", "carry2"),
+    ("carry-3", "carry3"),
+    ("carry-4", "carry4"),
     ("touchdown", "touchdown"),
 )
 DEFENDER_POSES = (
@@ -114,13 +118,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Convert three transparent horizontal pixel-art strips into the "
-            "26 Pocket Vector character WebPs and sprites.json."
+            "34 Pocket Vector character WebPs and sprites.json."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Input slot order:
   QB (4):       idle, aim, throw, recovery; rear view
-  Receiver (6): run-1, run-2, run-3, run-4, catch, touchdown; facing right
+  Receiver (10): run-1, run-2, run-3, run-4, catch, carry-1, carry-2,
+                 carry-3, carry-4, touchdown; facing right
   Defender (5): run-1, run-2, run-3, run-4, interception; square/front-facing
 
 Each strip uses equal-width slots, and every slot must contain at least one
@@ -152,7 +157,7 @@ Remove --dry-run to write. Existing runtime files are replaced only with
         "--receiver-strip",
         required=True,
         type=Path,
-        help="transparent 6-slot right-facing receiver strip",
+        help="transparent 10-slot right-facing receiver strip",
     )
     parser.add_argument(
         "--defender-strip",
@@ -174,7 +179,7 @@ Remove --dry-run to write. Existing runtime files are replaced only with
     parser.add_argument(
         "--force",
         action="store_true",
-        help="replace the 26 runtime WebPs and sprites.json if they exist",
+        help="replace the 34 runtime WebPs and sprites.json if they exist",
     )
     return parser
 
@@ -580,7 +585,7 @@ def build_manifest(
         )
 
     return {
-        "version": 2,
+        "version": 4,
         "generator": "scripts/process-pixel-character-strips.py",
         "canvas": {
             "width": CANVAS_WIDTH,
@@ -660,7 +665,7 @@ def print_summary(
     dry_run: bool,
 ) -> None:
     status = "Dry run complete" if dry_run else "Generated sprite set"
-    print(f"{status}: 26 lossless WebPs and sprites.json")
+    print(f"{status}: 34 lossless WebPs and sprites.json")
     print(
         f"Canvas: {CANVAS_WIDTH}x{CANVAS_HEIGHT}; "
         f"anchor: [{ANCHOR_X}, {ANCHOR_Y}]; safe padding: {SAFE_PADDING}px"
@@ -679,7 +684,7 @@ def print_summary(
     print(f"Output: {output_dir}")
     print(
         "Verified: non-empty slots, nearest-neighbor palette preservation, "
-        "384x512 transparency, lossless pixel round-trip, six receiver mirror "
+        "384x512 transparency, lossless pixel round-trip, ten receiver mirror "
         "pairs, and square defender direction pairs."
     )
     if dry_run:

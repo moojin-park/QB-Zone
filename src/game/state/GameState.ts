@@ -34,6 +34,7 @@ export interface ReceiverState {
   speedPerMs: number;
   animationMs: number;
   pose: 'run' | 'catch' | 'celebrate';
+  hasCaught: boolean;
 }
 
 export interface DefenderState {

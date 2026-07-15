@@ -17,6 +17,13 @@ const getRequired = <T extends Element>(root: ParentNode, selector: string): T =
   return element;
 };
 
+const formatBroadcastClock = (remainingMs: number): string => {
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1_000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
+};
+
 export interface UiCallbacks {
   onPlay(): void;
   onInstructions(): void;
@@ -38,8 +45,9 @@ export class UiController {
   private readonly screens: Map<GamePhase, HTMLElement>;
   private readonly score: HTMLElement;
   private readonly timer: HTMLElement;
+  private readonly adrenalineMeter: HTMLElement;
+  private readonly meterTrack: HTMLElement;
   private readonly meterFill: HTMLElement;
-  private readonly meterLabel: HTMLElement;
   private readonly multiplier: HTMLElement;
   private readonly feedback: HTMLElement;
   private readonly feedbackHeadline: HTMLElement;
@@ -58,8 +66,9 @@ export class UiController {
     this.shell = getRequired(root, '#game-shell');
     this.score = getRequired(root, '#hud-score');
     this.timer = getRequired(root, '#hud-timer');
+    this.adrenalineMeter = getRequired(root, '#adrenaline-meter');
+    this.meterTrack = getRequired(root, '.meter-track');
     this.meterFill = getRequired(root, '#meter-fill');
-    this.meterLabel = getRequired(root, '#meter-label');
     this.multiplier = getRequired(root, '#hud-multiplier');
     this.feedback = getRequired(root, '#play-feedback');
     this.feedbackHeadline = getRequired(root, '#feedback-headline');
@@ -94,20 +103,25 @@ export class UiController {
   public render(state: GameState): void {
     if (this.activePhase !== state.phase) this.setPhase(state.phase);
     this.score.textContent = state.score.toLocaleString('en-US');
-    this.timer.textContent = Math.ceil(state.remainingMs / 1_000).toString();
+    this.timer.textContent = formatBroadcastClock(state.remainingMs);
     this.timer.classList.toggle('is-warning', state.remainingMs <= 10_000);
     const meterPercent = Math.min(100, (state.tdMeter / SCORE_CONFIG.tdMeterMaximum) * 100);
     this.meterFill.style.width = `${meterPercent}%`;
-    this.meterFill.parentElement?.setAttribute(
-      'aria-valuemax',
-      String(SCORE_CONFIG.tdMeterMaximum),
+    this.meterFill.style.setProperty(
+      '--meter-progress',
+      String(Math.max(0.01, meterPercent / 100)),
     );
-    this.meterFill.parentElement?.setAttribute('aria-valuenow', String(state.tdMeter));
+    this.meterTrack.setAttribute('aria-valuemax', String(SCORE_CONFIG.tdMeterMaximum));
+    this.meterTrack.setAttribute('aria-valuenow', String(state.tdMeter));
     const bonusActive = selectTdBonusActive(state);
-    this.meterFill.parentElement?.classList.toggle('is-active', bonusActive);
-    this.meterLabel.textContent = bonusActive
-      ? 'TD BONUS ACTIVE'
-      : `TD BONUS ${state.tdMeter}/${SCORE_CONFIG.tdMeterMaximum}`;
+    this.meterTrack.setAttribute(
+      'aria-valuetext',
+      bonusActive
+        ? 'Adrenaline full. Let it rip!'
+        : `${state.tdMeter} of ${SCORE_CONFIG.tdMeterMaximum} Adrenaline`,
+    );
+    this.meterTrack.classList.toggle('is-active', bonusActive);
+    this.adrenalineMeter.classList.toggle('is-active', bonusActive);
     const multiplier = selectTouchdownMultiplier(state);
     this.multiplier.textContent = state.touchdownStreak > 0 ? `TD x${multiplier}` : 'TD x1';
     this.muteButton.setAttribute('aria-pressed', String(state.settings.masterMuted));
@@ -373,24 +387,31 @@ export class UiController {
           <canvas id="game-canvas" aria-label="Football passing playfield" tabindex="-1"></canvas>
 
           <div class="game-hud" id="game-hud" hidden>
+            <div class="hud-time-cluster" role="timer" aria-label="Game clock">
+              <strong id="hud-timer">1:00</strong>
+            </div>
+
+            <div class="hud-controls">
+              <button class="icon-button" id="mute-button" aria-label="Toggle audio" aria-pressed="false"><img id="mute-button-icon" src="/assets/art/icon-unmute.svg" alt="" aria-hidden="true" /></button>
+              <button class="icon-button" id="pause-button" aria-label="Pause game"><img src="/assets/art/icon-pause.svg" alt="" aria-hidden="true" /></button>
+            </div>
+
             <div class="hud-score-cluster">
               <span class="hud-kicker">POINTS</span>
               <strong id="hud-score">0</strong>
             </div>
-            <div class="hud-center-window" aria-hidden="true"><span>NOVA DOME</span></div>
-            <div class="hud-right-rack">
-              <div class="hud-bonus-cluster">
-                <div class="meter-copy" id="meter-label">TD BONUS 0/${SCORE_CONFIG.tdMeterMaximum}</div>
-                <div class="meter-track" role="meter" aria-label="Touchdown bonus meter" aria-valuemin="0" aria-valuemax="${SCORE_CONFIG.tdMeterMaximum}">
-                  <div class="meter-fill" id="meter-fill"></div>
-                </div>
-                <div class="hud-multiplier" id="hud-multiplier">TD x1</div>
+
+            <div class="hud-bonus-cluster" id="adrenaline-meter">
+              <div class="meter-heading">
+                <div class="meter-title">Adrenaline</div>
+                <div class="meter-action">Complete Passes</div>
               </div>
-              <div class="hud-time-cluster">
-                <span class="hud-kicker">TIME</span>
-                <strong id="hud-timer">60</strong>
-                <button class="icon-button" id="mute-button" aria-label="Toggle audio" aria-pressed="false"><img id="mute-button-icon" src="/assets/art/icon-unmute.svg" alt="" aria-hidden="true" /></button>
-                <button class="icon-button" id="pause-button" aria-label="Pause game"><img src="/assets/art/icon-pause.svg" alt="" aria-hidden="true" /></button>
+              <span class="hud-multiplier" id="hud-multiplier">TD x1</span>
+              <div class="meter-track" role="meter" aria-label="Adrenaline meter" aria-valuemin="0" aria-valuemax="${SCORE_CONFIG.tdMeterMaximum}">
+                <div class="meter-fill" id="meter-fill"></div>
+              </div>
+              <div class="meter-underbar">
+                <span class="meter-ready-copy" aria-hidden="true">LET IT RIP!</span>
               </div>
             </div>
           </div>
@@ -430,7 +451,7 @@ export class UiController {
                 <li><strong>Rip fast for a bullet.</strong> Ease up for a higher lob.</li>
               </ol>
               <div class="rule-chips">
-                <span>Deep = more points</span><span>Completions fill TD Bonus</span><span>Misses wipe the meter</span><span>Back-to-back TDs multiply</span>
+                <span>Deep = more points</span><span>Completions fill Adrenaline</span><span>Misses wipe the meter</span><span>Back-to-back TDs multiply</span>
               </div>
               <div class="panel-actions">
                 <button class="arcade-button secondary" id="instructions-back-button">BACK</button>

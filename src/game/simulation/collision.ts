@@ -61,6 +61,8 @@ export const findReceiverCollision = (
       ? worldToScreen(ball.current, COLLISION_PROJECTION)
       : null;
   for (const receiver of receivers) {
+    if (receiver.hasCaught) continue;
+
     const lane = getLaneConfig(receiver.laneId);
     const progress = crossingProgress(
       ball.previous.depth,

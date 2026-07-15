@@ -392,6 +392,64 @@ try {
       `An X placed on the receiver body must register a catch (${JSON.stringify({ bodyTarget, afterBodyAim })})`,
     );
     await screenshot(page, '03c-body-aim-catch');
+
+    const caughtReceiver = afterBodyAim.receivers.find(
+      (receiver) => receiver.id === bodyAimReceiver.id,
+    );
+    check(
+      caughtReceiver?.hasCaught === true,
+      'A receiver must become catch-ineligible after completing a pass',
+    );
+    if (caughtReceiver) {
+      await advance(page, 400);
+      const retryState = await state(page);
+      const retryReceiver = retryState.receivers.find(
+        (receiver) => receiver.id === caughtReceiver.id,
+      );
+      check(
+        Boolean(retryReceiver),
+        'The caught receiver must still be on the same trip for retry QA',
+      );
+      if (retryReceiver) {
+        check(
+          retryReceiver.visualPose === 'carry',
+          `A caught receiver must switch to the ball-carrying frame (${JSON.stringify(retryReceiver)})`,
+        );
+        await screenshot(page, '03d-receiver-carry');
+        await advance(page, 125);
+        const animatedRetryState = await state(page);
+        const animatedRetryReceiver = animatedRetryState.receivers.find(
+          (receiver) => receiver.id === retryReceiver.id,
+        );
+        check(
+          animatedRetryReceiver?.visualPose === 'carry' &&
+            animatedRetryReceiver.visualFrame !== retryReceiver.visualFrame,
+          `The post-catch carry pose must animate its legs (${JSON.stringify({ retryReceiver, animatedRetryReceiver })})`,
+        );
+        await screenshot(page, '03d2-receiver-carry-next-frame');
+        if (!animatedRetryReceiver) throw new Error('Caught receiver left before carry-cycle QA');
+        const completedBeforeRetry =
+          animatedRetryState.stats.completions + animatedRetryState.stats.touchdowns;
+        await mouseThrow(
+          page,
+          {
+            x: animatedRetryReceiver.x + animatedRetryReceiver.direction * 96,
+            y: animatedRetryReceiver.y - 70,
+          },
+          { durationMs: 70 },
+        );
+        const retryBall = (await state(page)).ball;
+        check(Boolean(retryBall), 'A retry throw at the caught receiver must release');
+        await advance(page, (retryBall?.durationMs ?? 1_200) + 80);
+        const afterRetry = await state(page);
+        check(
+          afterRetry.stats.completions + afterRetry.stats.touchdowns === completedBeforeRetry,
+          'The same receiver must not record a second catch before respawning',
+        );
+        await screenshot(page, '03e-caught-receiver-ignored');
+        await advance(page, 300);
+      }
+    }
   }
 
   await pausedTrackpadThrow(page, { x: 512, y: 500 });
@@ -498,7 +556,7 @@ try {
   await page.locator('#resume-button').click();
   check((await state(page)).phase === 'playing', 'Resume must return to gameplay');
 
-  for (let index = 0; index < 6; index += 1) await forceOutcome(page, 'complete');
+  for (let index = 0; index < 3; index += 1) await forceOutcome(page, 'complete');
   await forceOutcome(page, 'touchdown');
   await forceOutcome(page, 'touchdown');
   const bonusState = await state(page);
@@ -507,6 +565,17 @@ try {
     'Successful plays must fill the TD Bonus meter',
   );
   check(bonusState.touchdownStreak === 2, 'Consecutive touchdowns must build the streak');
+  await page.waitForTimeout(220);
+  const meterTrackWidth = await page
+    .locator('.meter-track')
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).width));
+  const meterFillWidth = await page
+    .locator('#meter-fill')
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).width));
+  check(
+    meterFillWidth >= meterTrackWidth - 8,
+    `An active TD Bonus must render a full meter (${meterFillWidth}/${meterTrackWidth}px)`,
+  );
   await screenshot(page, '06-td-bonus-streak');
 
   const timerBeforeMute = (await state(page)).remainingMs;

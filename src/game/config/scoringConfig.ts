@@ -20,12 +20,12 @@ export interface ScoreConfig {
 // Deliberately mutable in development. runtimeTuning.ts owns validated writes.
 export const SCORE_CONFIG: ScoreConfig = {
   lanes: {
-    short: { completionPoints: 500, tdMeterGain: 1 },
-    medium: { completionPoints: 1_000, tdMeterGain: 2 },
-    deep: { completionPoints: 1_500, tdMeterGain: 3 },
-    touchdown: { completionPoints: 2_500, tdMeterGain: 4 },
+    short: { completionPoints: 500, tdMeterGain: 15 },
+    medium: { completionPoints: 1_000, tdMeterGain: 35 },
+    deep: { completionPoints: 1_500, tdMeterGain: 50 },
+    touchdown: { completionPoints: 2_500, tdMeterGain: 0 },
   },
-  tdMeterMaximum: 12,
+  tdMeterMaximum: 100,
   tdBonusPoints: 3_000,
   touchdownMultipliers: [1, 1.25, 1.5, 2, 2.5, 3],
   incompletionPoints: 0,

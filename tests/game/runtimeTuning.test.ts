@@ -120,7 +120,7 @@ describe('development runtime tuning', () => {
     resetRuntimeTuningToDefaults();
 
     expect(GAMEPLAY_CONFIG.ballRadiusPx).toBe(12);
-    expect(SCORE_CONFIG.tdMeterMaximum).toBe(12);
+    expect(SCORE_CONFIG.tdMeterMaximum).toBe(100);
     expect(SCORE_CONFIG.touchdownMultipliers).toEqual([1, 1.25, 1.5, 2, 2.5, 3]);
     expect(isRuntimeTuningControlOverridden('ball-radius')).toBe(false);
   });

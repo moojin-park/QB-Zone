@@ -169,3 +169,131 @@ have to aim lower in order to have the receiver catch it."
 - [x] Cover slow lobs, fast throws, pre-descent non-catches, clear misses, endpoint resolution, and end-zone body targets above the horizon.
 - [x] Add a real browser regression that places the X 70 pixels up the receiver's body and requires a genuine completion.
 - [x] Inspect the completion and destination-X captures; the full browser report passes with no failures or console errors.
+
+## 100-point TD Bonus meter (2026-07-14)
+
+User direction: the TD Bonus meter requires 100 TD Meter Points; short,
+medium, and deep completions award 15, 35, and 50 meter points.
+
+- [x] Replace the 12-point meter with a 100-point maximum.
+- [x] Award 15/35/50 meter points for short/medium/deep completions.
+- [x] Keep the touchdown as the payoff play rather than a meter-building play.
+- [x] Re-run unit, lint, format, build, and screenshot-based browser verification.
+
+## Broadcast HUD relocation and restyle (2026-07-14)
+
+User direction: move the points and TD meter HUD to the bottom, move the clock
+to the top center with a stylized italic football-broadcast treatment, and make
+the meter larger and more visually distinctive.
+
+- [x] Separate the HUD into a top-center clock, top-right controls, bottom-left score pod, and bottom-right TD meter pod.
+- [x] Preserve the lower-center throwing lane by keeping both bottom pods clear of the quarterback's core input area.
+- [x] Format the timer as a broadcast clock (`1:00`, `0:59`) and add a clipped, italic scorebug treatment.
+- [x] Enlarge the TD meter with ten visible charge segments, a clearer value/readiness state, and integrated multiplier styling.
+- [x] Verify desktop 4:3, widescreen, mobile landscape, filled-meter, pause, input, and results flows with no console errors.
+- [x] Pass 220 tests, ESLint, Prettier, the production build, and the full browser playtest.
+
+## Clock-only HUD follow-up (2026-07-14)
+
+User direction: the broadcast clock panel felt distracting and visually
+off-center; keep only the clock itself.
+
+- [x] Remove the PV badge, game-clock label, venue copy, metal frame, and accent strip.
+- [x] Center the time by its own rendered width at the exact horizontal midpoint.
+- [x] Retain italic broadcast numerals, tabular spacing, and a compact contrast outline.
+- [x] Verify desktop, widescreen, mobile, timer progression, and active-bonus screenshots with no console errors.
+- [x] Pass 220 tests, ESLint, Prettier, the production build, and the full browser playtest.
+
+## Adrenaline curved meter redesign (2026-07-14)
+
+User direction: rename the TD meter to Adrenaline, move it to the top-left,
+remove its rectangular container and numerical counter, replace the bar with a
+tapered curve, enlarge its supporting copy and multiplier, and make the filled
+state flash more clearly.
+
+- [x] Rebrand the HUD title and instructions as Adrenaline and replace `READY AT 100` with `LET IT RIP!`.
+- [x] Remove the visible `0 / 100` counter while retaining ARIA value and full-state text.
+- [x] Move the frameless gauge to the top-left without colliding with the centered clock or controls.
+- [x] Build a scalable smooth arc that starts narrow, widens rightward, and retains ten visible charge segments.
+- [x] Color the first seven filled segments yellow and the final three red.
+- [x] Enlarge both footer labels and place the larger multiplier directly beneath the arc.
+- [x] Add a flashing full-state glow plus a bright static reduced-motion treatment.
+- [x] Verify desktop, widescreen, mobile, empty/full states, bounds, accessibility, and animation behavior with no console errors.
+- [x] Pass 220 tests, ESLint, Prettier, the production build, and the full browser playtest.
+
+## One catch per receiver spawn (2026-07-14)
+
+User direction: once a receiver catches a ball, that receiver must not catch
+another ball before leaving the screen and respawning.
+
+- [x] Confirm receivers despawn beyond the sideline and are replaced by new objects with new IDs.
+- [x] Add per-spawn catch state and remove caught receivers from both receiver collision paths.
+- [x] Reset catch eligibility only when a new receiver object spawns.
+- [x] Pass 91 focused collision, update-loop, and spawn regressions.
+- [x] Add a browser regression that throws twice at the same receiver before it respawns.
+- [x] Pass all 222 tests, ESLint, Prettier, the production build, and the full browser playtest.
+- [x] Inspect the caught-receiver retry capture; the second throw scores no completion and reports no console errors.
+
+## Adrenaline HUD hierarchy and corner swap (2026-07-14)
+
+User direction: place `COMPLETE PASSES` beside `ADRENALINE`, move the
+borderless TD multiplier to the left beneath a more pronounced climbing meter,
+keep `LET IT RIP!` close beneath the meter's right side, move Points to the
+bottom-right, and move the Pause/Music controls to the bottom-left.
+
+- [x] Pair the Adrenaline and Complete Passes headings above the gauge.
+- [x] Increase the gauge width, height, slope, segment contrast, and separator weight.
+- [x] Anchor partial-fill color to the full gauge so red appears only in the final three ticks.
+- [x] Place the borderless, enlarged TD multiplier under the left edge and Let It Rip under the right edge.
+- [x] Mirror the Points scorebug to the bottom-right and preserve enough width for five-digit scores.
+- [x] Move the working Music and Pause controls to the bottom-left.
+- [x] Verify desktop 4:3, widescreen, phone landscape, pause, mute, empty/full meter, and large-score states with no console errors.
+- [x] Pass 222 tests, ESLint, Prettier, the production build, and the full browser playtest.
+
+## Adrenaline multiplier and final-segment lift (2026-07-14)
+
+User direction: make the four rightmost meter bars taller, move the multiplier
+directly below `ADRENALINE`, and enlarge it to use that open space.
+
+- [x] Preserve the low first-six-segment profile while increasing the height of segments seven through ten.
+- [x] Move the live TD multiplier into the open area beneath the Adrenaline title.
+- [x] Increase multiplier type size while keeping the meter and centered clock separated.
+- [x] Verify empty/full states at desktop 4:3 and phone-landscape sizes with no console errors.
+- [x] Pass 222 tests, ESLint, Prettier, the production build, and the full browser playtest.
+
+## Adrenaline raised-segment fill correction (2026-07-14)
+
+User direction: the taller right-side meter bars must visibly fill all the way
+to their raised tips.
+
+- [x] Confirm the fill width and revised mask already reach the complete segment silhouette.
+- [x] Remove the fill-level white cap that made raised yellow/red tips look empty.
+- [x] Retain the track-level sheen, bottom depth, segment separators, and full-state flash.
+- [x] Verify 70%, 80%, 90%, and 100% fills plus desktop/mobile gameplay captures.
+- [x] Pass 222 tests, ESLint, Prettier, the production build, and the full browser playtest.
+
+## Post-catch receiver carry frame (2026-07-14)
+
+User direction: after a receiver catches the ball, show that receiver carrying
+the football so his catch-ineligible state remains visually clear.
+
+- [x] Generate and normalize a new mid-stride carry pose with the football tucked securely against the receiver's body.
+- [x] Expand the receiver source strip from six to seven slots while preserving the existing shared scale and bottom-center anchor.
+- [x] Generate exact left/right carry assets and expand the runtime set from 26 to 28 lossless WebPs.
+- [x] Hold the catch or touchdown reaction briefly, then keep the carry pose active until that receiver leaves the screen and respawns.
+- [x] Expose the selected visual pose through `render_game_to_text` and add deterministic pose/asset coverage.
+- [x] Add browser captures for the carry transition and the ignored second throw at the same receiver.
+- [x] Pass all 224 tests, ESLint, Prettier, the production build, sprite-pipeline dry-run, and the full desktop/wide/mobile browser playtest with no console errors.
+
+## Animated post-catch carry cycle (2026-07-14)
+
+User direction: the receiver's legs must keep moving like the regular running
+animation after he catches and carries the football.
+
+- [x] Expand the single carry pose into four possession frames with distinct sprint-leg phases and one securely tucked football in every frame.
+- [x] Expand the receiver source strip from seven to ten slots and the generated runtime set from 28 to 34 lossless WebPs.
+- [x] Preserve the existing receiver scale, bottom-center anchor, and exact left/right mirroring.
+- [x] Animate the carry cycle with the same 115 ms per-frame cadence and per-player phase offset as the regular running cycle.
+- [x] Expose the one-based selected visual frame through `render_game_to_text`.
+- [x] Add unit and browser regressions proving the same caught receiver changes carry frames after 125 ms while remaining catch-ineligible.
+- [x] Pass all 225 tests, ESLint, Prettier, the production build, sprite-pipeline dry-run, and the complete desktop/wide/mobile browser playtest with no console errors.

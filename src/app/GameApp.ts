@@ -37,7 +37,11 @@ import {
   type PersistedGameData,
   type PreparedContinueAd,
 } from '../game/platform';
-import { CanvasRenderer, type AimPreview } from '../game/rendering/CanvasRenderer';
+import {
+  CanvasRenderer,
+  getReceiverVisualSelection,
+  type AimPreview,
+} from '../game/rendering/CanvasRenderer';
 import {
   getQuarterbackRect,
   isPointOnQuarterback,
@@ -763,6 +767,7 @@ export class GameApp {
       receivers: this.state.receivers.map((receiver) => {
         const depth = getLaneConfig(receiver.laneId).normalizedDepth;
         const screen = worldToScreen({ x: receiver.x, depth, height: 0 }, projection);
+        const visual = getReceiverVisualSelection(receiver);
         return {
           id: receiver.id,
           lane: receiver.laneId,
@@ -770,6 +775,9 @@ export class GameApp {
           y: Math.round(screen.y),
           direction: receiver.direction,
           pose: receiver.pose,
+          visualPose: visual.pose,
+          visualFrame: visual.frame + 1,
+          hasCaught: receiver.hasCaught,
           animationMs: Math.round(receiver.animationMs),
         };
       }),

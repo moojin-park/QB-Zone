@@ -29,6 +29,7 @@ const stationaryReceiver = (laneId: LaneId, x = 0): ReceiverState => ({
   speedPerMs: 0,
   animationMs: 0,
   pose: 'run',
+  hasCaught: false,
 });
 
 const setBallApproachingTarget = (state: GameState, laneId: LaneId, x = 0): number => {
@@ -171,7 +172,22 @@ describe('pass resolution through updateGame', () => {
     expect(state.score).toBe(500);
     expect(state.ball).toBeNull();
     expect(state.receivers[0]!.pose).toBe('catch');
+    expect(state.receivers[0]!.hasCaught).toBe(true);
     expect(state.receivers[0]!.animationMs).toBe(0);
+  });
+
+  it('allows a receiver to catch only once before that receiver respawns', () => {
+    const state = quiescentPlayingState();
+    const target = stationaryReceiver('short');
+    state.receivers = [target];
+
+    let stepMs = setBallApproachingTarget(state, 'short');
+    expect(updateGame(state, stepMs).passResolved).toBe('completion');
+
+    stepMs = setBallApproachingTarget(state, 'short');
+    expect(updateGame(state, stepMs).passResolved).toBeNull();
+    expect(state.stats.completions).toBe(1);
+    expect(target.hasCaught).toBe(true);
   });
 
   it('resolves a swept end-zone catch as a touchdown', () => {
@@ -188,6 +204,7 @@ describe('pass resolution through updateGame', () => {
     });
     expect(state.score).toBe(2_500);
     expect(state.receivers[0]!.pose).toBe('celebrate');
+    expect(state.receivers[0]!.hasCaught).toBe(true);
     expect(state.receivers[0]!.animationMs).toBe(0);
   });
 

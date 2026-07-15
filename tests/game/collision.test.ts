@@ -50,6 +50,7 @@ const receiver = (laneId: ReceiverState['laneId'], x = 0, id = 1): ReceiverState
   speedPerMs: 0,
   animationMs: 0,
   pose: 'run',
+  hasCaught: false,
 });
 
 const defender = (depth = 0.5, x = 0): DefenderState => ({
@@ -208,6 +209,14 @@ describe('receiver and defender collision ordering', () => {
     const ball = ballBetween(world(0.4, 0.2, 0.5), world(0.4, 0.35, 0.5));
 
     expect(findReceiverCollision(ball, [receiver('short', 0)])).toBeNull();
+  });
+
+  it('ignores a receiver that already caught a ball during its current trip', () => {
+    const ball = ballBetween(world(0, 0.2, 0.5), world(0, 0.35, 0.5));
+    const ineligibleReceiver = receiver('short');
+    ineligibleReceiver.hasCaught = true;
+
+    expect(findReceiverCollision(ball, [ineligibleReceiver])).toBeNull();
   });
 
   it('selects the first receiver lane crossed during a large simulation step', () => {

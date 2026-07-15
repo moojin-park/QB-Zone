@@ -79,6 +79,7 @@ export const updateGame = (state: GameState, deltaMs: number): UpdateResult => {
       laneId = collision.laneId;
       outcome = laneId === 'touchdown' ? 'touchdown' : 'completion';
       if (collision.receiver) {
+        collision.receiver.hasCaught = true;
         collision.receiver.pose = outcome === 'touchdown' ? 'celebrate' : 'catch';
         collision.receiver.animationMs = 0;
       }
