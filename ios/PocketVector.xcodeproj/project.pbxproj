@@ -43,6 +43,18 @@
 		11000000000000000000000F /* DomainContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21000000000000000000000F /* DomainContractTests.swift */; };
 		110000000000000000000010 /* CatalogRulesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000010 /* CatalogRulesTests.swift */; };
 		110000000000000000000011 /* EconomyAchievementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000011 /* EconomyAchievementTests.swift */; };
+		120000000000000000000001 /* GameCenterServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000001 /* GameCenterServices.swift */; };
+		120000000000000000000002 /* StoreTransactionServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000002 /* StoreTransactionServices.swift */; };
+		120000000000000000000003 /* RewardedAdServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000003 /* RewardedAdServices.swift */; };
+		120000000000000000000004 /* CloudSyncServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000004 /* CloudSyncServices.swift */; };
+		120000000000000000000005 /* TelemetryServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000005 /* TelemetryServices.swift */; };
+		120000000000000000000006 /* DiagnosticsServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000006 /* DiagnosticsServices.swift */; };
+		12000000000000000000000C /* ServiceAccountBindings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22000000000000000000000C /* ServiceAccountBindings.swift */; };
+		120000000000000000000007 /* GameCenterServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000007 /* GameCenterServiceTests.swift */; };
+		120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000008 /* StoreTransactionServiceTests.swift */; };
+		120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000009 /* RewardedAdServiceTests.swift */; };
+		12000000000000000000000A /* CloudSyncServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22000000000000000000000A /* CloudSyncServiceTests.swift */; };
+		12000000000000000000000B /* TelemetryDiagnosticsServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22000000000000000000000B /* TelemetryDiagnosticsServiceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -94,6 +106,18 @@
 		21000000000000000000000F /* DomainContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainContractTests.swift; sourceTree = "<group>"; };
 		210000000000000000000010 /* CatalogRulesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogRulesTests.swift; sourceTree = "<group>"; };
 		210000000000000000000011 /* EconomyAchievementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EconomyAchievementTests.swift; sourceTree = "<group>"; };
+		220000000000000000000001 /* GameCenterServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterServices.swift; sourceTree = "<group>"; };
+		220000000000000000000002 /* StoreTransactionServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTransactionServices.swift; sourceTree = "<group>"; };
+		220000000000000000000003 /* RewardedAdServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdServices.swift; sourceTree = "<group>"; };
+		220000000000000000000004 /* CloudSyncServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncServices.swift; sourceTree = "<group>"; };
+		220000000000000000000005 /* TelemetryServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryServices.swift; sourceTree = "<group>"; };
+		220000000000000000000006 /* DiagnosticsServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsServices.swift; sourceTree = "<group>"; };
+		22000000000000000000000C /* ServiceAccountBindings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceAccountBindings.swift; sourceTree = "<group>"; };
+		220000000000000000000007 /* GameCenterServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterServiceTests.swift; sourceTree = "<group>"; };
+		220000000000000000000008 /* StoreTransactionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTransactionServiceTests.swift; sourceTree = "<group>"; };
+		220000000000000000000009 /* RewardedAdServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdServiceTests.swift; sourceTree = "<group>"; };
+		22000000000000000000000A /* CloudSyncServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncServiceTests.swift; sourceTree = "<group>"; };
+		22000000000000000000000B /* TelemetryDiagnosticsServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryDiagnosticsServiceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -140,6 +164,7 @@
 				310000000000000000000002 /* Catalog */,
 				310000000000000000000003 /* Economy */,
 				310000000000000000000004 /* Achievements */,
+				320000000000000000000001 /* Services */,
 				300000000000000000000005 /* Game */,
 				300000000000000000000008 /* Resources */,
 			);
@@ -208,6 +233,11 @@
 				21000000000000000000000F /* DomainContractTests.swift */,
 				210000000000000000000010 /* CatalogRulesTests.swift */,
 				210000000000000000000011 /* EconomyAchievementTests.swift */,
+				220000000000000000000007 /* GameCenterServiceTests.swift */,
+				220000000000000000000008 /* StoreTransactionServiceTests.swift */,
+				220000000000000000000009 /* RewardedAdServiceTests.swift */,
+				22000000000000000000000A /* CloudSyncServiceTests.swift */,
+				22000000000000000000000B /* TelemetryDiagnosticsServiceTests.swift */,
 			);
 			path = PocketVectorTests;
 			sourceTree = "<group>";
@@ -260,6 +290,20 @@
 				21000000000000000000000E /* AchievementEvaluator.swift */,
 			);
 			path = Achievements;
+			sourceTree = "<group>";
+		};
+		320000000000000000000001 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				220000000000000000000001 /* GameCenterServices.swift */,
+				220000000000000000000002 /* StoreTransactionServices.swift */,
+				220000000000000000000003 /* RewardedAdServices.swift */,
+				220000000000000000000004 /* CloudSyncServices.swift */,
+				220000000000000000000005 /* TelemetryServices.swift */,
+				220000000000000000000006 /* DiagnosticsServices.swift */,
+				22000000000000000000000C /* ServiceAccountBindings.swift */,
+			);
+			path = Services;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -392,6 +436,13 @@
 				11000000000000000000000C /* RunRewardCalculator.swift in Sources */,
 				11000000000000000000000D /* AchievementCatalog.swift in Sources */,
 				11000000000000000000000E /* AchievementEvaluator.swift in Sources */,
+				120000000000000000000001 /* GameCenterServices.swift in Sources */,
+				120000000000000000000002 /* StoreTransactionServices.swift in Sources */,
+				120000000000000000000003 /* RewardedAdServices.swift in Sources */,
+				120000000000000000000004 /* CloudSyncServices.swift in Sources */,
+				120000000000000000000005 /* TelemetryServices.swift in Sources */,
+				120000000000000000000006 /* DiagnosticsServices.swift in Sources */,
+				12000000000000000000000C /* ServiceAccountBindings.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -403,6 +454,11 @@
 				11000000000000000000000F /* DomainContractTests.swift in Sources */,
 				110000000000000000000010 /* CatalogRulesTests.swift in Sources */,
 				110000000000000000000011 /* EconomyAchievementTests.swift in Sources */,
+				120000000000000000000007 /* GameCenterServiceTests.swift in Sources */,
+				120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */,
+				120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */,
+				12000000000000000000000A /* CloudSyncServiceTests.swift in Sources */,
+				12000000000000000000000B /* TelemetryDiagnosticsServiceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
