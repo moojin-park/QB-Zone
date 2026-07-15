@@ -17,29 +17,29 @@ collision behavior, difficulty, or leaderboard eligibility.
 
 ## Locked launch scope
 
-| Area | Version 1 requirement |
-| --- | --- |
-| Public title | Pocket Vector |
-| Audience | General audience; do not enroll in or market as Apple's Kids Category |
-| Devices | iPhone and iPad |
-| Orientation | Landscape only |
-| Minimum OS | iOS 17 |
-| Gameplay | Preserve the current 60-second core game |
-| Teams | Eight total: four free and four unlocked with coins |
-| Matchup | Player selects the offense; defense is randomized from the other seven teams |
-| Locked opponents | A locked team may still appear as a randomized opponent |
-| Team presentation | The selected offense controls uniforms, logo, end-zone branding, and HUD colors |
-| Jerseys | Every team includes its primary jersey and has one separately unlockable alternate jersey |
-| Footballs | One default football and one unlockable alternate football; unlocked footballs work with every team |
-| Currency | Coins are earned through gameplay, rewarded advertisements, and StoreKit purchases |
-| Purchases | Consumable coin packs only; no remove-ads purchase in version 1 |
-| Ads | Optional rewarded advertisement after every five completed valid runs; never automatic |
-| Game Center | One all-time global high-score leaderboard and exactly eight achievements |
-| Local persistence | Personal best, aggregate statistics, tutorial completion, settings, selected team, selected jersey, selected football, inventory, and coin ledger |
-| Cross-device persistence | Private CloudKit synchronization; purchases require available iCloud state, while core gameplay remains playable offline |
-| Saved settings | Music level, SFX level, mute, reduced motion, and tutorial completion |
-| Diagnostics | Apple crash diagnostics plus minimal privacy-conscious gameplay and commerce events |
-| Browser project | Not part of this repository's active product; a separate browser project already exists |
+| Area                     | Version 1 requirement                                                                                                                             |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Public title             | Pocket Vector                                                                                                                                     |
+| Audience                 | General audience; do not enroll in or market as Apple's Kids Category                                                                             |
+| Devices                  | iPhone and iPad                                                                                                                                   |
+| Orientation              | Landscape only                                                                                                                                    |
+| Minimum OS               | iOS 17                                                                                                                                            |
+| Gameplay                 | Preserve the current 60-second core game                                                                                                          |
+| Teams                    | Eight total: four free and four unlocked with coins                                                                                               |
+| Matchup                  | Player selects the offense; defense is randomized from the other seven teams                                                                      |
+| Locked opponents         | A locked team may still appear as a randomized opponent                                                                                           |
+| Team presentation        | The selected offense controls uniforms, logo, end-zone branding, and HUD colors                                                                   |
+| Jerseys                  | Every team includes its primary jersey and has one separately unlockable alternate jersey                                                         |
+| Footballs                | One default football and one unlockable alternate football; unlocked footballs work with every team                                               |
+| Currency                 | Coins are earned through gameplay, rewarded advertisements, and StoreKit purchases                                                                |
+| Purchases                | Consumable coin packs only; no remove-ads purchase in version 1                                                                                   |
+| Ads                      | Optional rewarded advertisement after every five completed valid runs; never automatic                                                            |
+| Game Center              | One all-time global high-score leaderboard and exactly eight achievements                                                                         |
+| Local persistence        | Personal best, aggregate statistics, tutorial completion, settings, selected team, selected jersey, selected football, inventory, and coin ledger |
+| Cross-device persistence | Private CloudKit synchronization; purchases require available iCloud state, while core gameplay remains playable offline                          |
+| Saved settings           | Music level, SFX level, mute, reduced motion, and tutorial completion                                                                             |
+| Diagnostics              | Apple crash diagnostics plus minimal privacy-conscious gameplay and commerce events                                                               |
+| Browser project          | Not part of this repository's active product; a separate browser project already exists                                                           |
 
 ## Launch menu structure
 
@@ -81,16 +81,16 @@ asset manifest is cyan, violet, and white, while its current red uniforms came
 from the old role-based offense/defense treatment. Selectable teams require
 team-driven colors. The canonical Comets palette is cyan/violet/white.
 
-| Reference | Approved working team | Primary | Secondary | Accent | Identity direction |
-| --- | --- | --- | --- | --- | --- |
-| Existing | Nova City Comets | `#1DE6EF` cyan | `#7D4DFF` violet | `#F7FCFF` white | Comet and orbital trail |
-| Denver | High Mesa Helions | `#F06A3B` ember | `#2B234D` indigo | `#D8F0EC` glacier | Solar disk over an angular mesa; no horse imagery |
-| Los Angeles | Luma Coast Prisms | `#63CFE7` sky aqua | `#30214F` deep plum | `#F4C64E` sun gold | Prism splitting a light beam; no lightning bolt |
-| Green Bay | Foundry Reach Orbiters | `#146353` forge green | `#D4A73E` brass | `#F0E8CF` cream | Riveted orbital ring; no letter or cheese motif |
-| Las Vegas | Neon Basin Eclipses | `#171923` carbon | `#ADB5C2` mercury | `#A05CFF` ultraviolet | Offset disks and corona; no pirate imagery |
-| Kansas City | Meridian Plains Radiants | `#C72F4F` ruby | `#F0A253` solar copper | `#FFF0DD` cream | Geometric reactor or sun core; no arrowhead or Indigenous imagery |
-| Seattle | Rainport Auroras | `#0B3A4A` storm teal | `#9DD643` aurora lime | `#E5F2EA` mist | Aurora bands over a grid wave; no bird imagery |
-| San Francisco | Bayline Redshifts | `#842C4B` garnet | `#C87845` copper | `#DFE5E2` fog | Receding wavelength bars; no bridge, miner, or SF monogram |
+| Reference     | Approved working team    | Primary               | Secondary              | Accent                | Identity direction                                                |
+| ------------- | ------------------------ | --------------------- | ---------------------- | --------------------- | ----------------------------------------------------------------- |
+| Existing      | Nova City Comets         | `#1DE6EF` cyan        | `#7D4DFF` violet       | `#F7FCFF` white       | Comet and orbital trail                                           |
+| Denver        | High Mesa Helions        | `#F06A3B` ember       | `#2B234D` indigo       | `#D8F0EC` glacier     | Solar disk over an angular mesa; no horse imagery                 |
+| Los Angeles   | Luma Coast Prisms        | `#63CFE7` sky aqua    | `#30214F` deep plum    | `#F4C64E` sun gold    | Prism splitting a light beam; no lightning bolt                   |
+| Green Bay     | Foundry Reach Orbiters   | `#146353` forge green | `#D4A73E` brass        | `#F0E8CF` cream       | Riveted orbital ring; no letter or cheese motif                   |
+| Las Vegas     | Neon Basin Eclipses      | `#171923` carbon      | `#ADB5C2` mercury      | `#A05CFF` ultraviolet | Offset disks and corona; no pirate imagery                        |
+| Kansas City   | Meridian Plains Radiants | `#C72F4F` ruby        | `#F0A253` solar copper | `#FFF0DD` cream       | Geometric reactor or sun core; no arrowhead or Indigenous imagery |
+| Seattle       | Rainport Auroras         | `#0B3A4A` storm teal  | `#9DD643` aurora lime  | `#E5F2EA` mist        | Aurora bands over a grid wave; no bird imagery                    |
+| San Francisco | Bayline Redshifts        | `#842C4B` garnet      | `#C87845` copper       | `#DFE5E2` fog         | Receding wavelength bars; no bridge, miner, or SF monogram        |
 
 Approved free teams for launch palette variety:
 
@@ -129,12 +129,12 @@ until validated in TestFlight and are not permanent live-economy commitments.
 
 ### Initial unlock prices
 
-| Item | Coin price | Launch quantity | Total catalog cost |
-| --- | ---: | ---: | ---: |
-| Locked team, including primary jersey | 1,500 | 4 | 6,000 |
-| Alternate jersey | 500 | 8 | 4,000 |
-| Global alternate football | 750 | 1 | 750 |
-| Full launch catalog |  |  | 10,750 |
+| Item                                  | Coin price | Launch quantity | Total catalog cost |
+| ------------------------------------- | ---------: | --------------: | -----------------: |
+| Locked team, including primary jersey |      1,500 |               4 |              6,000 |
+| Alternate jersey                      |        500 |               8 |              4,000 |
+| Global alternate football             |        750 |               1 |                750 |
+| Full launch catalog                   |            |                 |             10,750 |
 
 An alternate jersey for a locked team can be purchased only after that team is
 owned.
@@ -143,12 +143,12 @@ owned.
 
 US prices are launch hypotheses; Apple supplies localized storefront prices.
 
-| Pack | Coins | Proposed US price |
-| --- | ---: | ---: |
-| Pocket | 500 | $0.99 |
-| Team | 1,650 | $2.99 |
-| Bundle | 3,600 | $5.99 |
-| Vault | 6,500 | $9.99 |
+| Pack   | Coins | Proposed US price |
+| ------ | ----: | ----------------: |
+| Pocket |   500 |             $0.99 |
+| Team   | 1,650 |             $2.99 |
+| Bundle | 3,600 |             $5.99 |
+| Vault  | 6,500 |             $9.99 |
 
 Purchased credits never expire. Every gameplay, advertisement, purchase, and
 spend mutation must have an idempotent ledger identifier so a retry, crash,
@@ -166,16 +166,16 @@ reinstall, or device merge cannot grant or spend twice.
 
 ## Game Center achievements
 
-| Achievement | Requirement | Points |
-| --- | --- | ---: |
-| First Read | Complete any successful pass | 25 |
-| Paydirt | Score a touchdown | 50 |
-| Cash the Charge | Score a touchdown while TD Bonus is active | 75 |
-| Full Route Tree | Complete a pass in all four lanes during one run | 75 |
-| Dialed In | Finish with at least 80% accuracy over at least 12 attempts | 75 |
-| Hot Hand | Score four consecutive touchdowns during one run | 100 |
-| Light Up the Board | Reach 25,000 points during one run | 100 |
-| Century of Connections | Complete 100 career passes, including touchdowns | 100 |
+| Achievement            | Requirement                                                 | Points |
+| ---------------------- | ----------------------------------------------------------- | -----: |
+| First Read             | Complete any successful pass                                |     25 |
+| Paydirt                | Score a touchdown                                           |     50 |
+| Cash the Charge        | Score a touchdown while TD Bonus is active                  |     75 |
+| Full Route Tree        | Complete a pass in all four lanes during one run            |     75 |
+| Dialed In              | Finish with at least 80% accuracy over at least 12 attempts |     75 |
+| Hot Hand               | Score four consecutive touchdowns during one run            |    100 |
+| Light Up the Board     | Reach 25,000 points during one run                          |    100 |
+| Century of Connections | Complete 100 career passes, including touchdowns            |    100 |
 
 The set totals 600 Game Center points. Validate the 25,000-point threshold
 against TestFlight score distributions before making permanent App Store
@@ -207,16 +207,18 @@ acquisition baseline are approved.
 
 ## Repository-cleanup gate
 
-The native iOS tree and several assets it currently consumes are untracked, and
-the Xcode project copies the shared `public/assets` directory. Do not delete the
-browser project first.
+The recoverable native baseline and curated iOS resource bundle were completed
+and committed on 2026-07-15. The browser tree remains temporarily as migration
+provenance and must not be removed until the production app layers have been
+integrated and the final native asset inventory has been re-audited.
 
 Required order:
 
-1. Establish a recoverable native baseline in version control.
-2. Move or copy every native runtime asset into a curated iOS resource location.
-3. Retarget Xcode and add resource-presence tests.
-4. Prove build, tests, and archive from a clean checkout.
+1. **Complete:** establish a recoverable native baseline in version control.
+2. **Complete:** move every current native runtime asset into a curated iOS
+   resource location.
+3. **Complete:** retarget Xcode and add resource-presence tests.
+4. **Complete:** prove build, tests, and archive from a clean checkout.
 5. Remove browser source, browser tests/configuration, Bounty Board integration,
    browser-only dependencies, build output, and unused web assets.
 6. Rewrite the root documentation for the iOS-only project.
