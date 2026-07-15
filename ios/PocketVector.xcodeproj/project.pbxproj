@@ -58,6 +58,29 @@
 		130000000000000000000006 /* CompletedRunValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000006 /* CompletedRunValidator.swift */; };
 		130000000000000000000007 /* PersistedEconomyRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000007 /* PersistedEconomyRules.swift */; };
 		130000000000000000000008 /* PlayerProfilePersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230000000000000000000008 /* PlayerProfilePersistenceTests.swift */; };
+		140000000000000000000001 /* AppCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000001 /* AppCoordinator.swift */; };
+		140000000000000000000002 /* AppCoordinatorModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000002 /* AppCoordinatorModels.swift */; };
+		140000000000000000000003 /* GameplaySession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000003 /* GameplaySession.swift */; };
+		140000000000000000000004 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000004 /* AppShellView.swift */; };
+		140000000000000000000005 /* MainMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000005 /* MainMenuView.swift */; };
+		140000000000000000000006 /* TeamSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000006 /* TeamSelectionView.swift */; };
+		140000000000000000000007 /* LockerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000007 /* LockerView.swift */; };
+		140000000000000000000008 /* AchievementsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000008 /* AchievementsView.swift */; };
+		140000000000000000000009 /* CoinStoreView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000009 /* CoinStoreView.swift */; };
+		14000000000000000000000A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24000000000000000000000A /* SettingsView.swift */; };
+		14000000000000000000000B /* RunResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24000000000000000000000B /* RunResultsView.swift */; };
+		14000000000000000000000C /* LegacyGameplayAdapterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24000000000000000000000C /* LegacyGameplayAdapterView.swift */; };
+		14000000000000000000000D /* PocketVectorTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24000000000000000000000D /* PocketVectorTheme.swift */; };
+		14000000000000000000000E /* PocketVectorComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24000000000000000000000E /* PocketVectorComponents.swift */; };
+		14000000000000000000000F /* AppPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24000000000000000000000F /* AppPresentation.swift */; };
+		140000000000000000000010 /* AppCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000010 /* AppCoordinatorTests.swift */; };
+		140000000000000000000011 /* AppPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000011 /* AppPresentationTests.swift */; };
+		140000000000000000000012 /* GameplaySessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000012 /* GameplaySessionTests.swift */; };
+		140000000000000000000013 /* GameplayCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 240000000000000000000013 /* GameplayCoordinatorTests.swift */; };
+		150000000000000000000001 /* GameKitGameCenterAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 250000000000000000000001 /* GameKitGameCenterAdapter.swift */; };
+		150000000000000000000002 /* GameKitGameCenterAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 250000000000000000000002 /* GameKitGameCenterAdapterTests.swift */; };
+		160000000000000000000001 /* LaunchVisualIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 260000000000000000000001 /* LaunchVisualIdentity.swift */; };
+		160000000000000000000002 /* LaunchVisualIdentityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 260000000000000000000002 /* LaunchVisualIdentityTests.swift */; };
 		120000000000000000000007 /* GameCenterServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000007 /* GameCenterServiceTests.swift */; };
 		120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000008 /* StoreTransactionServiceTests.swift */; };
 		120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000009 /* RewardedAdServiceTests.swift */; };
@@ -129,6 +152,29 @@
 		230000000000000000000006 /* CompletedRunValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompletedRunValidator.swift; sourceTree = "<group>"; };
 		230000000000000000000007 /* PersistedEconomyRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistedEconomyRules.swift; sourceTree = "<group>"; };
 		230000000000000000000008 /* PlayerProfilePersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerProfilePersistenceTests.swift; sourceTree = "<group>"; };
+		240000000000000000000001 /* AppCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinator.swift; sourceTree = "<group>"; };
+		240000000000000000000002 /* AppCoordinatorModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinatorModels.swift; sourceTree = "<group>"; };
+		240000000000000000000003 /* GameplaySession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplaySession.swift; sourceTree = "<group>"; };
+		240000000000000000000004 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
+		240000000000000000000005 /* MainMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainMenuView.swift; sourceTree = "<group>"; };
+		240000000000000000000006 /* TeamSelectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamSelectionView.swift; sourceTree = "<group>"; };
+		240000000000000000000007 /* LockerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockerView.swift; sourceTree = "<group>"; };
+		240000000000000000000008 /* AchievementsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AchievementsView.swift; sourceTree = "<group>"; };
+		240000000000000000000009 /* CoinStoreView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoinStoreView.swift; sourceTree = "<group>"; };
+		24000000000000000000000A /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		24000000000000000000000B /* RunResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunResultsView.swift; sourceTree = "<group>"; };
+		24000000000000000000000C /* LegacyGameplayAdapterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegacyGameplayAdapterView.swift; sourceTree = "<group>"; };
+		24000000000000000000000D /* PocketVectorTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PocketVectorTheme.swift; sourceTree = "<group>"; };
+		24000000000000000000000E /* PocketVectorComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PocketVectorComponents.swift; sourceTree = "<group>"; };
+		24000000000000000000000F /* AppPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresentation.swift; sourceTree = "<group>"; };
+		240000000000000000000010 /* AppCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCoordinatorTests.swift; sourceTree = "<group>"; };
+		240000000000000000000011 /* AppPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresentationTests.swift; sourceTree = "<group>"; };
+		240000000000000000000012 /* GameplaySessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplaySessionTests.swift; sourceTree = "<group>"; };
+		240000000000000000000013 /* GameplayCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameplayCoordinatorTests.swift; sourceTree = "<group>"; };
+		250000000000000000000001 /* GameKitGameCenterAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameKitGameCenterAdapter.swift; sourceTree = "<group>"; };
+		250000000000000000000002 /* GameKitGameCenterAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameKitGameCenterAdapterTests.swift; sourceTree = "<group>"; };
+		260000000000000000000001 /* LaunchVisualIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchVisualIdentity.swift; sourceTree = "<group>"; };
+		260000000000000000000002 /* LaunchVisualIdentityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchVisualIdentityTests.swift; sourceTree = "<group>"; };
 		220000000000000000000007 /* GameCenterServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000008 /* StoreTransactionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTransactionServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000009 /* RewardedAdServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdServiceTests.swift; sourceTree = "<group>"; };
@@ -176,12 +222,14 @@
 			isa = PBXGroup;
 			children = (
 				300000000000000000000004 /* App */,
+				340000000000000000000001 /* UI */,
 				310000000000000000000001 /* Domain */,
 				310000000000000000000002 /* Catalog */,
 				310000000000000000000003 /* Economy */,
 				310000000000000000000004 /* Achievements */,
 				320000000000000000000001 /* Services */,
 				330000000000000000000001 /* Persistence */,
+				350000000000000000000001 /* Visual Identity */,
 				300000000000000000000005 /* Game */,
 				300000000000000000000008 /* Resources */,
 			);
@@ -193,6 +241,8 @@
 			children = (
 				200000000000000000000001 /* PocketVectorApp.swift */,
 				200000000000000000000002 /* GameRootView.swift */,
+				240000000000000000000001 /* AppCoordinator.swift */,
+				240000000000000000000002 /* AppCoordinatorModels.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -215,6 +265,7 @@
 				200000000000000000000005 /* Trajectory.swift */,
 				200000000000000000000006 /* ThrowGesture.swift */,
 				200000000000000000000007 /* GameSimulation.swift */,
+				240000000000000000000003 /* GameplaySession.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -251,11 +302,17 @@
 				210000000000000000000010 /* CatalogRulesTests.swift */,
 				210000000000000000000011 /* EconomyAchievementTests.swift */,
 				220000000000000000000007 /* GameCenterServiceTests.swift */,
+				250000000000000000000002 /* GameKitGameCenterAdapterTests.swift */,
 				220000000000000000000008 /* StoreTransactionServiceTests.swift */,
 				220000000000000000000009 /* RewardedAdServiceTests.swift */,
 				22000000000000000000000A /* CloudSyncServiceTests.swift */,
 				22000000000000000000000B /* TelemetryDiagnosticsServiceTests.swift */,
 				230000000000000000000008 /* PlayerProfilePersistenceTests.swift */,
+				240000000000000000000010 /* AppCoordinatorTests.swift */,
+				240000000000000000000011 /* AppPresentationTests.swift */,
+				240000000000000000000012 /* GameplaySessionTests.swift */,
+				240000000000000000000013 /* GameplayCoordinatorTests.swift */,
+				260000000000000000000002 /* LaunchVisualIdentityTests.swift */,
 			);
 			path = PocketVectorTests;
 			sourceTree = "<group>";
@@ -314,6 +371,7 @@
 			isa = PBXGroup;
 			children = (
 				220000000000000000000001 /* GameCenterServices.swift */,
+				250000000000000000000001 /* GameKitGameCenterAdapter.swift */,
 				220000000000000000000002 /* StoreTransactionServices.swift */,
 				220000000000000000000003 /* RewardedAdServices.swift */,
 				220000000000000000000004 /* CloudSyncServices.swift */,
@@ -336,6 +394,49 @@
 				230000000000000000000007 /* PersistedEconomyRules.swift */,
 			);
 			path = Persistence;
+			sourceTree = "<group>";
+		};
+		340000000000000000000001 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				240000000000000000000004 /* AppShellView.swift */,
+				240000000000000000000005 /* MainMenuView.swift */,
+				240000000000000000000006 /* TeamSelectionView.swift */,
+				240000000000000000000007 /* LockerView.swift */,
+				240000000000000000000008 /* AchievementsView.swift */,
+				240000000000000000000009 /* CoinStoreView.swift */,
+				24000000000000000000000A /* SettingsView.swift */,
+				24000000000000000000000B /* RunResultsView.swift */,
+				24000000000000000000000C /* LegacyGameplayAdapterView.swift */,
+				340000000000000000000002 /* Foundation */,
+				340000000000000000000003 /* Presentation */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		340000000000000000000002 /* Foundation */ = {
+			isa = PBXGroup;
+			children = (
+				24000000000000000000000D /* PocketVectorTheme.swift */,
+				24000000000000000000000E /* PocketVectorComponents.swift */,
+			);
+			path = Foundation;
+			sourceTree = "<group>";
+		};
+		340000000000000000000003 /* Presentation */ = {
+			isa = PBXGroup;
+			children = (
+				24000000000000000000000F /* AppPresentation.swift */,
+			);
+			path = Presentation;
+			sourceTree = "<group>";
+		};
+		350000000000000000000001 /* Visual Identity */ = {
+			isa = PBXGroup;
+			children = (
+				260000000000000000000001 /* LaunchVisualIdentity.swift */,
+			);
+			path = Presentation;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -475,6 +576,8 @@
 				120000000000000000000005 /* TelemetryServices.swift in Sources */,
 				120000000000000000000006 /* DiagnosticsServices.swift in Sources */,
 				12000000000000000000000C /* ServiceAccountBindings.swift in Sources */,
+				150000000000000000000001 /* GameKitGameCenterAdapter.swift in Sources */,
+				160000000000000000000001 /* LaunchVisualIdentity.swift in Sources */,
 				130000000000000000000001 /* PersistenceModels.swift in Sources */,
 				130000000000000000000002 /* PlayerProfileFactory.swift in Sources */,
 				130000000000000000000003 /* PlayerProfileMigration.swift in Sources */,
@@ -482,6 +585,21 @@
 				130000000000000000000005 /* LocalPlayerProfileRepository.swift in Sources */,
 				130000000000000000000006 /* CompletedRunValidator.swift in Sources */,
 				130000000000000000000007 /* PersistedEconomyRules.swift in Sources */,
+				140000000000000000000001 /* AppCoordinator.swift in Sources */,
+				140000000000000000000002 /* AppCoordinatorModels.swift in Sources */,
+				140000000000000000000003 /* GameplaySession.swift in Sources */,
+				140000000000000000000004 /* AppShellView.swift in Sources */,
+				140000000000000000000005 /* MainMenuView.swift in Sources */,
+				140000000000000000000006 /* TeamSelectionView.swift in Sources */,
+				140000000000000000000007 /* LockerView.swift in Sources */,
+				140000000000000000000008 /* AchievementsView.swift in Sources */,
+				140000000000000000000009 /* CoinStoreView.swift in Sources */,
+				14000000000000000000000A /* SettingsView.swift in Sources */,
+				14000000000000000000000B /* RunResultsView.swift in Sources */,
+				14000000000000000000000C /* LegacyGameplayAdapterView.swift in Sources */,
+				14000000000000000000000D /* PocketVectorTheme.swift in Sources */,
+				14000000000000000000000E /* PocketVectorComponents.swift in Sources */,
+				14000000000000000000000F /* AppPresentation.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -494,11 +612,17 @@
 				110000000000000000000010 /* CatalogRulesTests.swift in Sources */,
 				110000000000000000000011 /* EconomyAchievementTests.swift in Sources */,
 				120000000000000000000007 /* GameCenterServiceTests.swift in Sources */,
+				150000000000000000000002 /* GameKitGameCenterAdapterTests.swift in Sources */,
 				120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */,
 				120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */,
 				12000000000000000000000A /* CloudSyncServiceTests.swift in Sources */,
 				12000000000000000000000B /* TelemetryDiagnosticsServiceTests.swift in Sources */,
 				130000000000000000000008 /* PlayerProfilePersistenceTests.swift in Sources */,
+				140000000000000000000010 /* AppCoordinatorTests.swift in Sources */,
+				140000000000000000000011 /* AppPresentationTests.swift in Sources */,
+				140000000000000000000012 /* GameplaySessionTests.swift in Sources */,
+				140000000000000000000013 /* GameplayCoordinatorTests.swift in Sources */,
+				160000000000000000000002 /* LaunchVisualIdentityTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

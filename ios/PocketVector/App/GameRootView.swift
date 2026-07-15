@@ -4,17 +4,33 @@ import SwiftUI
 @MainActor
 struct GameRootView: View {
     @Environment(\.scenePhase) private var scenePhase
-    private let scene: GameScene
+    let configuration: RunConfiguration
+    let settings: PlayerSettings
+    let abandonRequestID: Int
 
-    init() {
-        let scene = GameScene(size: GameProjection.sceneSize)
-        scene.scaleMode = .aspectFit
-        self.scene = scene
+    @StateObject private var sceneHost: GameplaySceneHost
+
+    init(
+        configuration: RunConfiguration,
+        settings: PlayerSettings,
+        abandonRequestID: Int,
+        onCompletedRun: @escaping @MainActor (CompletedRun) -> Void
+    ) {
+        self.configuration = configuration
+        self.settings = settings
+        self.abandonRequestID = abandonRequestID
+        _sceneHost = StateObject(
+            wrappedValue: GameplaySceneHost(
+                configuration: configuration,
+                settings: settings,
+                onCompletedRun: onCompletedRun
+            )
+        )
     }
 
     var body: some View {
         SpriteView(
-            scene: scene,
+            scene: sceneHost.scene,
             preferredFramesPerSecond: 60,
             options: [.ignoresSiblingOrder]
         )
@@ -25,8 +41,32 @@ struct GameRootView: View {
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .onChange(of: scenePhase) { _, newPhase in
-            scene.setApplicationActive(newPhase == .active)
+            sceneHost.scene.setApplicationActive(newPhase == .active)
         }
+        .onChange(of: abandonRequestID) { oldValue, newValue in
+            guard newValue != oldValue else { return }
+            sceneHost.scene.requestAbandon()
+        }
+    }
+}
+
+@MainActor
+private final class GameplaySceneHost: ObservableObject {
+    let scene: GameScene
+
+    init(
+        configuration: RunConfiguration,
+        settings: PlayerSettings,
+        onCompletedRun: @escaping @MainActor (CompletedRun) -> Void
+    ) {
+        let scene = GameScene(
+            size: GameProjection.sceneSize,
+            configuration: configuration,
+            settings: settings,
+            onCompletedRun: onCompletedRun
+        )
+        scene.scaleMode = .aspectFit
+        self.scene = scene
     }
 }
 

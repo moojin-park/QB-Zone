@@ -77,6 +77,7 @@ final class BroadcastHUDNode: SKNode {
     private var renderedBonusActive: Bool?
     private var renderedTimerWarning: Bool?
     private var renderedFeedbackSignature: String?
+    private var reducedMotion = false
 
     init(layout: HUDLayout, textureLibrary: TextureLibrary) {
         self.layout = layout
@@ -162,8 +163,11 @@ final class BroadcastHUDNode: SKNode {
     func update(
         presentation: HUDPresentation,
         feedback: PlayFeedback?,
-        isMuted: Bool
+        isMuted: Bool,
+        reducedMotion: Bool
     ) {
+        let motionSettingChanged = self.reducedMotion != reducedMotion
+        self.reducedMotion = reducedMotion
         isHidden = !presentation.isVisible
         guard presentation.isVisible else {
             feedbackNode.isHidden = true
@@ -172,7 +176,7 @@ final class BroadcastHUDNode: SKNode {
 
         clockLabel.text = presentation.clockText
         clockLabel.color = presentation.isTimerWarning ? Palette.coral : Palette.clockCream
-        if renderedTimerWarning != presentation.isTimerWarning {
+        if renderedTimerWarning != presentation.isTimerWarning || motionSettingChanged {
             renderedTimerWarning = presentation.isTimerWarning
             setTimerWarning(presentation.isTimerWarning)
         }
@@ -187,7 +191,7 @@ final class BroadcastHUDNode: SKNode {
         fillMaskNode.position = CGPoint(x: fillFrame.midX, y: fillFrame.midY)
         fillCropNode.isHidden = fillFrame.width <= 0.01
 
-        if renderedBonusActive != presentation.isBonusActive {
+        if renderedBonusActive != presentation.isBonusActive || motionSettingChanged {
             renderedBonusActive = presentation.isBonusActive
             setBonusActive(presentation.isBonusActive)
         }
@@ -200,6 +204,9 @@ final class BroadcastHUDNode: SKNode {
             muteBorderNode.fillColor = isMuted ? Palette.red : Palette.steelLight
         }
 
+        if motionSettingChanged {
+            renderedFeedbackSignature = nil
+        }
         updateFeedback(feedback)
     }
 
@@ -679,7 +686,7 @@ final class BroadcastHUDNode: SKNode {
         meterActiveGlowNode.alpha = 1
         meterCopyNode.alpha = 1
 
-        guard isActive else { return }
+        guard isActive, !reducedMotion else { return }
 
         let flash = SKAction.repeatForever(.sequence([
             .fadeAlpha(to: 0.55, duration: 0),
@@ -701,7 +708,7 @@ final class BroadcastHUDNode: SKNode {
     private func setTimerWarning(_ isWarning: Bool) {
         clockLabel.removeAction(forKey: "timerWarning")
         clockLabel.alpha = 1
-        guard isWarning else { return }
+        guard isWarning, !reducedMotion else { return }
 
         clockLabel.run(.repeatForever(.sequence([
             .fadeAlpha(to: 0.62, duration: 0),
@@ -844,6 +851,11 @@ final class BroadcastHUDNode: SKNode {
         )
         detail.zPosition = 2
         feedbackNode.addChild(detail)
+
+        guard !reducedMotion else {
+            feedbackNode.setScale(1)
+            return
+        }
 
         feedbackNode.setScale(0.82)
         feedbackNode.run(.sequence([

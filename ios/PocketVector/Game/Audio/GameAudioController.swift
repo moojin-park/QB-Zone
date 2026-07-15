@@ -60,7 +60,8 @@ final class GameAudioController {
     private var sessionIsActive = false
     nonisolated(unsafe) private var interruptionObserver: NSObjectProtocol?
     private var resumeMusicAfterInterruption = false
-    private(set) var isMuted = false
+    private(set) var settings: GameSettingsProjection
+    private(set) var isMuted: Bool
 
     var isMusicPlaying: Bool {
         musicPlayer?.isPlaying == true
@@ -70,7 +71,13 @@ final class GameAudioController {
         effectPools[cue]?.contains(where: \.isPlaying) == true
     }
 
-    init(bundle: Bundle = .main) {
+    init(
+        bundle: Bundle = .main,
+        settings: PlayerSettings = PlayerSettings()
+    ) {
+        let projectedSettings = GameSettingsProjection(settings)
+        self.settings = projectedSettings
+        isMuted = projectedSettings.isMuted
         effectURLs = Dictionary(
             uniqueKeysWithValues: GameAudioCue.allCases.compactMap { cue in
                 GameAudioResources.url(for: cue, in: bundle).map { (cue, $0) }
@@ -113,26 +120,26 @@ final class GameAudioController {
 
         let player = players[index]
         player.currentTime = 0
-        player.volume = isMuted ? 0 : min(1, Self.effectsVolume * cue.gain)
+        player.volume = isMuted ? 0 : min(1, settings.sfxVolume * cue.gain)
         return player.play()
     }
 
     func startMusic() {
         guard activateSession(), let musicPlayer, !musicPlayer.isPlaying else { return }
-        musicPlayer.volume = isMuted ? 0 : Self.musicVolume
+        musicPlayer.volume = isMuted ? 0 : settings.musicVolume
         musicPlayer.play()
+    }
+
+    func apply(_ playerSettings: PlayerSettings) {
+        settings = GameSettingsProjection(playerSettings)
+        isMuted = settings.isMuted
+        applyVolumes()
     }
 
     @discardableResult
     func toggleMuted() -> Bool {
         isMuted.toggle()
-        musicPlayer?.volume = isMuted ? 0 : Self.musicVolume
-        for (cue, players) in effectPools {
-            let volume = isMuted ? 0 : min(1, Self.effectsVolume * cue.gain)
-            for player in players {
-                player.volume = volume
-            }
-        }
+        applyVolumes()
         return isMuted
     }
 
@@ -228,7 +235,7 @@ final class GameAudioController {
         do {
             let player = try AVAudioPlayer(contentsOf: url)
             player.numberOfLoops = -1
-            player.volume = Self.musicVolume
+            player.volume = settings.musicVolume
             player.prepareToPlay()
             musicPlayer = player
         } catch {
@@ -242,9 +249,19 @@ final class GameAudioController {
         guard let url = effectURLs[cue], let player = try? AVAudioPlayer(contentsOf: url) else {
             return nil
         }
-        player.volume = min(1, Self.effectsVolume * cue.gain)
+        player.volume = min(1, settings.sfxVolume * cue.gain)
         player.prepareToPlay()
         return player
+    }
+
+    private func applyVolumes() {
+        musicPlayer?.volume = isMuted ? 0 : settings.musicVolume
+        for (cue, players) in effectPools {
+            let volume = isMuted ? 0 : min(1, settings.sfxVolume * cue.gain)
+            for player in players {
+                player.volume = volume
+            }
+        }
     }
 
     func stopEffects() {

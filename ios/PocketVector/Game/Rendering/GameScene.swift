@@ -1,3 +1,4 @@
+import Foundation
 import SpriteKit
 import UIKit
 
@@ -16,9 +17,14 @@ final class GameScene: SKScene {
         static let leatherDark = UIColor(red: 70 / 255, green: 23 / 255, blue: 19 / 255, alpha: 1)
     }
 
-    private var simulation = GameSimulation()
+    let configuration: RunConfiguration
+    let settings: PlayerSettings
+
+    private var session: GameplaySession
     private let textures = TextureLibrary()
-    private let audio = GameAudioController()
+    private let audio: GameAudioController
+    private let now: @MainActor () -> Date
+    private let onCompletedRun: @MainActor (CompletedRun) -> Void
     private var previousUpdateTime: TimeInterval?
     private var accumulatedMilliseconds: CGFloat = 0
     private var renderedPhase: GamePhase?
@@ -56,7 +62,19 @@ final class GameScene: SKScene {
     private var hudPreviewState: GameState?
     #endif
 
-    override init(size: CGSize) {
+    init(
+        size: CGSize,
+        configuration: RunConfiguration,
+        settings: PlayerSettings,
+        now: @escaping @MainActor () -> Date = { Date() },
+        onCompletedRun: @escaping @MainActor (CompletedRun) -> Void
+    ) {
+        self.configuration = configuration
+        self.settings = settings
+        session = GameplaySession(configuration: configuration, settings: settings)
+        audio = GameAudioController(settings: settings)
+        self.now = now
+        self.onCompletedRun = onCompletedRun
         super.init(size: size)
         anchorPoint = .zero
         backgroundColor = Palette.ink
@@ -86,6 +104,7 @@ final class GameScene: SKScene {
             return
         }
         #endif
+        audio.play(.countdown)
         renderFrame()
     }
 
@@ -126,19 +145,14 @@ final class GameScene: SKScene {
         guard let touch = touches.first else { return }
         let point = touch.location(in: self)
 
-        switch simulation.state.phase {
+        switch session.state.phase {
         case .title, .results:
-            audio.stopMusic()
-            audio.stopEffects()
-            audio.play(.uiSelect)
-            simulation.startRun()
-            lastCountdownValue = 3
-            audio.play(.countdown)
-            clearGesture()
-            renderFrame()
+            // Production sessions are configured and started by SwiftUI. The
+            // scene never owns title, replay, or results navigation.
+            break
         case .paused:
             audio.play(.uiSelect)
-            simulation.togglePause()
+            session.togglePause()
             audio.startMusic()
             renderFrame()
         case .playing, .resolvingFinalBall:
@@ -152,14 +166,14 @@ final class GameScene: SKScene {
             }
             if broadcastHUD?.containsPauseControl(point) == true {
                 audio.play(.uiSelect)
-                simulation.togglePause()
+                session.togglePause()
                 audio.pauseMusic()
                 audio.stopEffects()
                 clearGesture()
                 renderFrame()
                 return
             }
-            guard simulation.canThrow, projection.isPointOnQuarterback(point) else { return }
+            guard session.canThrow, projection.isPointOnQuarterback(point) else { return }
             isAiming = true
             activeSamples = [sample(for: touch)]
             renderAimPreview(currentPoint: point)
@@ -180,7 +194,7 @@ final class GameScene: SKScene {
         let releasePoint = touch.location(in: self)
         if let gesture = ThrowGestureCalculator.calculate(samples: activeSamples), gesture.isValid {
             let target = projection.sceneToWorld(releasePoint)
-            let didThrow = simulation.throwBall(
+            let didThrow = session.throwBall(
                 target: target,
                 releaseSpeedPixelsPerMillisecond: gesture.releaseSpeedPixelsPerMillisecond,
                 aimMarker: GameProjection.worldToScene(target)
@@ -202,16 +216,24 @@ final class GameScene: SKScene {
     func setApplicationActive(_ isActive: Bool) {
         applicationIsActive = isActive
         previousUpdateTime = nil
+        session.setApplicationActive(isActive)
         if isActive {
             audio.activateSession()
         } else {
-            if simulation.state.phase == .playing || simulation.state.phase == .resolvingFinalBall {
-                simulation.togglePause()
-            }
             clearGesture()
             audio.suspend()
         }
         renderFrame()
+    }
+
+    func requestAbandon() {
+        guard let completedRun = session.abandon(endedAt: now()) else { return }
+        previousUpdateTime = nil
+        accumulatedMilliseconds = 0
+        clearGesture()
+        audio.stopMusic()
+        audio.stopEffects()
+        onCompletedRun(completedRun)
     }
 
     private func makeViewport(for view: SKView) -> GameViewport {
@@ -253,26 +275,28 @@ final class GameScene: SKScene {
             endZoneTexture: textures.texture("art/endzone-nova-city-native.png"),
             textures: textures
         )
+        sidelineEnvironmentNode.isPaused = session.settings.reducedMotion
         quarterbackNode.position = CGPoint(x: projection.centerX, y: -370)
     }
 
     private func advanceSimulationStep(deltaMilliseconds: CGFloat) {
-        let phaseBefore = simulation.state.phase
-        let remainingBefore = simulation.state.remainingMilliseconds
-        let meterBefore = simulation.state.touchdownMeter
-        let result = simulation.update(deltaMilliseconds: deltaMilliseconds)
+        let phaseBefore = session.state.phase
+        let remainingBefore = session.state.remainingMilliseconds
+        let meterBefore = session.state.touchdownMeter
+        let step = session.advance(deltaMilliseconds: deltaMilliseconds, endedAt: now())
+        let result = step.update
 
         if phaseBefore == .countdown {
-            if simulation.state.phase == .countdown {
+            if session.state.phase == .countdown {
                 let countdownValue = max(
                     1,
-                    Int(ceil(Double(simulation.state.countdownRemainingMilliseconds / 1_000)))
+                    Int(ceil(Double(session.state.countdownRemainingMilliseconds / 1_000)))
                 )
                 if countdownValue != lastCountdownValue {
                     lastCountdownValue = countdownValue
                     audio.play(.countdown)
                 }
-            } else if simulation.state.phase == .playing {
+            } else if session.state.phase == .playing {
                 audio.startMusic()
                 audio.play(.snap)
             }
@@ -280,7 +304,7 @@ final class GameScene: SKScene {
 
         if phaseBefore == .playing,
            remainingBefore > 0,
-           simulation.state.remainingMilliseconds <= 0 {
+           session.state.remainingMilliseconds <= 0 {
             audio.play(.timerExpired)
         }
 
@@ -290,7 +314,7 @@ final class GameScene: SKScene {
                 audio.play(result.laneID == .deep ? .deepCompletion : .catchCompletion)
             case .touchdown:
                 audio.play(.touchdown)
-                if (simulation.state.lastPlayScore?.touchdownMultiplier ?? 1) > 1 {
+                if (session.state.lastPlayScore?.touchdownMultiplier ?? 1) > 1 {
                     audio.play(.multiplierIncreased)
                 }
             case .incompletion:
@@ -302,7 +326,7 @@ final class GameScene: SKScene {
             }
 
             if meterBefore < ScoringConfig.meterMaximum,
-               simulation.state.touchdownMeter >= ScoringConfig.meterMaximum {
+               session.state.touchdownMeter >= ScoringConfig.meterMaximum {
                 audio.play(.bonusActivated)
             }
         }
@@ -311,14 +335,17 @@ final class GameScene: SKScene {
             audio.stopMusic()
             audio.play(.gameOver)
         }
+
+        if let completedRun = step.completedRun {
+            onCompletedRun(completedRun)
+        }
     }
 
     #if DEBUG
     private func configureHUDPreview() {
-        simulation.startRun()
-        simulation.update(deltaMilliseconds: 3_000)
+        _ = session.advance(deltaMilliseconds: 3_000, endedAt: now())
 
-        var preview = simulation.state
+        var preview = session.state
         preview.phase = .playing
         preview.remainingMilliseconds = 44_000
         preview.score = 17_375
@@ -334,14 +361,13 @@ final class GameScene: SKScene {
     }
 
     private func configureSpiralPreview() {
-        simulation.startRun()
-        simulation.update(deltaMilliseconds: 3_000)
-        _ = simulation.throwBall(
+        _ = session.advance(deltaMilliseconds: 3_000, endedAt: now())
+        _ = session.throwBall(
             target: WorldPoint(x: 0.58, depth: 0.78, height: 0),
             releaseSpeedPixelsPerMillisecond: 0.35,
             aimMarker: CGPoint(x: 690, y: 520)
         )
-        simulation.update(deltaMilliseconds: 360)
+        _ = session.advance(deltaMilliseconds: 360, endedAt: now())
     }
     #endif
 
@@ -505,12 +531,12 @@ final class GameScene: SKScene {
     }
 
     private func syncActors() {
-        let receiverIDs = Set(simulation.state.receivers.map(\.id))
+        let receiverIDs = Set(session.state.receivers.map(\.id))
         for (id, node) in receiverNodes where !receiverIDs.contains(id) {
             node.removeFromParent()
             receiverNodes[id] = nil
         }
-        for receiver in simulation.state.receivers {
+        for receiver in session.state.receivers {
             let node: SKSpriteNode
             if let existing = receiverNodes[receiver.id] {
                 node = existing
@@ -534,12 +560,12 @@ final class GameScene: SKScene {
             node.texture = textures.texture(receiverTexturePath(receiver))
         }
 
-        let defenderIDs = Set(simulation.state.defenders.map(\.id))
+        let defenderIDs = Set(session.state.defenders.map(\.id))
         for (id, node) in defenderNodes where !defenderIDs.contains(id) {
             node.removeFromParent()
             defenderNodes[id] = nil
         }
-        for defender in simulation.state.defenders {
+        for defender in session.state.defenders {
             let node: SKSpriteNode
             if let existing = defenderNodes[defender.id] {
                 node = existing
@@ -564,7 +590,7 @@ final class GameScene: SKScene {
     }
 
     private func syncBall() {
-        guard let ball = simulation.state.ball else {
+        guard let ball = session.state.ball else {
             ballNode.isHidden = true
             return
         }
@@ -586,9 +612,9 @@ final class GameScene: SKScene {
         let path: String
         if isAiming {
             path = "characters/qb-aim.webp"
-        } else if let ball = simulation.state.ball, ball.elapsedMilliseconds < 180 {
+        } else if let ball = session.state.ball, ball.elapsedMilliseconds < 180 {
             path = "characters/qb-throw.webp"
-        } else if let ball = simulation.state.ball, ball.elapsedMilliseconds < 520 {
+        } else if let ball = session.state.ball, ball.elapsedMilliseconds < 520 {
             path = "characters/qb-recovery.webp"
         } else {
             path = "characters/qb-idle.webp"
@@ -598,31 +624,31 @@ final class GameScene: SKScene {
 
     private func syncHUD() {
         #if DEBUG
-        let state = hudPreviewState ?? simulation.state
+        let state = hudPreviewState ?? session.state
         #else
-        let state = simulation.state
+        let state = session.state
         #endif
         broadcastHUD?.update(
             presentation: HUDPresentation(state: state),
             feedback: state.feedback,
-            isMuted: audio.isMuted
+            isMuted: audio.isMuted,
+            reducedMotion: session.settings.reducedMotion
         )
     }
 
     private func syncPhaseOverlay() {
-        let phase = simulation.state.phase
+        let phase = session.state.phase
         if renderedPhase != phase {
             renderedPhase = phase
             phaseOverlay.removeAllChildren()
             switch phase {
-            case .title:
-                buildTitleOverlay()
+            case .title, .results:
+                // App-owned views present the title and authoritative results.
+                break
             case .countdown:
                 buildCountdownOverlay()
             case .paused:
                 buildPausedOverlay()
-            case .results:
-                buildResultsOverlay()
             case .playing, .resolvingFinalBall:
                 break
             }
@@ -631,56 +657,9 @@ final class GameScene: SKScene {
         if phase == .countdown,
            let countdown = phaseOverlay.childNode(withName: "countdown") as? SKLabelNode {
             countdown.text = String(max(1, Int(ceil(
-                Double(simulation.state.countdownRemainingMilliseconds / 1_000)
+                Double(session.state.countdownRemainingMilliseconds / 1_000)
             ))))
         }
-    }
-
-    private func buildTitleOverlay() {
-        addOverlayBackdrop(alpha: 0.28)
-        if let logoTexture = textures.texture("pixel/logo.png") {
-            let logo = SKSpriteNode(texture: logoTexture)
-            logo.size = CGSize(width: 500, height: 200)
-            logo.position = CGPoint(x: projection.centerX, y: 520)
-            logo.zPosition = 1
-            phaseOverlay.addChild(logo)
-        } else {
-            let title = makeLabel(
-                "POCKET VECTOR",
-                fontName: "AvenirNext-Heavy",
-                fontSize: 62,
-                color: Palette.ice
-            )
-            title.position = CGPoint(x: projection.centerX, y: 525)
-            phaseOverlay.addChild(title)
-        }
-
-        let subtitle = makeLabel(
-            "NOVA CITY COMETS  vs  IRON BAY PHANTOMS",
-            fontName: "AvenirNext-DemiBold",
-            fontSize: 18,
-            color: Palette.cyan
-        )
-        subtitle.position = CGPoint(x: projection.centerX, y: 410)
-        phaseOverlay.addChild(subtitle)
-
-        let start = makeLabel(
-            "TAP TO START",
-            fontName: "AvenirNext-Heavy",
-            fontSize: 30,
-            color: Palette.gold
-        )
-        start.position = CGPoint(x: projection.centerX, y: 325)
-        phaseOverlay.addChild(start)
-
-        let instructions = makeLabel(
-            "PRESS THE QB  •  DRAG TO OPEN GRASS  •  RELEASE TO THROW",
-            fontName: "AvenirNext-DemiBold",
-            fontSize: 15,
-            color: Palette.ice
-        )
-        instructions.position = CGPoint(x: projection.centerX, y: 282)
-        phaseOverlay.addChild(instructions)
     }
 
     private func buildCountdownOverlay() {
@@ -724,46 +703,6 @@ final class GameScene: SKScene {
         )
         resume.position = CGPoint(x: projection.centerX, y: 350)
         phaseOverlay.addChild(resume)
-    }
-
-    private func buildResultsOverlay() {
-        addOverlayBackdrop(alpha: 0.78)
-        let title = makeLabel(
-            "FINAL SCORE",
-            fontName: "AvenirNext-Heavy",
-            fontSize: 30,
-            color: Palette.cyan
-        )
-        title.position = CGPoint(x: projection.centerX, y: 535)
-        phaseOverlay.addChild(title)
-
-        let score = makeLabel(
-            formattedPoints(simulation.state.score),
-            fontName: "Menlo-Bold",
-            fontSize: 70,
-            color: Palette.gold
-        )
-        score.position = CGPoint(x: projection.centerX, y: 455)
-        phaseOverlay.addChild(score)
-
-        let stats = simulation.state.statistics
-        let summary = makeLabel(
-            "\(stats.completions + stats.touchdowns)/\(stats.attempts) COMPLETE   •   \(stats.accuracy)% ACCURACY   •   \(stats.touchdowns) TD",
-            fontName: "AvenirNext-DemiBold",
-            fontSize: 19,
-            color: Palette.ice
-        )
-        summary.position = CGPoint(x: projection.centerX, y: 370)
-        phaseOverlay.addChild(summary)
-
-        let replay = makeLabel(
-            "TAP TO PLAY AGAIN",
-            fontName: "AvenirNext-Heavy",
-            fontSize: 26,
-            color: Palette.gold
-        )
-        replay.position = CGPoint(x: projection.centerX, y: 295)
-        phaseOverlay.addChild(replay)
     }
 
     private func addOverlayBackdrop(alpha: CGFloat) {
@@ -813,7 +752,7 @@ final class GameScene: SKScene {
     private func syncAimMarker() {
         if isAiming { return }
         aimPathNode.isHidden = true
-        if let ball = simulation.state.ball {
+        if let ball = session.state.ball {
             aimMarkerNode.position = projection.worldToScene(ball.target)
             aimMarkerNode.strokeColor = Palette.coral
             aimMarkerNode.isHidden = false
@@ -873,6 +812,7 @@ final class GameScene: SKScene {
         entityID: Int,
         frameDurationMilliseconds: CGFloat
     ) -> Int {
+        guard !session.settings.reducedMotion else { return 0 }
         let cadence = 0.94 + CGFloat((abs(entityID) * 37) % 13) * 0.01
         let cycleDuration = frameDurationMilliseconds * 4
         let phase = (
@@ -896,9 +836,4 @@ final class GameScene: SKScene {
         return label
     }
 
-    private func formattedPoints(_ points: Int) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: points)) ?? String(points)
-    }
 }
