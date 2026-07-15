@@ -297,3 +297,53 @@ animation after he catches and carries the football.
 - [x] Expose the one-based selected visual frame through `render_game_to_text`.
 - [x] Add unit and browser regressions proving the same caught receiver changes carry frames after 125 ms while remaining catch-ineligible.
 - [x] Pass all 225 tests, ESLint, Prettier, the production build, sprite-pipeline dry-run, and the complete desktop/wide/mobile browser playtest with no console errors.
+
+## Native iOS one-point sideline widening (2026-07-14)
+
+User direction: match both sidelines to the original outside-hash one-point
+perspective, make the rendered and playable field wider together, and clearly
+separate the out-of-bounds area from the striped playing surface.
+
+- [x] Recover the outside-left hash trajectory from the original 1728x768 plate and mirror it exactly for the right boundary.
+- [x] Share widened 459px far and 1,226px near half-widths between gameplay projection, sideline chalk, pylons, and staff placement.
+- [x] Generate byte-for-byte reproducible v3 field plates that remove the obsolete narrow sidelines and old pylons while preserving the stadium, turf texture, yard lines, and midfield art.
+- [x] Add opaque dark-teal out-of-bounds wedges so no yardage line reads as playable beyond either sideline.
+- [x] Extend each crossing yard line only to the new boundary and add mirrored end-zone extensions and replacement pylons.
+- [x] Add two simple striped officials outside the playable field with independent bob-and-signal animation.
+- [x] Add XCTest coverage for the recovered outside-hash fit, projection/art alignment, and staff staying out of bounds.
+- [x] Pass all 33 native iOS tests and a final simulator build on iPhone 17 Pro Max.
+- [x] Inspect the final upright simulator capture plus an A/B animation diff; an independent geometry and pixel audit found no remaining perspective, masking, seam, pylon, or legacy-line issues.
+- [x] Pass all 225 browser tests, ESLint, Prettier, and the Vite production build after the native-only changes.
+
+Verification note: the browser-only full-playtest harness completed its scenarios
+without console errors but reported two one-frame pre-landing freeze assertions;
+no browser source or playtest-harness file changed in this native field pass.
+
+## Native locked-look visual corrections (2026-07-15)
+
+User direction: keep the established field perspective and size completely
+locked while correcting the end-zone coverage and malformed control buttons.
+
+- [x] Preserve the existing 459px/1,226px field half-widths, 230/291 end-zone depths, projection horizon, field texture size, and HUD control frames.
+- [x] Replace the rectangular NOVA CITY band plus side wedges with one prewarped 1055x61 end-zone texture over the exact four existing boundary points.
+- [x] Restrict cleanup masks to the two small legacy rear-corner overhangs so the surrounding stadium and sideline treatment remain unchanged.
+- [x] Correct the music/pause pixel-cut path so both button faces and borders fill their left edges.
+- [x] Regenerate all three 96x96 native control icons with transparent corners while preserving their artwork, centers, and nearest-neighbor rendering.
+- [x] Add a regression proving the corrected control path contains its left and right mid-edges while retaining the intended corner cuts.
+- [x] Verify native field/control assets regenerate byte-for-byte with transparent corners and the expected dimensions.
+- [x] Pass all 36 native iOS tests, the simulator build, ESLint, and Prettier.
+- [x] Inspect the final full-field and zoomed end-zone/control captures; independent audits found no remaining seam, underfill, perspective, sizing, hit-frame, or button-rendering issue.
+
+## Native receiver visibility and referee art (2026-07-15)
+
+User direction: receivers should remain visible until fully off-screen, and the
+sideline referees should match the high-resolution pixel-art player style while
+retaining their simple animation.
+
+- [x] Replace the fixed receiver cull boundary with lane-aware thresholds that clear the full 1728px native viewport plus sprite width and padding.
+- [x] Spawn and recycle replacements from those same lane-aware edges so receivers never pop into view on wide screens.
+- [x] Preserve receiver movement speed, catch state, lane spawn timing, and title-screen recycling behavior, and cap ultrawide layouts to the 1728px field plate contract.
+- [x] Add symmetric arms-down and two-arms-raised referee poses and normalize mirrored left/right frames to the shared 384x512 character contract.
+- [x] Replace the procedural block referee with animated lossless WebP sprites while retaining the independent 0.42-second bob and 0.18-second phase offset.
+- [x] Keep each larger official fully outside the playable boundary and inside the viewport.
+- [x] Pass all 39 native tests, all 225 browser tests, lint, formatting, typecheck, production build, sprite-pipeline verification, and final simulator animation review.

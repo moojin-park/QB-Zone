@@ -28,6 +28,7 @@ python3 scripts/process-pixel-character-strips.py \
   --qb-strip art/pixel-source/qb-strip.png \
   --receiver-strip art/pixel-source/receiver-strip.png \
   --defender-strip art/pixel-source/defender-strip.png \
+  --official-strip art/pixel-source/official-strip.png \
   --force
 ```
 
@@ -61,6 +62,9 @@ Defenders use four square shuffle phases plus an interception pose. Both
 defender directions reuse the same front-facing art so jersey 24 is never
 reversed. The processor also removes a detached ball from the QB release source
 frame because the live projectile renderer is the authoritative football.
+Sideline officials use two mirrored signal poses at the same 384x512 canvas and
+bottom-center anchor, allowing the native SpriteKit port to animate them with
+the same crisp nearest-neighbor treatment as the players.
 [`public/assets/characters/sprites.json`](../public/assets/characters/sprites.json)
 records content bounds, role, pose, direction, byte size, and anchor metadata.
 The football is a stepped, rotation-ready PNG with an editable SVG source. Its
@@ -114,6 +118,7 @@ Character paths follow this pattern:
 /assets/characters/qb-{idle,aim,throw,recovery}.webp
 /assets/characters/receiver-{run-1,run-2,run-3,run-4,catch,carry,carry-2,carry-3,carry-4,touchdown}-{left,right}.webp
 /assets/characters/defender-{run-1,run-2,run-3,run-4,interception}-{left,right}.webp
+/assets/characters/official-{wave-1,wave-2}-{left,right}.webp
 /assets/characters/sprites.json
 ```
 
@@ -129,7 +134,7 @@ Additional original controls are supplied for menus and alternate surfaces:
 `/assets/asset-manifest.json` records the Node-generated SVG/audio source set.
 `/assets/characters/sprites.json` records normalized pixel output. Runtime paths
 are centralized in `src/game/assets/assetManifest.ts`. The approved concept and
-three transparent production strips live in `art/pixel-source/`; the prompt set
+four transparent production strips live in `art/pixel-source/`; the prompt set
 and transformation notes live in
 [`docs/pixel-art-direction.md`](pixel-art-direction.md).
 

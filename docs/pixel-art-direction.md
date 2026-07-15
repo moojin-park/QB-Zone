@@ -13,7 +13,7 @@ cream typography, cobalt accents, and limited gold/red callouts.
 
 ## Built-in image-generation prompt set
 
-All four source generations used the built-in image-generation tool. The
+All source generations used the built-in image-generation tool. The
 approved concept was used as the visual and composition reference for the
 production assets.
 
@@ -68,15 +68,28 @@ phases and an interception pose. Preserve identity, scale, palette, lighting,
 crisp pixel clusters, wide stance, and open hands. One athlete per slot; no
 labels, overlap, shadows, effects, extra objects, or fantasy elements.
 
+### Sideline official strip
+
+Create one isolated full-body American football sideline official using the
+approved receiver and defender sprites as exact pixel-density, proportion,
+lighting, and rendering references. Use a black cap, black-and-white striped
+shirt, black pants, and black shoes; pose both arms lowered naturally in the
+resting frame. Keep a crisp bottom-center silhouette on a perfectly
+flat #00ff00 background with no shadow, floor, text, number, logo, watermark,
+football, or extra character. For the second frame, raise both arms together in
+a balanced touchdown signal while preserving identity, stance, clothing, scale,
+canvas placement, and every other visual detail. Chroma-key both frames, align
+them to one baseline, and join them into the two-slot source strip.
+
 ## Local post-processing
 
 The source strips were chroma-keyed locally, then processed by
 `scripts/process-pixel-character-strips.py`. The processor validates slot
 counts and transparency, normalizes all frames in a role to one scale, uses
 nearest-neighbor sampling, preserves a 16-pixel safe area, anchors at
-`[192, 496]`, and writes 34 lossless 384x512 WebPs plus metadata. Receiver art
-is mirrored for travel direction; square defender art is reused unchanged in
-both directions to preserve jersey number 24. A detached ball in the QB release
+`[192, 496]`, and writes 38 lossless 384x512 WebPs plus metadata. Receiver and
+official art is mirrored for direction; square defender art is reused unchanged
+in both directions to preserve jersey number 24. A detached ball in the QB release
 source is removed during normalization because the simulated runtime projectile
 is rendered independently.
 
@@ -94,6 +107,7 @@ art/pixel-source/concept-approved.png
 art/pixel-source/qb-strip.png
 art/pixel-source/receiver-strip.png
 art/pixel-source/defender-strip.png
+art/pixel-source/official-strip.png
 public/assets/pixel/stadium-field.png
 public/assets/pixel/logo.png
 public/assets/pixel/football-source.svg

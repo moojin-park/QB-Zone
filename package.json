@@ -14,7 +14,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "generate:assets": "node scripts/generate-assets.mjs",
-    "generate:characters": "python3 scripts/process-pixel-character-strips.py --qb-strip art/pixel-source/qb-strip.png --receiver-strip art/pixel-source/receiver-strip.png --defender-strip art/pixel-source/defender-strip.png --force",
+    "generate:characters": "python3 scripts/process-pixel-character-strips.py --qb-strip art/pixel-source/qb-strip.png --receiver-strip art/pixel-source/receiver-strip.png --defender-strip art/pixel-source/defender-strip.png --official-strip art/pixel-source/official-strip.png --force",
+    "generate:native-field": "node scripts/generate-native-field-plate.mjs",
+    "generate:native-controls": "node scripts/generate-native-control-icons.mjs",
+    "generate:native-assets": "npm run generate:native-field && npm run generate:native-controls",
     "generate:characters:legacy-3d": "blender -b --python scripts/generate-character-sprites.py",
     "generate:all-assets": "npm run generate:assets && npm run generate:characters"
   },

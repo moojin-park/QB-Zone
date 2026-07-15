@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "bundleRoot": "GameAssets",
+  "sourceRoot": "public/assets",
+  "provenance": {
+    "characters": {
+      "generator": "scripts/process-pixel-character-strips.py",
+      "inputs": [
+        "art/pixel-source/qb-strip.png",
+        "art/pixel-source/receiver-strip.png",
+        "art/pixel-source/defender-strip.png",
+        "art/pixel-source/official-strip.png"
+      ]
+    },
+    "fieldAndEndZone": {
+      "generator": "scripts/generate-native-field-plate.mjs",
+      "input": "public/assets/pixel/stadium-field-wide-endzone-v2.png"
+    },
+    "controls": {
+      "generator": "scripts/generate-native-control-icons.mjs",
+      "inputs": [
+        "public/assets/art/icon-mute.svg",
+        "public/assets/art/icon-unmute.svg",
+        "public/assets/art/icon-pause.svg"
+      ]
+    },
+    "audio": {
+      "generator": "scripts/generate-assets.mjs"
+    },
+    "logo": {
+      "approvedSource": "art/pixel-source/concept-approved.png"
+    }
+  },
+  "assets": [
+    { "path": "art/endzone-nova-city-native.png", "kind": "image" },
+    { "path": "art/icon-mute-native.png", "kind": "image" },
+    { "path": "art/icon-pause-native.png", "kind": "image" },
+    { "path": "art/icon-unmute-native.png", "kind": "image" },
+    { "path": "audio/music/pocket-vector-drive.wav", "kind": "audio" },
+    { "path": "audio/sfx/bonus-active.wav", "kind": "audio" },
+    { "path": "audio/sfx/catch.wav", "kind": "audio" },
+    { "path": "audio/sfx/countdown.wav", "kind": "audio" },
+    { "path": "audio/sfx/deep-completion.wav", "kind": "audio" },
+    { "path": "audio/sfx/flight.wav", "kind": "audio" },
+    { "path": "audio/sfx/game-over.wav", "kind": "audio" },
+    { "path": "audio/sfx/incomplete.wav", "kind": "audio" },
+    { "path": "audio/sfx/interception.wav", "kind": "audio" },
+    { "path": "audio/sfx/meter-loss.wav", "kind": "audio" },
+    { "path": "audio/sfx/multiplier.wav", "kind": "audio" },
+    { "path": "audio/sfx/snap.wav", "kind": "audio" },
+    { "path": "audio/sfx/throw.wav", "kind": "audio" },
+    { "path": "audio/sfx/timer-warning.wav", "kind": "audio" },
+    { "path": "audio/sfx/touchdown.wav", "kind": "audio" },
+    { "path": "audio/sfx/ui-select.wav", "kind": "audio" },
+    { "path": "characters/defender-interception-left.webp", "kind": "image" },
+    { "path": "characters/defender-interception-right.webp", "kind": "image" },
+    { "path": "characters/defender-run-1-left.webp", "kind": "image" },
+    { "path": "characters/defender-run-1-right.webp", "kind": "image" },
+    { "path": "characters/defender-run-2-left.webp", "kind": "image" },
+    { "path": "characters/defender-run-2-right.webp", "kind": "image" },
+    { "path": "characters/defender-run-3-left.webp", "kind": "image" },
+    { "path": "characters/defender-run-3-right.webp", "kind": "image" },
+    { "path": "characters/defender-run-4-left.webp", "kind": "image" },
+    { "path": "characters/defender-run-4-right.webp", "kind": "image" },
+    { "path": "characters/official-wave-1-left.webp", "kind": "image" },
+    { "path": "characters/official-wave-1-right.webp", "kind": "image" },
+    { "path": "characters/official-wave-2-left.webp", "kind": "image" },
+    { "path": "characters/official-wave-2-right.webp", "kind": "image" },
+    { "path": "characters/qb-aim.webp", "kind": "image" },
+    { "path": "characters/qb-idle.webp", "kind": "image" },
+    { "path": "characters/qb-recovery.webp", "kind": "image" },
+    { "path": "characters/qb-throw.webp", "kind": "image" },
+    { "path": "characters/receiver-carry-2-left.webp", "kind": "image" },
+    { "path": "characters/receiver-carry-2-right.webp", "kind": "image" },
+    { "path": "characters/receiver-carry-3-left.webp", "kind": "image" },
+    { "path": "characters/receiver-carry-3-right.webp", "kind": "image" },
+    { "path": "characters/receiver-carry-4-left.webp", "kind": "image" },
+    { "path": "characters/receiver-carry-4-right.webp", "kind": "image" },
+    { "path": "characters/receiver-carry-left.webp", "kind": "image" },
+    { "path": "characters/receiver-carry-right.webp", "kind": "image" },
+    { "path": "characters/receiver-catch-left.webp", "kind": "image" },
+    { "path": "characters/receiver-catch-right.webp", "kind": "image" },
+    { "path": "characters/receiver-run-1-left.webp", "kind": "image" },
+    { "path": "characters/receiver-run-1-right.webp", "kind": "image" },
+    { "path": "characters/receiver-run-2-left.webp", "kind": "image" },
+    { "path": "characters/receiver-run-2-right.webp", "kind": "image" },
+    { "path": "characters/receiver-run-3-left.webp", "kind": "image" },
+    { "path": "characters/receiver-run-3-right.webp", "kind": "image" },
+    { "path": "characters/receiver-run-4-left.webp", "kind": "image" },
+    { "path": "characters/receiver-run-4-right.webp", "kind": "image" },
+    { "path": "characters/receiver-touchdown-left.webp", "kind": "image" },
+    { "path": "characters/receiver-touchdown-right.webp", "kind": "image" },
+    { "path": "pixel/logo.png", "kind": "image" },
+    { "path": "pixel/stadium-field-wide-endzone-v3.png", "kind": "image" }
+  ]
+}

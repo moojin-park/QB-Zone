@@ -10,3 +10,8 @@ test-results/
 screenshots/
 output/
 *.tsbuildinfo
+
+# Xcode local state
+DerivedData/
+xcuserdata/
+*.xcuserstate

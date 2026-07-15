@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "generator": "scripts/process-pixel-character-strips.py",
   "canvas": {
     "width": 384,
@@ -15,14 +15,15 @@
     "quality": 100,
     "lossless": true,
     "resampling": "nearest",
-    "camera": "rear QB, mirrored left/right receivers, square defenders reused in both directions",
+    "camera": "rear QB, mirrored left/right receivers and officials, square defenders reused in both directions",
     "releaseBall": "detached QB release prop removed; runtime projectile is authoritative",
     "background": "transparent",
     "safePadding": 16,
     "scaleByRole": {
       "quarterback": 0.77046549,
       "receiver": 1.13915858,
-      "defender": 1.16556291
+      "defender": 1.16556291,
+      "official": 0.81771721
     }
   },
   "teams": {
@@ -699,6 +700,82 @@
         "height": 424
       },
       "bytes": 68268
+    },
+    {
+      "src": "/assets/characters/official-wave-1-left.webp",
+      "role": "official",
+      "pose": "wave1",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 108,
+        "y": 58,
+        "width": 168,
+        "height": 438
+      },
+      "bytes": 59530
+    },
+    {
+      "src": "/assets/characters/official-wave-1-right.webp",
+      "role": "official",
+      "pose": "wave1",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 108,
+        "y": 58,
+        "width": 168,
+        "height": 438
+      },
+      "bytes": 59622
+    },
+    {
+      "src": "/assets/characters/official-wave-2-left.webp",
+      "role": "official",
+      "pose": "wave2",
+      "direction": "left",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 58,
+        "y": 16,
+        "width": 268,
+        "height": 480
+      },
+      "bytes": 66348
+    },
+    {
+      "src": "/assets/characters/official-wave-2-right.webp",
+      "role": "official",
+      "pose": "wave2",
+      "direction": "right",
+      "width": 384,
+      "height": 512,
+      "anchor": {
+        "x": 192,
+        "y": 496
+      },
+      "contentBounds": {
+        "x": 58,
+        "y": 16,
+        "width": 268,
+        "height": 480
+      },
+      "bytes": 66486
     }
   ]
 }

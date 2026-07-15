@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Normalize transparent pixel-art strips into Pocket Vector runtime sprites.
 
-The three input images must each contain one horizontal row of equal-width
-slots. Receiver frames face right and are mirrored for leftward travel. Defenders
-stay square to the quarterback, so both runtime directions reuse the same
-front-facing art instead of reversing the visible jersey number.
+The four input images must each contain one horizontal row of equal-width
+slots. Receiver and official frames face right and are mirrored for the opposite
+direction. Defenders stay square to the quarterback, so both runtime directions
+reuse the same front-facing art instead of reversing the visible jersey number.
 
 Pillow with WebP support is required for processing, but ``--help`` and output
 collision checks work without importing Pillow.
@@ -57,6 +57,10 @@ DEFENDER_POSES = (
     ("run-3", "run3"),
     ("run-4", "run4"),
     ("interception", "interception"),
+)
+OFFICIAL_POSES = (
+    ("wave-1", "wave1"),
+    ("wave-2", "wave2"),
 )
 
 OFFENSE = {
@@ -117,8 +121,8 @@ class OutputFrame:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Convert three transparent horizontal pixel-art strips into the "
-            "34 Pocket Vector character WebPs and sprites.json."
+            "Convert four transparent horizontal pixel-art strips into the "
+            "38 Pocket Vector character WebPs and sprites.json."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
@@ -127,20 +131,22 @@ Input slot order:
   Receiver (10): run-1, run-2, run-3, run-4, catch, carry-1, carry-2,
                  carry-3, carry-4, touchdown; facing right
   Defender (5): run-1, run-2, run-3, run-4, interception; square/front-facing
+  Official (2): wave-1, wave-2; facing right
 
 Each strip uses equal-width slots, and every slot must contain at least one
 non-transparent pixel. If needed, fewer than one slot-count of fully transparent
 trailing columns are safely trimmed to reach an even division; non-transparent
 remainders fail validation. The pipeline uses one shared scale per role,
 nearest-neighbor resampling, a 16 px safe area, and bottom-center anchor
-[192, 496]. Receiver left frames are exact full-canvas mirrors of right frames;
-square defender frames are reused unchanged for both directions.
+[192, 496]. Receiver and official left frames are exact full-canvas mirrors of
+right frames; square defender frames are reused unchanged for both directions.
 
 Example:
   python3 scripts/process-pixel-character-strips.py \\
     --qb-strip art/qb-strip.png \\
     --receiver-strip art/receiver-strip.png \\
     --defender-strip art/defender-strip.png \\
+    --official-strip art/official-strip.png \\
     --dry-run
 
 Remove --dry-run to write. Existing runtime files are replaced only with
@@ -166,6 +172,12 @@ Remove --dry-run to write. Existing runtime files are replaced only with
         help="transparent 5-slot square/front-facing defender strip",
     )
     parser.add_argument(
+        "--official-strip",
+        required=True,
+        type=Path,
+        help="transparent 2-slot right-facing sideline-official strip",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
@@ -179,7 +191,7 @@ Remove --dry-run to write. Existing runtime files are replaced only with
     parser.add_argument(
         "--force",
         action="store_true",
-        help="replace the 34 runtime WebPs and sprites.json if they exist",
+        help="replace the 38 runtime WebPs and sprites.json if they exist",
     )
     return parser
 
@@ -189,6 +201,7 @@ def runtime_filenames() -> tuple[str, ...]:
     for role, poses in (
         ("receiver", RECEIVER_POSES),
         ("defender", DEFENDER_POSES),
+        ("official", OFFICIAL_POSES),
     ):
         for file_pose, _ in poses:
             filenames.extend(
@@ -438,7 +451,7 @@ def prepare_outputs(
             )
         )
 
-    for role in ("receiver", "defender"):
+    for role in ("receiver", "defender", "official"):
         loaded = by_role[role]
         right_images = [
             normalize_frame(frame, loaded.scale, image_module)
@@ -452,7 +465,7 @@ def prepare_outputs(
             left_filename = f"{role}-{file_pose}-left.webp"
             left_image = (
                 image_ops.mirror(right_image)
-                if role == "receiver"
+                if role in ("receiver", "official")
                 else right_image.copy()
             )
             outputs.extend(
@@ -473,7 +486,7 @@ def prepare_outputs(
                     ),
                 )
             )
-            if role == "receiver":
+            if role in ("receiver", "official"):
                 mirror_pairs.append((left_filename, right_filename))
 
     expected = runtime_filenames()
@@ -585,7 +598,7 @@ def build_manifest(
         )
 
     return {
-        "version": 4,
+        "version": 5,
         "generator": "scripts/process-pixel-character-strips.py",
         "canvas": {
             "width": CANVAS_WIDTH,
@@ -599,8 +612,8 @@ def build_manifest(
             "lossless": True,
             "resampling": "nearest",
             "camera": (
-                "rear QB, mirrored left/right receivers, square defenders "
-                "reused in both directions"
+                "rear QB, mirrored left/right receivers and officials, "
+                "square defenders reused in both directions"
             ),
             "releaseBall": (
                 "detached QB release prop removed; runtime projectile is "
@@ -665,7 +678,7 @@ def print_summary(
     dry_run: bool,
 ) -> None:
     status = "Dry run complete" if dry_run else "Generated sprite set"
-    print(f"{status}: 34 lossless WebPs and sprites.json")
+    print(f"{status}: 38 lossless WebPs and sprites.json")
     print(
         f"Canvas: {CANVAS_WIDTH}x{CANVAS_HEIGHT}; "
         f"anchor: [{ANCHOR_X}, {ANCHOR_Y}]; safe padding: {SAFE_PADDING}px"
@@ -685,7 +698,7 @@ def print_summary(
     print(
         "Verified: non-empty slots, nearest-neighbor palette preservation, "
         "384x512 transparency, lossless pixel round-trip, ten receiver mirror "
-        "pairs, and square defender direction pairs."
+        "pairs, two official mirror pairs, and square defender direction pairs."
     )
     if dry_run:
         if conflict_count:
@@ -713,6 +726,11 @@ def run(args: argparse.Namespace) -> None:
             "defender",
             resolve_path(args.defender_strip),
             DEFENDER_POSES,
+        ),
+        RoleInput(
+            "official",
+            resolve_path(args.official_strip),
+            OFFICIAL_POSES,
         ),
     )
     validate_paths(inputs, output_dir)

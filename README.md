@@ -10,6 +10,14 @@ The game is written in TypeScript, built with Vite, rendered with Canvas 2D, and
 ships with an optional Bounty Board Arcade adapter. Standalone is the default:
 no account, ad provider, or platform handshake is required to play.
 
+## Native iOS port
+
+The repository now also contains a native Swift 6, SwiftUI, and SpriteKit port
+under [`ios/`](ios/README.md). Open
+`ios/PocketVector.xcodeproj` in Xcode to run the current playable vertical slice
+on an iPhone or iPad simulator. The browser game remains intact and is still the
+reference implementation while feature parity is completed.
+
 ## Prerequisites
 
 - Node.js 22.12 or newer. The project is currently verified with Node.js
