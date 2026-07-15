@@ -26,6 +26,23 @@
 		100000000000000000000011 /* BroadcastHUDNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000013 /* BroadcastHUDNode.swift */; };
 		100000000000000000000012 /* FieldBoundaryLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000014 /* FieldBoundaryLayout.swift */; };
 		100000000000000000000013 /* SidelineEnvironmentNode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000015 /* SidelineEnvironmentNode.swift */; };
+		110000000000000000000001 /* Identifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000001 /* Identifiers.swift */; };
+		110000000000000000000002 /* RunModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000002 /* RunModels.swift */; };
+		110000000000000000000003 /* PlayerProfileModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000003 /* PlayerProfileModels.swift */; };
+		110000000000000000000004 /* CatalogModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000004 /* CatalogModels.swift */; };
+		110000000000000000000005 /* EconomyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000005 /* EconomyModels.swift */; };
+		110000000000000000000006 /* AchievementModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000006 /* AchievementModels.swift */; };
+		110000000000000000000007 /* LaunchTeamCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000007 /* LaunchTeamCatalog.swift */; };
+		110000000000000000000008 /* InventoryRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000008 /* InventoryRules.swift */; };
+		110000000000000000000009 /* MatchupGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000009 /* MatchupGenerator.swift */; };
+		11000000000000000000000A /* UniformClashResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21000000000000000000000A /* UniformClashResolver.swift */; };
+		11000000000000000000000B /* EconomyConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21000000000000000000000B /* EconomyConfiguration.swift */; };
+		11000000000000000000000C /* RunRewardCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21000000000000000000000C /* RunRewardCalculator.swift */; };
+		11000000000000000000000D /* AchievementCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21000000000000000000000D /* AchievementCatalog.swift */; };
+		11000000000000000000000E /* AchievementEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21000000000000000000000E /* AchievementEvaluator.swift */; };
+		11000000000000000000000F /* DomainContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21000000000000000000000F /* DomainContractTests.swift */; };
+		110000000000000000000010 /* CatalogRulesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000010 /* CatalogRulesTests.swift */; };
+		110000000000000000000011 /* EconomyAchievementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 210000000000000000000011 /* EconomyAchievementTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +77,23 @@
 		200000000000000000000013 /* BroadcastHUDNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BroadcastHUDNode.swift; sourceTree = "<group>"; };
 		200000000000000000000014 /* FieldBoundaryLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FieldBoundaryLayout.swift; sourceTree = "<group>"; };
 		200000000000000000000015 /* SidelineEnvironmentNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidelineEnvironmentNode.swift; sourceTree = "<group>"; };
+		210000000000000000000001 /* Identifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Identifiers.swift; sourceTree = "<group>"; };
+		210000000000000000000002 /* RunModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunModels.swift; sourceTree = "<group>"; };
+		210000000000000000000003 /* PlayerProfileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerProfileModels.swift; sourceTree = "<group>"; };
+		210000000000000000000004 /* CatalogModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogModels.swift; sourceTree = "<group>"; };
+		210000000000000000000005 /* EconomyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EconomyModels.swift; sourceTree = "<group>"; };
+		210000000000000000000006 /* AchievementModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AchievementModels.swift; sourceTree = "<group>"; };
+		210000000000000000000007 /* LaunchTeamCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTeamCatalog.swift; sourceTree = "<group>"; };
+		210000000000000000000008 /* InventoryRules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InventoryRules.swift; sourceTree = "<group>"; };
+		210000000000000000000009 /* MatchupGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatchupGenerator.swift; sourceTree = "<group>"; };
+		21000000000000000000000A /* UniformClashResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UniformClashResolver.swift; sourceTree = "<group>"; };
+		21000000000000000000000B /* EconomyConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EconomyConfiguration.swift; sourceTree = "<group>"; };
+		21000000000000000000000C /* RunRewardCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunRewardCalculator.swift; sourceTree = "<group>"; };
+		21000000000000000000000D /* AchievementCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AchievementCatalog.swift; sourceTree = "<group>"; };
+		21000000000000000000000E /* AchievementEvaluator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AchievementEvaluator.swift; sourceTree = "<group>"; };
+		21000000000000000000000F /* DomainContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DomainContractTests.swift; sourceTree = "<group>"; };
+		210000000000000000000010 /* CatalogRulesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogRulesTests.swift; sourceTree = "<group>"; };
+		210000000000000000000011 /* EconomyAchievementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EconomyAchievementTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -102,6 +136,10 @@
 			isa = PBXGroup;
 			children = (
 				300000000000000000000004 /* App */,
+				310000000000000000000001 /* Domain */,
+				310000000000000000000002 /* Catalog */,
+				310000000000000000000003 /* Economy */,
+				310000000000000000000004 /* Achievements */,
 				300000000000000000000005 /* Game */,
 				300000000000000000000008 /* Resources */,
 			);
@@ -167,6 +205,9 @@
 			isa = PBXGroup;
 			children = (
 				20000000000000000000000D /* GameCoreTests.swift */,
+				21000000000000000000000F /* DomainContractTests.swift */,
+				210000000000000000000010 /* CatalogRulesTests.swift */,
+				210000000000000000000011 /* EconomyAchievementTests.swift */,
 			);
 			path = PocketVectorTests;
 			sourceTree = "<group>";
@@ -177,6 +218,48 @@
 				200000000000000000000010 /* GameAudioController.swift */,
 			);
 			path = Audio;
+			sourceTree = "<group>";
+		};
+		310000000000000000000001 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				210000000000000000000001 /* Identifiers.swift */,
+				210000000000000000000002 /* RunModels.swift */,
+				210000000000000000000003 /* PlayerProfileModels.swift */,
+				210000000000000000000004 /* CatalogModels.swift */,
+				210000000000000000000005 /* EconomyModels.swift */,
+				210000000000000000000006 /* AchievementModels.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		310000000000000000000002 /* Catalog */ = {
+			isa = PBXGroup;
+			children = (
+				210000000000000000000007 /* LaunchTeamCatalog.swift */,
+				210000000000000000000008 /* InventoryRules.swift */,
+				210000000000000000000009 /* MatchupGenerator.swift */,
+				21000000000000000000000A /* UniformClashResolver.swift */,
+			);
+			path = Catalog;
+			sourceTree = "<group>";
+		};
+		310000000000000000000003 /* Economy */ = {
+			isa = PBXGroup;
+			children = (
+				21000000000000000000000B /* EconomyConfiguration.swift */,
+				21000000000000000000000C /* RunRewardCalculator.swift */,
+			);
+			path = Economy;
+			sourceTree = "<group>";
+		};
+		310000000000000000000004 /* Achievements */ = {
+			isa = PBXGroup;
+			children = (
+				21000000000000000000000D /* AchievementCatalog.swift */,
+				21000000000000000000000E /* AchievementEvaluator.swift */,
+			);
+			path = Achievements;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -295,6 +378,20 @@
 				100000000000000000000010 /* HUDLayout.swift in Sources */,
 				100000000000000000000011 /* BroadcastHUDNode.swift in Sources */,
 				10000000000000000000000A /* GameScene.swift in Sources */,
+				110000000000000000000001 /* Identifiers.swift in Sources */,
+				110000000000000000000002 /* RunModels.swift in Sources */,
+				110000000000000000000003 /* PlayerProfileModels.swift in Sources */,
+				110000000000000000000004 /* CatalogModels.swift in Sources */,
+				110000000000000000000005 /* EconomyModels.swift in Sources */,
+				110000000000000000000006 /* AchievementModels.swift in Sources */,
+				110000000000000000000007 /* LaunchTeamCatalog.swift in Sources */,
+				110000000000000000000008 /* InventoryRules.swift in Sources */,
+				110000000000000000000009 /* MatchupGenerator.swift in Sources */,
+				11000000000000000000000A /* UniformClashResolver.swift in Sources */,
+				11000000000000000000000B /* EconomyConfiguration.swift in Sources */,
+				11000000000000000000000C /* RunRewardCalculator.swift in Sources */,
+				11000000000000000000000D /* AchievementCatalog.swift in Sources */,
+				11000000000000000000000E /* AchievementEvaluator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -303,6 +400,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				10000000000000000000000D /* GameCoreTests.swift in Sources */,
+				11000000000000000000000F /* DomainContractTests.swift in Sources */,
+				110000000000000000000010 /* CatalogRulesTests.swift in Sources */,
+				110000000000000000000011 /* EconomyAchievementTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
