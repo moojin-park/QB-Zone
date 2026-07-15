@@ -10,18 +10,22 @@ tracks execution, evidence, dependencies, and owner decisions.
 ## Current outcome
 
 The native foundation, launch rules, durable local repository, production app
-shell, GameKit adapter, and framework-neutral eight-team visual catalog are now
-versioned through commit `8c4e8d9` (`Build production shell and platform
-presentation`). That revision passed all 150 simulator tests and produced an
-unsigned Release archive. An iPhone 17 Pro simulator launch also confirmed the
-main menu renders in landscape without safe-area clipping.
+shell, Apple-service adapters, app icon, and framework-neutral eight-team visual
+catalog are now versioned through commit `504f562` (`Connect durable app
+composition and Apple service adapters`). That revision passed all 179
+simulator tests and produced an unsigned Release archive. An earlier iPhone 17
+Pro simulator launch also confirmed the main menu renders in landscape without
+safe-area clipping.
 
 SwiftUI now owns app navigation and SpriteKit owns one disposable gameplay run.
-The actor-isolated player repository remains the only durable state authority,
-but the Release composition root is not connected to it yet. Tutorial,
-privacy/support, shipping team visuals, CloudKit, StoreKit, rewarded ads, and
-release-account configuration remain active work; the successful archive is an
-engineering gate, not a release-readiness claim.
+The Release composition loads and mutates the actor-isolated player repository,
+and completed runs settle exactly once into authoritative persisted results.
+CloudKit and StoreKit 2 have privacy-safe, account-bound production adapters,
+but live sync, purchases, and spendable credits stay disabled until their
+higher-level durable coordinator and permanent account identifiers are in
+place. Tutorial, privacy/support, shipping team visuals, rewarded ads,
+diagnostics, and release-account configuration remain active work; the
+successful archive is an engineering gate, not a release-readiness claim.
 
 ## Delivery board
 
@@ -31,9 +35,9 @@ engineering gate, not a release-readiness claim.
 | Reproducible native foundation                  | Complete            | Clean-checkout tests and unsigned Release archive pass at `49d8a6b`                                                                   |
 | Domain, catalog, economy, and achievement rules | Complete            | Eight teams, inventory, matchup, clash, reward, coin-pack, and eight-achievement rules pass exhaustive tests                          |
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
-| Account-independent service seams               | In progress         | Deterministic service queues plus the real GameKit adapter pass; live CloudKit, StoreKit, ad, and diagnostics adapters remain         |
+| Account-independent service seams               | In progress         | Deterministic queues plus real GameKit, CloudKit, and StoreKit 2 adapters pass; ad and diagnostics adapters remain                    |
 | Production app shell and menus                  | In progress         | Home, teams, locker, store, leaderboard, achievements, settings, gameplay, and results exist; tutorial and privacy/support remain     |
-| Gameplay settlement integration                 | In progress         | One immutable run crosses one settlement seam with retry-safe navigation; the Release repository composition remains to be connected |
+| Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Eight-team presentation system                  | In progress         | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, and HUD palettes pass; shipping render integration remains     |
 | Live Apple and advertising services             | Blocked on accounts | Capabilities, permanent identifiers, sandbox products, Game Center records, AdMob configuration, and verified rewards work end to end |
 | iOS-only repository cleanup                     | Queued              | Browser runtime, browser tooling, obsolete assets, and Bounty Board integration removed after final native asset audit                |
@@ -67,6 +71,7 @@ or runtime ownership boundaries.
 | 2026-07-15 | `cd6151e` | Durable-profile simulator suite and archive      | 109 passed, 0 failed; unsigned Release archive passed          |
 | 2026-07-15 | `8c4e8d9` | Shell, gameplay, GameKit, and visuals full suite | 150 passed, 0 failed, 0 skipped; unsigned archive passed       |
 | 2026-07-15 | `8c4e8d9` | iPhone 17 Pro landscape launch smoke             | Main menu rendered without safe-area clipping                  |
+| 2026-07-15 | `504f562` | Composition, CloudKit, StoreKit, and icon suite  | 179 passed, 0 failed, 0 skipped; unsigned archive passed       |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -105,8 +110,8 @@ workflow reaches that gate.
 | Valid completed runs                 |   100+ | Not started                                     |
 | Crash-free sessions                  | 99.5%+ | Instrumentation decision open                   |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
-| Exactly-once economic mutations      |   100% | Local transactional suite passing; live services pending     |
-| Clean-checkout archive               |   Pass | Passing at native baseline                      |
+| Exactly-once economic mutations      |   100% | Local and adapter suites passing; live service coordination pending |
+| Clean-checkout archive               |   Pass | Passing through `504f562`                       |
 | Browser runtime in active repository |   None | Cleanup deferred until final native asset audit |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
