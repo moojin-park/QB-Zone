@@ -31,11 +31,20 @@ final class SidelineEnvironmentNode: SKNode {
 
     func rebuild(
         for projection: GameProjection,
-        endZoneTexture: SKTexture?,
+        offenseIdentity: TeamVisualIdentity,
         textures: TextureLibrary
     ) {
         removeAllChildren()
-        addEndZoneSurface(projection: projection, texture: endZoneTexture)
+        addEndZoneSurface(
+            projection: projection,
+            identity: offenseIdentity,
+            textures: textures
+        )
+        addFieldBranding(
+            projection: projection,
+            identity: offenseIdentity,
+            textures: textures
+        )
         addOutOfBoundsSurfaces(projection: projection)
         addSurfaceDetails(projection: projection)
         addYardLineExtensions(projection: projection)
@@ -44,7 +53,11 @@ final class SidelineEnvironmentNode: SKNode {
         addOfficials(projection: projection, textures: textures)
     }
 
-    private func addEndZoneSurface(projection: GameProjection, texture: SKTexture?) {
+    private func addEndZoneSurface(
+        projection: GameProjection,
+        identity: TeamVisualIdentity,
+        textures: TextureLibrary
+    ) {
         let leftBack = FieldBoundaryLayout.boundaryPoint(
             side: .left,
             browserY: FieldBoundaryLayout.endZoneBackBrowserY,
@@ -104,26 +117,198 @@ final class SidelineEnvironmentNode: SKNode {
         endZonePath.closeSubpath()
 
         let endZoneBase = SKShapeNode(path: endZonePath)
-        endZoneBase.fillColor = Palette.endZone
-        endZoneBase.strokeColor = .clear
+        endZoneBase.fillColor = identity.palette
+            .color(for: identity.endZone.background)
+            .uiColor
+        endZoneBase.strokeColor = identity.palette
+            .color(for: identity.endZone.boundary)
+            .uiColor
+        endZoneBase.lineWidth = 3
         endZoneBase.isAntialiased = false
         endZoneBase.zPosition = 1
         addChild(endZoneBase)
 
-        guard let texture else { return }
+        let artwork = SKCropNode()
+        artwork.name = "endZoneArtwork.\(identity.teamID.rawValue)"
+        let mask = SKShapeNode(path: endZonePath)
+        mask.fillColor = .white
+        mask.strokeColor = .clear
+        mask.isAntialiased = false
+        artwork.maskNode = mask
+        artwork.zPosition = 2
 
-        let endZoneArtwork = SKSpriteNode(texture: texture)
-        endZoneArtwork.name = "endZoneArtwork"
-        endZoneArtwork.size = CGSize(
-            width: rightFront.x - leftFront.x,
-            height: leftBack.y - leftFront.y
+        let height = leftBack.y - leftFront.y
+        let centerY = (leftBack.y + leftFront.y) / 2
+        let emblemSide = max(30, height * 0.82)
+        let emblemTexture = textures.emblemTexture(
+            for: identity,
+            size: CGSize(width: emblemSide, height: emblemSide)
         )
-        endZoneArtwork.position = CGPoint(
-            x: projection.centerX,
-            y: (leftBack.y + leftFront.y) / 2
+        let motifCount = max(1, identity.endZone.motifRepeatCount)
+        let availableWidth = max(1, rightFront.x - leftFront.x)
+        for index in 0 ..< motifCount {
+            let progress = (CGFloat(index) + 0.5) / CGFloat(motifCount)
+            let motif = SKSpriteNode(texture: emblemTexture)
+            motif.name = "endZoneMotif.\(identity.emblem.motif.rawValue).\(index)"
+            motif.size = CGSize(width: emblemSide, height: emblemSide)
+            motif.position = CGPoint(
+                x: leftFront.x + availableWidth * progress,
+                y: motifY(
+                    layout: identity.endZone.motifLayout,
+                    index: index,
+                    count: motifCount,
+                    centerY: centerY,
+                    height: height
+                )
+            )
+            motif.zRotation = motifRotation(
+                layout: identity.endZone.motifLayout,
+                index: index
+            )
+            motif.alpha = identity.endZone.motifOpacity
+            motif.zPosition = 0
+            artwork.addChild(motif)
+        }
+
+        let market = makeWordmarkLabel(
+            identity.wordmark.marketLine,
+            fontSize: max(8, height * 0.18),
+            color: identity.palette.color(for: identity.wordmark.marketColor).uiColor
         )
-        endZoneArtwork.zPosition = 2
-        addChild(endZoneArtwork)
+        market.position = CGPoint(x: projection.centerX, y: centerY + height * 0.18)
+        market.zPosition = 2
+        fit(label: market, maximumWidth: availableWidth * 0.70)
+        artwork.addChild(market)
+
+        let nickname = makeWordmarkLabel(
+            identity.wordmark.nicknameLine,
+            fontSize: max(18, height * 0.42),
+            color: identity.palette.color(for: identity.endZone.wordmark).uiColor
+        )
+        nickname.position = CGPoint(x: projection.centerX, y: centerY - height * 0.12)
+        nickname.zPosition = 3
+        fit(label: nickname, maximumWidth: availableWidth * 0.76)
+        artwork.addChild(nickname)
+
+        addChild(artwork)
+    }
+
+    private func addFieldBranding(
+        projection: GameProjection,
+        identity: TeamVisualIdentity,
+        textures: TextureLibrary
+    ) {
+        // The immutable stadium plate contains legacy Nova lettering. This code-native plate fully
+        // covers that authored rectangle and supplies the selected offense's original mark instead.
+        let width = min(680, projection.viewportWidth * 0.70)
+        let height: CGFloat = 126
+        let frame = CGRect(
+            x: projection.centerX - width / 2,
+            y: GameProjection.logicalHeight - 448,
+            width: width,
+            height: height
+        )
+        let panel = SKShapeNode(
+            path: CGPath(
+                roundedRect: frame,
+                cornerWidth: height * 0.42,
+                cornerHeight: height * 0.42,
+                transform: nil
+            )
+        )
+        panel.name = "fieldBranding.\(identity.teamID.rawValue)"
+        panel.fillColor = identity.palette
+            .color(for: identity.endZone.background)
+            .uiColor
+        panel.strokeColor = identity.palette.accent.uiColor
+        panel.lineWidth = 5
+        panel.isAntialiased = true
+        panel.zPosition = 4
+        addChild(panel)
+
+        let emblemSide = height * 0.78
+        let emblem = SKSpriteNode(texture: textures.emblemTexture(
+            for: identity,
+            size: CGSize(width: emblemSide, height: emblemSide)
+        ))
+        emblem.size = CGSize(width: emblemSide, height: emblemSide)
+        emblem.position = CGPoint(x: frame.minX + height * 0.62, y: frame.midY)
+        emblem.zPosition = 5
+        addChild(emblem)
+
+        let market = makeWordmarkLabel(
+            identity.wordmark.marketLine,
+            fontSize: 17,
+            color: identity.palette.color(for: identity.wordmark.marketColor).uiColor
+        )
+        market.horizontalAlignmentMode = .left
+        market.position = CGPoint(x: frame.minX + height * 1.15, y: frame.midY + 19)
+        market.zPosition = 5
+        fit(label: market, maximumWidth: frame.width - height * 1.38)
+        addChild(market)
+
+        let nickname = makeWordmarkLabel(
+            identity.wordmark.nicknameLine,
+            fontSize: 39,
+            color: identity.palette.color(for: identity.wordmark.nicknameColor).uiColor
+        )
+        nickname.horizontalAlignmentMode = .left
+        nickname.position = CGPoint(x: frame.minX + height * 1.15, y: frame.midY - 20)
+        nickname.zPosition = 5
+        fit(label: nickname, maximumWidth: frame.width - height * 1.38)
+        addChild(nickname)
+    }
+
+    private func motifY(
+        layout: EndZoneMotifLayout,
+        index: Int,
+        count: Int,
+        centerY: CGFloat,
+        height: CGFloat
+    ) -> CGFloat {
+        switch layout {
+        case .offsetDisks, .waveBands:
+            return centerY + (index.isMultiple(of: 2) ? height * 0.10 : -height * 0.10)
+        case .frequencySteps:
+            let progress = count > 1 ? CGFloat(index) / CGFloat(count - 1) : 0.5
+            return centerY - height * 0.18 + progress * height * 0.36
+        case .splitRays, .radialCore:
+            return centerY + (index == count / 2 ? height * 0.08 : 0)
+        case .mirroredCorners, .horizonBand, .rivetRail:
+            return centerY
+        }
+    }
+
+    private func motifRotation(layout: EndZoneMotifLayout, index: Int) -> CGFloat {
+        switch layout {
+        case .mirroredCorners:
+            return index.isMultiple(of: 2) ? -0.16 : 0.16
+        case .splitRays:
+            return index.isMultiple(of: 2) ? -0.28 : 0.28
+        case .waveBands:
+            return index.isMultiple(of: 2) ? -0.08 : 0.08
+        case .horizonBand, .rivetRail, .offsetDisks, .radialCore, .frequencySteps:
+            return 0
+        }
+    }
+
+    private func makeWordmarkLabel(
+        _ text: String,
+        fontSize: CGFloat,
+        color: UIColor
+    ) -> SKLabelNode {
+        let label = SKLabelNode(fontNamed: "AvenirNext-Heavy")
+        label.text = text
+        label.fontSize = fontSize
+        label.fontColor = color
+        label.horizontalAlignmentMode = .center
+        label.verticalAlignmentMode = .center
+        return label
+    }
+
+    private func fit(label: SKLabelNode, maximumWidth: CGFloat) {
+        guard label.frame.width > maximumWidth, label.frame.width > 0 else { return }
+        label.xScale = maximumWidth / label.frame.width
     }
 
     private func addOutOfBoundsSurfaces(projection: GameProjection) {

@@ -13,6 +13,7 @@ final class AppCoordinator {
     private(set) var pendingCompletedRun: CompletedRun?
     private(set) var isRunSettlementInFlight: Bool
     private(set) var settlementErrorMessage: String?
+    let privacySupportConfiguration: PrivacySupportConfiguration
 
     private let environment: AppCoordinatorEnvironment
     private let matchupGenerator: MatchupGenerator
@@ -26,6 +27,7 @@ final class AppCoordinator {
         self.catalog = catalog
         self.state = state ?? .launchDefault(catalog: catalog)
         self.environment = environment
+        privacySupportConfiguration = environment.privacySupportConfiguration
         matchupGenerator = MatchupGenerator(catalog: catalog)
         navigationPath = [.mainMenu]
         bootstrapState = .loading
@@ -119,6 +121,14 @@ final class AppCoordinator {
 
     func showSettings() {
         navigate(to: .settings)
+    }
+
+    func showTutorialReview() {
+        navigate(to: .tutorial(.review))
+    }
+
+    func showPrivacySupport() {
+        navigate(to: .privacySupport)
     }
 
     func requestLeaderboard() async {
@@ -279,6 +289,45 @@ final class AppCoordinator {
         )
     }
 
+    func cancelTutorial() {
+        guard pendingRequest == nil,
+              case .tutorial = currentDestination else {
+            return
+        }
+        goBack()
+    }
+
+    func completeTutorial() async {
+        guard bootstrapState == .ready,
+              pendingRequest == nil,
+              case let .tutorial(context) = currentDestination else {
+            return
+        }
+
+        switch context {
+        case .review:
+            goBack()
+
+        case let .beforeRun(intent):
+            if !state.settings.tutorialCompleted {
+                let completedSettings = PlayerSettings(
+                    musicVolume: state.settings.musicVolume,
+                    sfxVolume: state.settings.sfxVolume,
+                    isMuted: state.settings.isMuted,
+                    reducedMotion: state.settings.reducedMotion,
+                    tutorialCompleted: true
+                )
+                guard await updateSettings(completedSettings),
+                      state.settings.tutorialCompleted else {
+                    return
+                }
+            }
+
+            guard currentDestination == .tutorial(context) else { return }
+            _ = launchRun(intent: intent, replacingTutorial: true)
+        }
+    }
+
     @discardableResult
     func startRun() -> Bool {
         guard bootstrapState == .ready else { return false }
@@ -286,21 +335,19 @@ final class AppCoordinator {
             noticeMessage = "Finish saving the current run before starting another."
             return false
         }
-        do {
-            let configuration = try matchupGenerator.makeRunConfiguration(
-                selection: state.selection,
-                inventory: state.inventory,
-                runID: environment.makeRunID(),
-                seed: environment.makeSeed(),
-                startedAt: environment.now()
-            )
-            navigate(to: .gameplay(configuration))
-            environment.observeLifecycleEvent?(.didLaunchRun(configuration))
-            return true
-        } catch {
+
+        let intent = RunLaunchIntent(selection: state.selection)
+        guard isValidRunIntent(intent) else {
             noticeMessage = "Choose an owned team, jersey, and football before starting a run."
             return false
         }
+
+        if !state.settings.tutorialCompleted {
+            navigate(to: .tutorial(.beforeRun(intent)))
+            return true
+        }
+
+        return launchRun(intent: intent, replacingTutorial: false)
     }
 
     func handleCompletedRun(_ completedRun: CompletedRun) async {
@@ -405,21 +452,75 @@ final class AppCoordinator {
         _ = startRun()
     }
 
-    private func updateSettings(_ settings: PlayerSettings) async {
-        guard state.settings != settings else { return }
-        var candidate = state
-        candidate.settings = settings
-        await performStateChange(candidate, request: .updateSettings(settings))
+    private func isValidRunIntent(_ intent: RunLaunchIntent) -> Bool {
+        do {
+            try InventoryRules.validate(
+                selection: intent.selection,
+                inventory: state.inventory,
+                catalog: catalog
+            )
+        } catch {
+            return false
+        }
+
+        guard let jerseyID = intent.selection.selectedJerseyID,
+              catalog.jersey(id: jerseyID) != nil else {
+            return false
+        }
+        return catalog.teams.contains { $0.id != intent.selection.selectedTeamID }
     }
 
+    @discardableResult
+    private func launchRun(
+        intent: RunLaunchIntent,
+        replacingTutorial: Bool
+    ) -> Bool {
+        guard state.selection == intent.selection,
+              isValidRunIntent(intent) else {
+            noticeMessage = "Your selected team or equipment changed while the tutorial was open. Review your locker before starting a run."
+            return false
+        }
+
+        do {
+            let configuration = try matchupGenerator.makeRunConfiguration(
+                selection: intent.selection,
+                inventory: state.inventory,
+                runID: environment.makeRunID(),
+                seed: environment.makeSeed(),
+                startedAt: environment.now()
+            )
+            if replacingTutorial, case .tutorial = currentDestination {
+                navigationPath.removeLast()
+            }
+            navigate(to: .gameplay(configuration))
+            environment.observeLifecycleEvent?(.didLaunchRun(configuration))
+            return true
+        } catch {
+            noticeMessage = "Choose an owned team, jersey, and football before starting a run."
+            return false
+        }
+    }
+
+    @discardableResult
+    private func updateSettings(_ settings: PlayerSettings) async -> Bool {
+        guard state.settings != settings else { return true }
+        var candidate = state
+        candidate.settings = settings
+        return await performStateChange(
+            candidate,
+            request: .updateSettings(settings)
+        )
+    }
+
+    @discardableResult
     private func performStateChange(
         _ candidate: AppCoordinatorState,
         request: AppExternalRequest
-    ) async {
-        guard pendingRequest == nil else { return }
+    ) async -> Bool {
+        guard pendingRequest == nil else { return false }
         guard let performRequest = environment.performExternalRequest else {
             noticeMessage = "Saved player changes are unavailable in this presentation build."
-            return
+            return false
         }
 
         let previous = state
@@ -431,12 +532,15 @@ final class AppCoordinator {
         switch result {
         case let .applied(authoritativeState):
             state = authoritativeState
+            return true
         case .completed:
             state = previous
             noticeMessage = "The profile service did not return an updated player state."
+            return false
         case let .failed(message):
             state = previous
             noticeMessage = message
+            return false
         }
     }
 

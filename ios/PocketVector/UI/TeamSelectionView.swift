@@ -110,7 +110,10 @@ private struct TeamSelectionCard: View {
                     Spacer(minLength: 4)
 
                     if card.isSelected {
-                        StatusPill(text: "Selected", color: PocketVectorTheme.success)
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(PocketVectorTheme.success)
+                            .accessibilityHidden(true)
                     } else if card.isLocked {
                         Image(systemName: "lock.fill")
                             .foregroundStyle(PocketVectorTheme.gold)

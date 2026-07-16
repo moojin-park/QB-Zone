@@ -2,6 +2,12 @@ import Foundation
 import SpriteKit
 import UIKit
 
+enum GameSceneVisualReadiness: Equatable {
+    case preparing
+    case ready
+    case failed
+}
+
 @MainActor
 final class GameScene: SKScene {
     private enum Palette {
@@ -20,8 +26,9 @@ final class GameScene: SKScene {
     let configuration: RunConfiguration
     let settings: PlayerSettings
 
+    private let runVisuals: RunVisualIdentity
     private var session: GameplaySession
-    private let textures = TextureLibrary()
+    private let textures: TextureLibrary
     private let audio: GameAudioController
     private let now: @MainActor () -> Date
     private let onCompletedRun: @MainActor (CompletedRun) -> Void
@@ -32,6 +39,9 @@ final class GameScene: SKScene {
     private var applicationIsActive = true
     private var viewport = GameViewport.canonical
     private var stageIsBuilt = false
+    private(set) var visualReadiness: GameSceneVisualReadiness = .preparing
+    private(set) var visualPreparationResult: UniformTexturePrewarmResult?
+    private var visualPreparationTask: Task<Void, Never>?
 
     private var projection: GameProjection {
         viewport.projection
@@ -46,6 +56,7 @@ final class GameScene: SKScene {
     private let ballBodyNode = SKShapeNode()
     private let ballShadeNode = SKShapeNode()
     private let ballHighlightNode = SKShapeNode()
+    private let ballPanelNode = SKShapeNode()
     private let ballLacesNode = SKShapeNode()
     private var receiverNodes: [Int: SKSpriteNode] = [:]
     private var defenderNodes: [Int: SKSpriteNode] = [:]
@@ -66,12 +77,20 @@ final class GameScene: SKScene {
         size: CGSize,
         configuration: RunConfiguration,
         settings: PlayerSettings,
+        textures: TextureLibrary = TextureLibrary(),
         now: @escaping @MainActor () -> Date = { Date() },
         onCompletedRun: @escaping @MainActor (CompletedRun) -> Void
     ) {
+        guard let runVisuals = LaunchVisualIdentityCatalog.approved.runIdentity(
+            for: configuration
+        ) else {
+            preconditionFailure("Run configuration does not resolve to approved shipping visuals")
+        }
         self.configuration = configuration
         self.settings = settings
+        self.runVisuals = runVisuals
         session = GameplaySession(configuration: configuration, settings: settings)
+        self.textures = textures
         audio = GameAudioController(settings: settings)
         self.now = now
         self.onCompletedRun = onCompletedRun
@@ -84,6 +103,10 @@ final class GameScene: SKScene {
         fatalError("GameScene must be created programmatically")
     }
 
+    deinit {
+        visualPreparationTask?.cancel()
+    }
+
     override func didMove(to view: SKView) {
         view.ignoresSiblingOrder = true
         view.isMultipleTouchEnabled = false
@@ -92,24 +115,21 @@ final class GameScene: SKScene {
         setupHUD()
         setupAimNodes()
         stageIsBuilt = true
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--hud-preview-active") {
-            configureHUDPreview()
-            renderFrame()
-            return
-        }
-        if ProcessInfo.processInfo.arguments.contains("--spiral-preview") {
-            configureSpiralPreview()
-            renderFrame()
-            return
-        }
-        #endif
-        audio.play(.countdown)
-        renderFrame()
+        showVisualReadinessOverlay(.preparing)
+        beginVisualPreparation()
+    }
+
+    override func willMove(from view: SKView) {
+        cancelVisualPreparation()
+        super.willMove(from: view)
     }
 
     override func update(_ currentTime: TimeInterval) {
         syncViewportIfNeeded()
+        guard visualReadiness == .ready else {
+            previousUpdateTime = nil
+            return
+        }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--spiral-preview") ||
             ProcessInfo.processInfo.arguments.contains("--hud-preview-active") {
@@ -142,6 +162,7 @@ final class GameScene: SKScene {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard visualReadiness == .ready else { return }
         guard let touch = touches.first else { return }
         let point = touch.location(in: self)
 
@@ -210,7 +231,9 @@ final class GameScene: SKScene {
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         clearGesture()
-        renderFrame()
+        if visualReadiness == .ready {
+            renderFrame()
+        }
     }
 
     func setApplicationActive(_ isActive: Bool) {
@@ -223,11 +246,16 @@ final class GameScene: SKScene {
             clearGesture()
             audio.suspend()
         }
-        renderFrame()
+        if visualReadiness == .ready {
+            renderFrame()
+        } else {
+            showVisualReadinessOverlay(visualReadiness)
+        }
     }
 
     func requestAbandon() {
         guard let completedRun = session.abandon(endedAt: now()) else { return }
+        cancelVisualPreparation()
         previousUpdateTime = nil
         accumulatedMilliseconds = 0
         clearGesture()
@@ -264,6 +292,9 @@ final class GameScene: SKScene {
         layoutStageForViewport()
         setupHUD()
         renderedPhase = nil
+        if visualReadiness != .ready {
+            showVisualReadinessOverlay(visualReadiness)
+        }
     }
 
     private func layoutStageForViewport() {
@@ -272,7 +303,7 @@ final class GameScene: SKScene {
         fieldNode.position = CGPoint(x: projection.centerX, y: 0)
         sidelineEnvironmentNode.rebuild(
             for: projection,
-            endZoneTexture: textures.texture("art/endzone-nova-city-native.png"),
+            offenseIdentity: runVisuals.offenseTeam,
             textures: textures
         )
         sidelineEnvironmentNode.isPaused = session.settings.reducedMotion
@@ -426,8 +457,8 @@ final class GameScene: SKScene {
         )
         bodyPath.closeSubpath()
         ballBodyNode.path = bodyPath
-        ballBodyNode.fillColor = Palette.leather
-        ballBodyNode.strokeColor = Palette.ink
+        ballBodyNode.fillColor = runVisuals.football.surface.uiColor
+        ballBodyNode.strokeColor = runVisuals.football.seam.uiColor
         ballBodyNode.lineWidth = 4
         ballBodyNode.isAntialiased = false
         ballNode.addChild(ballBodyNode)
@@ -440,7 +471,7 @@ final class GameScene: SKScene {
             control2: CGPoint(x: 9, y: -12)
         )
         ballShadeNode.path = shadePath
-        ballShadeNode.strokeColor = Palette.leatherDark
+        ballShadeNode.strokeColor = runVisuals.football.seam.uiColor.withAlphaComponent(0.88)
         ballShadeNode.lineWidth = 4
         ballShadeNode.lineCap = .round
         ballShadeNode.isAntialiased = false
@@ -455,12 +486,36 @@ final class GameScene: SKScene {
             control2: CGPoint(x: 2, y: 11)
         )
         ballHighlightNode.path = highlightPath
-        ballHighlightNode.strokeColor = Palette.leatherLight
+        ballHighlightNode.strokeColor = runVisuals.football.detail.uiColor
         ballHighlightNode.lineWidth = 3
         ballHighlightNode.lineCap = .round
         ballHighlightNode.isAntialiased = false
         ballHighlightNode.zPosition = 2
         ballNode.addChild(ballHighlightNode)
+
+        let panelPath = CGMutablePath()
+        switch runVisuals.football.panelTreatment {
+        case .orbitalSeam:
+            panelPath.addEllipse(in: CGRect(x: -15, y: -10, width: 30, height: 20))
+        case .vectorArcBands:
+            panelPath.move(to: CGPoint(x: -20, y: -8))
+            panelPath.addQuadCurve(
+                to: CGPoint(x: -20, y: 8),
+                control: CGPoint(x: -7, y: 0)
+            )
+            panelPath.move(to: CGPoint(x: 20, y: -8))
+            panelPath.addQuadCurve(
+                to: CGPoint(x: 20, y: 8),
+                control: CGPoint(x: 7, y: 0)
+            )
+        }
+        ballPanelNode.path = panelPath
+        ballPanelNode.strokeColor = runVisuals.football.detail.uiColor
+        ballPanelNode.lineWidth = 2.5
+        ballPanelNode.lineCap = .round
+        ballPanelNode.isAntialiased = false
+        ballPanelNode.zPosition = 2.5
+        ballNode.addChild(ballPanelNode)
 
         let lacesPath = CGMutablePath()
         lacesPath.move(to: CGPoint(x: -10, y: 0))
@@ -470,7 +525,7 @@ final class GameScene: SKScene {
             lacesPath.addLine(to: CGPoint(x: x, y: 3))
         }
         ballLacesNode.path = lacesPath
-        ballLacesNode.strokeColor = UIColor(red: 1, green: 248 / 255, blue: 221 / 255, alpha: 1)
+        ballLacesNode.strokeColor = runVisuals.football.laces.uiColor
         ballLacesNode.lineWidth = 2
         ballLacesNode.lineCap = .square
         ballLacesNode.isAntialiased = false
@@ -490,7 +545,11 @@ final class GameScene: SKScene {
             metrics: usesCompactHUD ? .compact : .canonical,
             displayScale: viewport.pointsPerSceneUnit
         )
-        let hud = BroadcastHUDNode(layout: layout, textureLibrary: textures)
+        let hud = BroadcastHUDNode(
+            layout: layout,
+            textureLibrary: textures,
+            teamIdentity: runVisuals.offenseTeam
+        )
         broadcastHUD = hud
         addChild(hud)
 
@@ -500,8 +559,111 @@ final class GameScene: SKScene {
         }
     }
 
+    private func beginVisualPreparation() {
+        cancelVisualPreparation()
+        let textures = textures
+        let offensePalette = runVisuals.offenseUniform
+        let defensePalette = runVisuals.defenseUniform
+        visualPreparationTask = Task { [weak self, textures] in
+            let result = await textures.prewarmRunUniformTextures(
+                offensePalette: offensePalette,
+                defensePalette: defensePalette
+            )
+            guard !Task.isCancelled, let self else { return }
+            finishVisualPreparation(result)
+        }
+    }
+
+    private func cancelVisualPreparation() {
+        visualPreparationTask?.cancel()
+        visualPreparationTask = nil
+    }
+
+    private func finishVisualPreparation(_ result: UniformTexturePrewarmResult) {
+        visualPreparationResult = result
+        visualPreparationTask = nil
+        guard result.isComplete else {
+            visualReadiness = .failed
+            showVisualReadinessOverlay(.failed)
+            assertionFailure("Every run animation texture must be available before countdown")
+            return
+        }
+
+        visualReadiness = .ready
+        phaseOverlay.removeAllChildren()
+        renderedPhase = nil
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--hud-preview-active") {
+            configureHUDPreview()
+            renderFrame()
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--spiral-preview") {
+            configureSpiralPreview()
+            renderFrame()
+            return
+        }
+        #endif
+        if applicationIsActive {
+            audio.play(.countdown)
+        }
+        renderFrame()
+    }
+
+    private func showVisualReadinessOverlay(_ readiness: GameSceneVisualReadiness) {
+        guard readiness != .ready else {
+            phaseOverlay.removeAllChildren()
+            return
+        }
+
+        phaseOverlay.removeAllChildren()
+        addOverlayBackdrop(alpha: 0.48)
+
+        let container = SKNode()
+        container.name = readiness == .preparing
+            ? "visualReadiness.loading"
+            : "visualReadiness.failed"
+        container.position = CGPoint(
+            x: viewport.safeSceneFrame.midX,
+            y: viewport.safeSceneFrame.midY
+        )
+        phaseOverlay.addChild(container)
+
+        let panelSize = CGSize(width: min(580, viewport.safeSceneFrame.width * 0.62), height: 154)
+        let panel = SKShapeNode(rectOf: panelSize, cornerRadius: 24)
+        panel.fillColor = Palette.midnight.withAlphaComponent(0.97)
+        panel.strokeColor = runVisuals.offenseTeam.hud.accent.uiColor
+        panel.lineWidth = 4
+        panel.zPosition = 0
+        container.addChild(panel)
+
+        let headline = makeLabel(
+            readiness == .preparing ? "READYING MATCHUP" : "MATCHUP UNAVAILABLE",
+            fontName: "AvenirNext-Heavy",
+            fontSize: 34,
+            color: Palette.ice
+        )
+        headline.position = CGPoint(x: 0, y: 22)
+        headline.zPosition = 1
+        container.addChild(headline)
+
+        let detail = makeLabel(
+            readiness == .preparing
+                ? "Preparing team uniforms…"
+                : "Return home and try this run again.",
+            fontName: "AvenirNext-DemiBold",
+            fontSize: 20,
+            color: readiness == .preparing
+                ? runVisuals.offenseTeam.hud.primary.uiColor
+                : Palette.coral
+        )
+        detail.position = CGPoint(x: 0, y: -28)
+        detail.zPosition = 1
+        container.addChild(detail)
+    }
+
     private func setupAimNodes() {
-        aimPathNode.strokeColor = Palette.cyan
+        aimPathNode.strokeColor = runVisuals.offenseTeam.hud.primary.uiColor
         aimPathNode.lineWidth = 4
         aimPathNode.glowWidth = 1
         aimPathNode.zPosition = 2_500
@@ -514,7 +676,7 @@ final class GameScene: SKScene {
         markerPath.move(to: CGPoint(x: -18, y: 18))
         markerPath.addLine(to: CGPoint(x: 18, y: -18))
         aimMarkerNode.path = markerPath
-        aimMarkerNode.strokeColor = Palette.coral
+        aimMarkerNode.strokeColor = runVisuals.offenseTeam.hud.accent.uiColor
         aimMarkerNode.lineWidth = 6
         aimMarkerNode.zPosition = 2_510
         aimMarkerNode.isHidden = true
@@ -557,7 +719,11 @@ final class GameScene: SKScene {
                 height: GameProjection.actorSpriteSize.height * scale
             )
             node.zPosition = 1_000 - lane.depth * 500
-            node.texture = textures.texture(receiverTexturePath(receiver))
+            node.texture = textures.uniformTexture(
+                receiverTexturePath(receiver),
+                palette: runVisuals.offenseUniform,
+                role: .offense
+            )
         }
 
         let defenderIDs = Set(session.state.defenders.map(\.id))
@@ -585,7 +751,11 @@ final class GameScene: SKScene {
                 height: GameProjection.actorSpriteSize.height * scale
             )
             node.zPosition = 1_000 - defender.depth * 500
-            node.texture = textures.texture(defenderTexturePath(defender))
+            node.texture = textures.uniformTexture(
+                defenderTexturePath(defender),
+                palette: runVisuals.defenseUniform,
+                role: .defense
+            )
         }
     }
 
@@ -619,7 +789,11 @@ final class GameScene: SKScene {
         } else {
             path = "characters/qb-idle.webp"
         }
-        quarterbackNode.texture = textures.texture(path)
+        quarterbackNode.texture = textures.uniformTexture(
+            path,
+            palette: runVisuals.offenseUniform,
+            role: .offense
+        )
     }
 
     private func syncHUD() {
@@ -742,10 +916,14 @@ final class GameScene: SKScene {
             }
         }
         aimPathNode.path = path
-        aimPathNode.strokeColor = gesture?.isValid == false ? Palette.gold : Palette.cyan
+        aimPathNode.strokeColor = gesture?.isValid == false
+            ? Palette.gold
+            : runVisuals.offenseTeam.hud.primary.uiColor
         aimPathNode.isHidden = hypot(currentPoint.x - first.point.x, currentPoint.y - first.point.y) < 8
         aimMarkerNode.position = projection.worldToScene(target)
-        aimMarkerNode.strokeColor = gesture?.isValid == false ? Palette.gold : Palette.coral
+        aimMarkerNode.strokeColor = gesture?.isValid == false
+            ? Palette.gold
+            : runVisuals.offenseTeam.hud.accent.uiColor
         aimMarkerNode.isHidden = false
     }
 
@@ -754,7 +932,7 @@ final class GameScene: SKScene {
         aimPathNode.isHidden = true
         if let ball = session.state.ball {
             aimMarkerNode.position = projection.worldToScene(ball.target)
-            aimMarkerNode.strokeColor = Palette.coral
+            aimMarkerNode.strokeColor = runVisuals.offenseTeam.hud.accent.uiColor
             aimMarkerNode.isHidden = false
         } else {
             aimMarkerNode.isHidden = true

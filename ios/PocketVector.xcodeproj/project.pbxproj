@@ -88,6 +88,13 @@
 		170000000000000000000005 /* StoreKit2TransactionAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270000000000000000000005 /* StoreKit2TransactionAdapter.swift */; };
 		170000000000000000000006 /* StoreKit2TransactionAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270000000000000000000006 /* StoreKit2TransactionAdapterTests.swift */; };
 		180000000000000000000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 280000000000000000000001 /* PrivacyInfo.xcprivacy */; };
+		190000000000000000000001 /* TutorialView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 290000000000000000000001 /* TutorialView.swift */; };
+		190000000000000000000002 /* PrivacySupportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 290000000000000000000002 /* PrivacySupportView.swift */; };
+		190000000000000000000003 /* TutorialPrivacyCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 290000000000000000000003 /* TutorialPrivacyCoordinatorTests.swift */; };
+		1A0000000000000000000001 /* DurableEconomyCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A0000000000000000000001 /* DurableEconomyCoordinator.swift */; };
+		1A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift */; };
+		1B0000000000000000000001 /* AppleDiagnosticsAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B0000000000000000000001 /* AppleDiagnosticsAdapter.swift */; };
+		1B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift */; };
 		120000000000000000000007 /* GameCenterServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000007 /* GameCenterServiceTests.swift */; };
 		120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000008 /* StoreTransactionServiceTests.swift */; };
 		120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000009 /* RewardedAdServiceTests.swift */; };
@@ -191,6 +198,13 @@
 		280000000000000000000001 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		280000000000000000000002 /* PocketVector.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PocketVector.entitlements; sourceTree = "<group>"; };
 		280000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		290000000000000000000001 /* TutorialView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorialView.swift; sourceTree = "<group>"; };
+		290000000000000000000002 /* PrivacySupportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacySupportView.swift; sourceTree = "<group>"; };
+		290000000000000000000003 /* TutorialPrivacyCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TutorialPrivacyCoordinatorTests.swift; sourceTree = "<group>"; };
+		2A0000000000000000000001 /* DurableEconomyCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DurableEconomyCoordinator.swift; sourceTree = "<group>"; };
+		2A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DurableEconomyCoordinatorTests.swift; sourceTree = "<group>"; };
+		2B0000000000000000000001 /* AppleDiagnosticsAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleDiagnosticsAdapter.swift; sourceTree = "<group>"; };
+		2B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleDiagnosticsAdapterTests.swift; sourceTree = "<group>"; };
 		220000000000000000000007 /* GameCenterServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000008 /* StoreTransactionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTransactionServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000009 /* RewardedAdServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdServiceTests.swift; sourceTree = "<group>"; };
@@ -336,6 +350,9 @@
 				270000000000000000000002 /* ProductionAppCompositionTests.swift */,
 				270000000000000000000004 /* CloudKitCloudSyncAdapterTests.swift */,
 				270000000000000000000006 /* StoreKit2TransactionAdapterTests.swift */,
+				290000000000000000000003 /* TutorialPrivacyCoordinatorTests.swift */,
+				2A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift */,
+				2B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift */,
 			);
 			path = PocketVectorTests;
 			sourceTree = "<group>";
@@ -403,6 +420,8 @@
 				220000000000000000000005 /* TelemetryServices.swift */,
 				220000000000000000000006 /* DiagnosticsServices.swift */,
 				22000000000000000000000C /* ServiceAccountBindings.swift */,
+				2A0000000000000000000001 /* DurableEconomyCoordinator.swift */,
+				2B0000000000000000000001 /* AppleDiagnosticsAdapter.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -433,6 +452,8 @@
 				24000000000000000000000A /* SettingsView.swift */,
 				24000000000000000000000B /* RunResultsView.swift */,
 				24000000000000000000000C /* LegacyGameplayAdapterView.swift */,
+				290000000000000000000001 /* TutorialView.swift */,
+				290000000000000000000002 /* PrivacySupportView.swift */,
 				340000000000000000000002 /* Foundation */,
 				340000000000000000000003 /* Presentation */,
 			);
@@ -629,6 +650,10 @@
 				14000000000000000000000D /* PocketVectorTheme.swift in Sources */,
 				14000000000000000000000E /* PocketVectorComponents.swift in Sources */,
 				14000000000000000000000F /* AppPresentation.swift in Sources */,
+				190000000000000000000001 /* TutorialView.swift in Sources */,
+				190000000000000000000002 /* PrivacySupportView.swift in Sources */,
+				1A0000000000000000000001 /* DurableEconomyCoordinator.swift in Sources */,
+				1B0000000000000000000001 /* AppleDiagnosticsAdapter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -655,6 +680,9 @@
 				170000000000000000000002 /* ProductionAppCompositionTests.swift in Sources */,
 				170000000000000000000004 /* CloudKitCloudSyncAdapterTests.swift in Sources */,
 				170000000000000000000006 /* StoreKit2TransactionAdapterTests.swift in Sources */,
+				190000000000000000000003 /* TutorialPrivacyCoordinatorTests.swift in Sources */,
+				1A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift in Sources */,
+				1B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

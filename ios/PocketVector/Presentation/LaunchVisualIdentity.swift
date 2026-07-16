@@ -240,6 +240,17 @@ struct FootballVisualStyle: Codable, Equatable, Hashable, Sendable {
     let detail: RGBColor
 }
 
+/// Fully resolved presentation data for one immutable run. The resolver deliberately follows
+/// the jersey IDs already selected by `MatchupGenerator`; this keeps uniform-clash resolution in
+/// the catalog layer and prevents rendering from silently choosing a different defense uniform.
+struct RunVisualIdentity: Equatable, Sendable {
+    let offenseTeam: TeamVisualIdentity
+    let offenseUniform: UniformSpritePalette
+    let defenseTeam: TeamVisualIdentity
+    let defenseUniform: UniformSpritePalette
+    let football: FootballVisualStyle
+}
+
 /// The launch visual catalog validates the supplied product catalog before exposing any data.
 /// Unknown teams, cross-team jersey IDs, and unknown football IDs return nil rather than falling
 /// back to another identity.
@@ -333,6 +344,34 @@ struct LaunchVisualIdentityCatalog: Sendable {
 
     func football(id: FootballID) -> FootballVisualStyle? {
         footballsByID[id]
+    }
+
+    func runIdentity(for configuration: RunConfiguration) -> RunVisualIdentity? {
+        guard configuration.offenseTeamID != configuration.defenseTeamID,
+              let offenseTeam = team(id: configuration.offenseTeamID),
+              let offenseUniform = uniform(
+                  teamID: configuration.offenseTeamID,
+                  jerseyID: configuration.offenseJerseyID,
+                  role: .offense
+              ),
+              let defenseTeam = team(id: configuration.defenseTeamID),
+              let defenseUniform = uniform(
+                  teamID: configuration.defenseTeamID,
+                  jerseyID: configuration.defenseJerseyID,
+                  role: .defense
+              ),
+              let football = football(id: configuration.footballID)
+        else {
+            return nil
+        }
+
+        return RunVisualIdentity(
+            offenseTeam: offenseTeam,
+            offenseUniform: offenseUniform,
+            defenseTeam: defenseTeam,
+            defenseUniform: defenseUniform,
+            football: football
+        )
     }
 }
 

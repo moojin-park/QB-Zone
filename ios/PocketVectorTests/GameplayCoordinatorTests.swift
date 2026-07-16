@@ -102,7 +102,8 @@ final class GameplayCoordinatorTests: XCTestCase {
 
     @MainActor
     func testDisconnectedSettlementNeverFabricatesResultsOrCoins() async throws {
-        let initialState = AppCoordinatorState.launchDefault()
+        var initialState = AppCoordinatorState.launchDefault()
+        initialState.settings.tutorialCompleted = true
         let coordinator = AppCoordinator(
             state: initialState,
             environment: makeEnvironment(settle: nil)
@@ -204,8 +205,10 @@ final class GameplayCoordinatorTests: XCTestCase {
         observeLifecycleEvent: (@MainActor (AppLifecycleEvent) -> Void)? = nil,
         settle: (@MainActor (CompletedRun) async -> CompletedRunSettlementResult)?
     ) -> AppCoordinatorEnvironment {
-        AppCoordinatorEnvironment(
-            loadInitialState: nil,
+        var completedTutorialState = AppCoordinatorState.launchDefault()
+        completedTutorialState.settings.tutorialCompleted = true
+        return AppCoordinatorEnvironment(
+            loadInitialState: { .loaded(completedTutorialState) },
             makeRunID: {
                 RunID(UUID(uuidString: "00000000-0000-0000-0000-000000000661")!)
             },

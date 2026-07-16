@@ -120,6 +120,12 @@ struct MainMenuView: View {
                 systemImage: "gearshape.fill",
                 action: coordinator.showSettings
             )
+            MenuTile(
+                title: "Privacy & Support",
+                detail: "Contact links and feature disclosures",
+                systemImage: "hand.raised.fill",
+                action: coordinator.showPrivacySupport
+            )
         }
     }
 

@@ -92,24 +92,42 @@ struct SettingsView: View {
             Divider()
                 .overlay(PocketVectorTheme.border.opacity(0.5))
 
-            Toggle(
-                "Show tutorial before next run",
-                isOn: Binding(
-                    get: { !coordinator.state.settings.tutorialCompleted },
-                    set: { value in
-                        Task { await coordinator.setTutorialEnabled(value) }
-                    }
-                )
-            )
+            Button {
+                coordinator.showTutorialReview()
+            } label: {
+                Label("Review How to Play", systemImage: "hand.draw.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
             .tint(PocketVectorTheme.cyan)
+            .accessibilityHint("Opens the four-step gameplay tutorial")
 
-            Text("Turn this on whenever you want to review the controls before playing.")
+            Text(tutorialStatusText)
                 .font(.caption)
                 .foregroundStyle(PocketVectorTheme.textSecondary)
+
+            Divider()
+                .overlay(PocketVectorTheme.border.opacity(0.5))
+
+            Button {
+                coordinator.showPrivacySupport()
+            } label: {
+                Label("Privacy & Support", systemImage: "hand.raised.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(PocketVectorTheme.cyan)
+            .accessibilityHint("Shows support contacts and feature disclosures")
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .pocketVectorPanel()
+    }
+
+    private var tutorialStatusText: String {
+        coordinator.state.settings.tutorialCompleted
+            ? "The first-run tutorial is complete. You can review it without changing your progress."
+            : "The tutorial is required before your first gameplay run. Leaving it early will not mark it complete."
     }
 }
 

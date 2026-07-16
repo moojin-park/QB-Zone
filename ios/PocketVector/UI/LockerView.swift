@@ -196,21 +196,8 @@ private struct JerseyLockerCard: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color(card.jersey.primaryColor), Color(card.jersey.secondaryColor)],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                    Image(systemName: "tshirt.fill")
-                        .font(.largeTitle)
-                        .foregroundStyle(card.jersey.primaryColor.accessibleForegroundColor)
-                }
-                .frame(height: 70)
-                .accessibilityHidden(true)
+                JerseyPreview(jersey: card.jersey)
+                    .frame(height: 70)
 
                 HStack {
                     Text(card.jersey.displayName)
@@ -269,19 +256,8 @@ private struct FootballLockerCard: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(
-                            card.football.id == LaunchFootballID.standard
-                                ? Color(red: 0.45, green: 0.20, blue: 0.09)
-                                : Color(red: 0.35, green: 0.18, blue: 0.56)
-                        )
-                    Image(systemName: "football.fill")
-                        .font(.largeTitle)
-                        .foregroundStyle(.white)
-                }
-                .frame(height: 70)
-                .accessibilityHidden(true)
+                FootballPreview(footballID: card.football.id)
+                    .frame(height: 70)
 
                 HStack {
                     Text(card.football.displayName)

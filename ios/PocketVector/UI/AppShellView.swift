@@ -83,6 +83,10 @@ struct AppShellView: View {
                 CoinStoreView(coordinator: coordinator)
             case .settings:
                 SettingsView(coordinator: coordinator)
+            case .tutorial:
+                TutorialView(coordinator: coordinator)
+            case .privacySupport:
+                PrivacySupportView(coordinator: coordinator)
             case let .gameplay(configuration):
                 LegacyGameplayAdapterView(
                     configuration: configuration,
@@ -120,6 +124,12 @@ struct AppShellView: View {
         case let .achievementDetail(id): return "achievement-\(id.rawValue)"
         case .coinStore: return "coin-store"
         case .settings: return "settings"
+        case let .tutorial(context):
+            switch context {
+            case .beforeRun: return "tutorial-before-run"
+            case .review: return "tutorial-review"
+            }
+        case .privacySupport: return "privacy-support"
         case let .gameplay(configuration): return "gameplay-\(configuration.runID.description)"
         case let .runResults(results): return "results-\(results.completedRun.runID.description)"
         }

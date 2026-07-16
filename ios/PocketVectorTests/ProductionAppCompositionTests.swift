@@ -143,7 +143,7 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
         )
         let coordinator = AppCoordinator(environment: environment)
         await coordinator.bootstrap()
-        let configuration = try launchConfiguration(from: coordinator)
+        let configuration = try await launchConfiguration(from: coordinator)
         let run = makeNaturalRun(configuration: configuration)
         clock.date = run.endedAt.addingTimeInterval(1)
 
@@ -197,7 +197,7 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
             )
         )
         await coordinator.bootstrap()
-        let configuration = try launchConfiguration(from: coordinator)
+        let configuration = try await launchConfiguration(from: coordinator)
         let run = makeAbandonedRun(configuration: configuration)
         clock.date = run.endedAt.addingTimeInterval(1)
 
@@ -329,8 +329,11 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
     @MainActor
     private func launchConfiguration(
         from coordinator: AppCoordinator
-    ) throws -> RunConfiguration {
+    ) async throws -> RunConfiguration {
         XCTAssertTrue(coordinator.startRun())
+        if case .tutorial(.beforeRun) = coordinator.currentDestination {
+            await coordinator.completeTutorial()
+        }
         guard case let .gameplay(configuration) = coordinator.currentDestination else {
             throw TestFailure.expectedGameplay
         }

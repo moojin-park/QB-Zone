@@ -55,6 +55,10 @@ final class BroadcastHUDNode: SKNode {
 
     private let textureLibrary: TextureLibrary
     private let scale: CGFloat
+    private let teamIdentity: TeamVisualIdentity?
+    private let teamPrimary: UIColor
+    private let teamSecondary: UIColor
+    private let teamAccent: UIColor
 
     private let meterNode = SKNode()
     private let meterCopyNode = SKNode()
@@ -79,9 +83,20 @@ final class BroadcastHUDNode: SKNode {
     private var renderedFeedbackSignature: String?
     private var reducedMotion = false
 
-    init(layout: HUDLayout, textureLibrary: TextureLibrary) {
+    init(
+        layout: HUDLayout,
+        textureLibrary: TextureLibrary,
+        teamIdentity: TeamVisualIdentity? = nil
+    ) {
         self.layout = layout
         self.textureLibrary = textureLibrary
+        self.teamIdentity = teamIdentity
+        let resolvedPrimary = teamIdentity?.hud.primary.uiColor ?? Palette.red
+        let resolvedSecondary = teamIdentity?.hud.secondary.uiColor ?? Palette.redDark
+        let resolvedAccent = teamIdentity?.hud.accent.uiColor ?? Palette.coral
+        teamPrimary = resolvedPrimary
+        teamSecondary = resolvedSecondary
+        teamAccent = resolvedAccent
         let controlHitFrames = Self.controlHitFrames(for: layout)
         muteHitFrame = controlHitFrames.mute
         pauseHitFrame = controlHitFrames.pause
@@ -94,7 +109,7 @@ final class BroadcastHUDNode: SKNode {
         multiplierLabel = ShadowedLabel(
             fontName: "Impact",
             fontSize: layout.multiplierFontSize,
-            color: Palette.meterGold,
+            color: resolvedAccent,
             outlineDistance: max(1, 2 * scale)
         )
         clockLabel = ShadowedLabel(
@@ -201,7 +216,7 @@ final class BroadcastHUDNode: SKNode {
             muteIconNode.texture = textureLibrary.texture(
                 isMuted ? "art/icon-mute-native.png" : "art/icon-unmute-native.png"
             )
-            muteBorderNode.fillColor = isMuted ? Palette.red : Palette.steelLight
+            muteBorderNode.fillColor = isMuted ? Palette.red : teamAccent
         }
 
         if motionSettingChanged {
@@ -374,7 +389,7 @@ final class BroadcastHUDNode: SKNode {
         let action = ShadowedLabel(
             fontName: "AvenirNextCondensed-HeavyItalic",
             fontSize: layout.meterActionFontSize,
-            color: Palette.meterGold,
+            color: teamAccent,
             outlineDistance: max(1, scale)
         )
         action.text = "COMPLETE PASSES"
@@ -395,7 +410,7 @@ final class BroadcastHUDNode: SKNode {
         let ready = ShadowedLabel(
             fontName: "AvenirNextCondensed-HeavyItalic",
             fontSize: layout.readyCopyFontSize,
-            color: Palette.meterGold,
+            color: teamAccent,
             outlineDistance: max(1, scale)
         )
         ready.text = "LET IT RIP!"
@@ -445,7 +460,7 @@ final class BroadcastHUDNode: SKNode {
         var stripeY = frame.minY
         while stripeY < frame.maxY {
             crop.addChild(sprite(
-                color: Palette.scoreStripe,
+                color: teamPrimary.withAlphaComponent(0.22),
                 frame: CGRect(
                     x: frame.minX,
                     y: stripeY,
@@ -494,9 +509,9 @@ final class BroadcastHUDNode: SKNode {
             ),
             zPosition: 3
         ))
-        crop.addChild(sprite(color: Palette.red, frame: redStripeFrame, zPosition: 4))
+        crop.addChild(sprite(color: teamPrimary, frame: redStripeFrame, zPosition: 4))
         crop.addChild(sprite(
-            color: Palette.coral,
+            color: teamAccent,
             frame: CGRect(
                 x: redStripeFrame.minX,
                 y: redStripeFrame.maxY - redStripeFrame.height * 0.24,
@@ -506,7 +521,7 @@ final class BroadcastHUDNode: SKNode {
             zPosition: 5
         ))
         crop.addChild(sprite(
-            color: Palette.redDark,
+            color: teamSecondary,
             frame: CGRect(
                 x: redStripeFrame.minX,
                 y: redStripeFrame.minY,
@@ -562,6 +577,19 @@ final class BroadcastHUDNode: SKNode {
         scoreLabel.position = layout.scoreValueAnchor
         scoreLabel.zPosition = 10
         root.addChild(scoreLabel)
+
+        if let teamIdentity {
+            let emblemSide = min(frame.height * 0.46, frame.width * 0.15)
+            let emblem = SKSpriteNode(texture: textureLibrary.emblemTexture(
+                for: teamIdentity,
+                size: CGSize(width: emblemSide, height: emblemSide)
+            ))
+            emblem.name = "hudTeamEmblem.\(teamIdentity.teamID.rawValue)"
+            emblem.size = CGSize(width: emblemSide, height: emblemSide)
+            emblem.position = CGPoint(x: frame.minX + frame.width * 0.16, y: frame.midY)
+            emblem.zPosition = 11
+            root.addChild(emblem)
+        }
     }
 
     private func buildControls() {
@@ -579,7 +607,7 @@ final class BroadcastHUDNode: SKNode {
             in: layout.muteButtonFrame,
             corner: max(2, 4 * scale)
         )
-        muteBorderNode.fillColor = Palette.steelLight
+        muteBorderNode.fillColor = teamAccent
         muteBorderNode.strokeColor = .clear
         muteBorderNode.zPosition = 0
         muteButton.addChild(muteBorderNode)
@@ -611,7 +639,7 @@ final class BroadcastHUDNode: SKNode {
 
         if includeBorder {
             let border = SKShapeNode(path: path)
-            border.fillColor = Palette.steelLight
+            border.fillColor = teamAccent
             border.strokeColor = .clear
             border.zPosition = 0
             root.addChild(border)
@@ -739,7 +767,7 @@ final class BroadcastHUDNode: SKNode {
         switch feedback.tone {
         case .positive:
             headlineColor = Palette.positive
-            borderColor = Palette.cobaltLight
+            borderColor = teamPrimary
             backgroundColor = Palette.ink.withAlphaComponent(0.95)
         case .touchdown, .bonus:
             headlineColor = Palette.gold

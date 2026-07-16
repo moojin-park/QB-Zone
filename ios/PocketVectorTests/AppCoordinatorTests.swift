@@ -80,7 +80,10 @@ final class AppCoordinatorTests: XCTestCase {
         let runID = RunID(UUID(uuidString: "00000000-0000-0000-0000-000000000777")!)
         let startedAt = Date(timeIntervalSince1970: 7_000)
         var events: [AppLifecycleEvent] = []
+        var completedTutorialState = AppCoordinatorState.launchDefault()
+        completedTutorialState.settings.tutorialCompleted = true
         let coordinator = AppCoordinator(
+            state: completedTutorialState,
             environment: AppCoordinatorEnvironment(
                 loadInitialState: nil,
                 makeRunID: { runID },
@@ -153,7 +156,12 @@ final class AppCoordinatorTests: XCTestCase {
             performExternalRequest: nil,
             observeLifecycleEvent: nil
         )
-        let coordinator = AppCoordinator(environment: environment)
+        var completedTutorialState = AppCoordinatorState.launchDefault()
+        completedTutorialState.settings.tutorialCompleted = true
+        let coordinator = AppCoordinator(
+            state: completedTutorialState,
+            environment: environment
+        )
         await coordinator.bootstrap()
 
         XCTAssertTrue(coordinator.startRun())
