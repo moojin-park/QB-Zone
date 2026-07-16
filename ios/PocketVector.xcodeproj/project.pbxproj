@@ -108,6 +108,10 @@
 		1D0000000000000000000001 /* ServiceAccountBindingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0000000000000000000001 /* ServiceAccountBindingTests.swift */; };
 		1E0000000000000000000001 /* CloudReplicaCheckpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E0000000000000000000001 /* CloudReplicaCheckpoint.swift */; };
 		1E0000000000000000000002 /* CloudReplicaCheckpointTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E0000000000000000000002 /* CloudReplicaCheckpointTests.swift */; };
+		1F0000000000000000000001 /* CloudProfileSchema.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000001 /* CloudProfileSchema.swift */; };
+		1F0000000000000000000002 /* CloudProfileReplicaValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000002 /* CloudProfileReplicaValidator.swift */; };
+		1F0000000000000000000003 /* CloudProfileSchemaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000003 /* CloudProfileSchemaTests.swift */; };
+		1F0000000000000000000004 /* CloudProfileReplicaValidatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000004 /* CloudProfileReplicaValidatorTests.swift */; };
 		120000000000000000000007 /* GameCenterServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000007 /* GameCenterServiceTests.swift */; };
 		120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000008 /* StoreTransactionServiceTests.swift */; };
 		120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000009 /* RewardedAdServiceTests.swift */; };
@@ -231,6 +235,10 @@
 		2D0000000000000000000001 /* ServiceAccountBindingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceAccountBindingTests.swift; sourceTree = "<group>"; };
 		2E0000000000000000000001 /* CloudReplicaCheckpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudReplicaCheckpoint.swift; sourceTree = "<group>"; };
 		2E0000000000000000000002 /* CloudReplicaCheckpointTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudReplicaCheckpointTests.swift; sourceTree = "<group>"; };
+		2F0000000000000000000001 /* CloudProfileSchema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudProfileSchema.swift; sourceTree = "<group>"; };
+		2F0000000000000000000002 /* CloudProfileReplicaValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudProfileReplicaValidator.swift; sourceTree = "<group>"; };
+		2F0000000000000000000003 /* CloudProfileSchemaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudProfileSchemaTests.swift; sourceTree = "<group>"; };
+		2F0000000000000000000004 /* CloudProfileReplicaValidatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudProfileReplicaValidatorTests.swift; sourceTree = "<group>"; };
 		220000000000000000000007 /* GameCenterServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000008 /* StoreTransactionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTransactionServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000009 /* RewardedAdServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdServiceTests.swift; sourceTree = "<group>"; };
@@ -386,6 +394,8 @@
 				2C0000000000000000000007 /* ProductionServiceConfigurationTests.swift */,
 				2D0000000000000000000001 /* ServiceAccountBindingTests.swift */,
 				2E0000000000000000000002 /* CloudReplicaCheckpointTests.swift */,
+				2F0000000000000000000003 /* CloudProfileSchemaTests.swift */,
+				2F0000000000000000000004 /* CloudProfileReplicaValidatorTests.swift */,
 				2C0000000000000000000008 /* AppleDiagnosticsRuntimeTests.swift */,
 				2C0000000000000000000009 /* UIKitGameKitPresentationHandoffTests.swift */,
 				2C000000000000000000000A /* ProductionAppRuntimeTests.swift */,
@@ -454,6 +464,8 @@
 				220000000000000000000004 /* CloudSyncServices.swift */,
 				270000000000000000000003 /* CloudKitCloudSyncAdapter.swift */,
 				2E0000000000000000000001 /* CloudReplicaCheckpoint.swift */,
+				2F0000000000000000000001 /* CloudProfileSchema.swift */,
+				2F0000000000000000000002 /* CloudProfileReplicaValidator.swift */,
 				220000000000000000000005 /* TelemetryServices.swift */,
 				220000000000000000000006 /* DiagnosticsServices.swift */,
 				22000000000000000000000C /* ServiceAccountBindings.swift */,
@@ -667,6 +679,8 @@
 				170000000000000000000001 /* ProductionAppComposition.swift in Sources */,
 				170000000000000000000003 /* CloudKitCloudSyncAdapter.swift in Sources */,
 				1E0000000000000000000001 /* CloudReplicaCheckpoint.swift in Sources */,
+				1F0000000000000000000001 /* CloudProfileSchema.swift in Sources */,
+				1F0000000000000000000002 /* CloudProfileReplicaValidator.swift in Sources */,
 				170000000000000000000005 /* StoreKit2TransactionAdapter.swift in Sources */,
 				130000000000000000000001 /* PersistenceModels.swift in Sources */,
 				130000000000000000000002 /* PlayerProfileFactory.swift in Sources */,
@@ -735,6 +749,8 @@
 				1C000000000000000000000A /* ProductionAppRuntimeTests.swift in Sources */,
 				1D0000000000000000000001 /* ServiceAccountBindingTests.swift in Sources */,
 				1E0000000000000000000002 /* CloudReplicaCheckpointTests.swift in Sources */,
+				1F0000000000000000000003 /* CloudProfileSchemaTests.swift in Sources */,
+				1F0000000000000000000004 /* CloudProfileReplicaValidatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
