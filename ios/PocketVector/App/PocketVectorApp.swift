@@ -3,17 +3,30 @@ import SwiftUI
 @MainActor
 @main
 struct PocketVectorApp: App {
-    @State private var coordinator: AppCoordinator
+    @State private var runtime: ProductionAppRuntime
 
     init() {
-        _coordinator = State(
-            initialValue: AppCoordinator(environment: .live)
+        let runtime = ProductionAppRuntime.live()
+        runtime.startCoordinator()
+        runtime.startAppleDiagnostics()
+        _runtime = State(
+            initialValue: runtime
         )
     }
 
     var body: some Scene {
         WindowGroup {
-            AppShellView(coordinator: coordinator)
+            AppShellView(
+                coordinator: runtime.coordinator,
+                onRetryBootstrap: { runtime.startCoordinator() }
+            )
+                .background {
+                    GameKitPresentationAnchor(
+                        handoff: runtime.presentationHandoff
+                    )
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+                }
         }
     }
 }

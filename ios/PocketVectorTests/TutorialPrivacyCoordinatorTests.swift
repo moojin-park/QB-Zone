@@ -12,7 +12,9 @@ final class TutorialPrivacyCoordinatorTests: XCTestCase {
         let coordinator = AppCoordinator(
             state: authoritativeState,
             environment: AppCoordinatorEnvironment(
-                loadInitialState: nil,
+                loadInitialState: {
+                    .loaded(self.authoritativeSnapshot(authoritativeState))
+                },
                 makeRunID: {
                     sequence.append("make-run")
                     return RunID(
@@ -27,7 +29,9 @@ final class TutorialPrivacyCoordinatorTests: XCTestCase {
                     }
                     sequence.append("persist-tutorial")
                     authoritativeState.settings = settings
-                    return .applied(authoritativeState)
+                    return .applied(
+                        self.authoritativeSnapshot(authoritativeState, playerRevision: 1)
+                    )
                 },
                 observeLifecycleEvent: { event in
                     guard case .didLaunchRun = event else { return }
@@ -71,7 +75,9 @@ final class TutorialPrivacyCoordinatorTests: XCTestCase {
         let coordinator = AppCoordinator(
             state: authoritativeState,
             environment: AppCoordinatorEnvironment(
-                loadInitialState: nil,
+                loadInitialState: {
+                    .loaded(self.authoritativeSnapshot(authoritativeState))
+                },
                 makeRunID: {
                     runIDRequests += 1
                     return RunID()
@@ -86,7 +92,13 @@ final class TutorialPrivacyCoordinatorTests: XCTestCase {
                     if let selectedJerseyID = authoritativeState.selection.selectedJerseyID {
                         authoritativeState.inventory.ownedJerseyIDs.remove(selectedJerseyID)
                     }
-                    return .applied(authoritativeState)
+                    return .applied(
+                        self.authoritativeSnapshot(
+                            authoritativeState,
+                            playerRevision: 1,
+                            economyRevision: 1
+                        )
+                    )
                 },
                 observeLifecycleEvent: { lifecycleEvents.append($0) },
                 privacySupportConfiguration: makePrivacyConfiguration()
@@ -168,10 +180,13 @@ final class TutorialPrivacyCoordinatorTests: XCTestCase {
         var requests: [AppExternalRequest] = []
         let coordinator = AppCoordinator(
             state: initialState,
-            environment: makeEnvironment(requestHandler: { request in
-                requests.append(request)
-                return .completed
-            })
+            environment: makeEnvironment(
+                initialState: initialState,
+                requestHandler: { request in
+                    requests.append(request)
+                    return .completed
+                }
+            )
         )
         await coordinator.bootstrap()
         coordinator.showSettings()
@@ -253,7 +268,11 @@ final class TutorialPrivacyCoordinatorTests: XCTestCase {
         }
 
         authoritativeState.settings = try XCTUnwrap(requestedSettings)
-        continuation?.resume(returning: .applied(authoritativeState))
+        continuation?.resume(
+            returning: .applied(
+                self.authoritativeSnapshot(authoritativeState, playerRevision: 1)
+            )
+        )
         await firstCompletion.value
 
         XCTAssertEqual(requestCount, 1)
@@ -345,6 +364,7 @@ final class TutorialPrivacyCoordinatorTests: XCTestCase {
 
     @MainActor
     private func makeEnvironment(
+        initialState: AppCoordinatorState = .launchDefault(),
         privacySupportConfiguration: PrivacySupportConfiguration? = nil,
         requestHandler: @escaping @MainActor (AppExternalRequest) async -> AppExternalRequestResult = { _ in
             .completed
@@ -352,7 +372,9 @@ final class TutorialPrivacyCoordinatorTests: XCTestCase {
         observeLifecycleEvent: (@MainActor (AppLifecycleEvent) -> Void)? = nil
     ) -> AppCoordinatorEnvironment {
         AppCoordinatorEnvironment(
-            loadInitialState: nil,
+            loadInitialState: {
+                .loaded(self.authoritativeSnapshot(initialState))
+            },
             makeRunID: {
                 RunID(UUID(uuidString: "00000000-0000-0000-0000-000000000802")!)
             },
@@ -362,6 +384,24 @@ final class TutorialPrivacyCoordinatorTests: XCTestCase {
             observeLifecycleEvent: observeLifecycleEvent,
             privacySupportConfiguration: privacySupportConfiguration
                 ?? makePrivacyConfiguration()
+        )
+    }
+
+    @MainActor
+    private func authoritativeSnapshot(
+        _ state: AppCoordinatorState,
+        playerRevision: UInt64 = 0,
+        economyRevision: UInt64 = 0
+    ) -> AuthoritativeAppStateSnapshot {
+        AuthoritativeAppStateSnapshot(
+            session: ProfileSessionToken(
+                accountIdentity: .local,
+                nonce: UUID(uuidString: "00000000-0000-0000-0000-000000000801")!,
+                profileID: UUID(uuidString: "00000000-0000-0000-0000-000000000802")!
+            ),
+            playerRevision: playerRevision,
+            economyRevision: economyRevision,
+            state: state
         )
     }
 

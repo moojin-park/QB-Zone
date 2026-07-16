@@ -15,7 +15,14 @@ final class GameplayCoordinatorTests: XCTestCase {
             environment: makeEnvironment { run in
                 receivedRuns.append(run)
                 let results = self.makeResults(run: run, state: authoritativeState)
-                return .settled(authoritativeState: authoritativeState, results: results)
+                return .settled(
+                    authoritativeSnapshot: self.authoritativeSnapshot(
+                        authoritativeState,
+                        playerRevision: 1,
+                        economyRevision: 1
+                    ),
+                    results: results
+                )
             }
         )
         await coordinator.bootstrap()
@@ -44,7 +51,14 @@ final class GameplayCoordinatorTests: XCTestCase {
             environment: makeEnvironment(
                 observeLifecycleEvent: { events.append($0) },
                 settle: { _ in
-                    .settled(authoritativeState: authoritativeState, results: nil)
+                    .settled(
+                        authoritativeSnapshot: self.authoritativeSnapshot(
+                            authoritativeState,
+                            playerRevision: 1,
+                            economyRevision: 1
+                        ),
+                        results: nil
+                    )
                 }
             )
         )
@@ -72,7 +86,11 @@ final class GameplayCoordinatorTests: XCTestCase {
                     return .failed(message: "Profile sync is temporarily unavailable.")
                 }
                 return .settled(
-                    authoritativeState: authoritativeState,
+                    authoritativeSnapshot: self.authoritativeSnapshot(
+                        authoritativeState,
+                        playerRevision: 1,
+                        economyRevision: 1
+                    ),
                     results: self.makeResults(run: run, state: authoritativeState)
                 )
             }
@@ -128,7 +146,14 @@ final class GameplayCoordinatorTests: XCTestCase {
         authoritativeState.pendingCoins = 25
         let coordinator = AppCoordinator(
             environment: makeEnvironment { _ in
-                .settled(authoritativeState: authoritativeState, results: nil)
+                .settled(
+                    authoritativeSnapshot: self.authoritativeSnapshot(
+                        authoritativeState,
+                        playerRevision: 1,
+                        economyRevision: 1
+                    ),
+                    results: nil
+                )
             }
         )
         await coordinator.bootstrap()
@@ -208,7 +233,9 @@ final class GameplayCoordinatorTests: XCTestCase {
         var completedTutorialState = AppCoordinatorState.launchDefault()
         completedTutorialState.settings.tutorialCompleted = true
         return AppCoordinatorEnvironment(
-            loadInitialState: { .loaded(completedTutorialState) },
+            loadInitialState: {
+                .loaded(self.authoritativeSnapshot(completedTutorialState))
+            },
             makeRunID: {
                 RunID(UUID(uuidString: "00000000-0000-0000-0000-000000000661")!)
             },
@@ -217,6 +244,24 @@ final class GameplayCoordinatorTests: XCTestCase {
             performExternalRequest: nil,
             observeLifecycleEvent: observeLifecycleEvent,
             settleCompletedRun: settle
+        )
+    }
+
+    @MainActor
+    private func authoritativeSnapshot(
+        _ state: AppCoordinatorState,
+        playerRevision: UInt64 = 0,
+        economyRevision: UInt64 = 0
+    ) -> AuthoritativeAppStateSnapshot {
+        AuthoritativeAppStateSnapshot(
+            session: ProfileSessionToken(
+                accountIdentity: .local,
+                nonce: UUID(uuidString: "00000000-0000-0000-0000-000000000661")!,
+                profileID: UUID(uuidString: "00000000-0000-0000-0000-000000000662")!
+            ),
+            playerRevision: playerRevision,
+            economyRevision: economyRevision,
+            state: state
         )
     }
 

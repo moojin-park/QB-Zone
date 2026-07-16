@@ -79,6 +79,60 @@ struct StableInstallationDeviceIdentifierStore {
 /// successfully persisted repository snapshot.
 @MainActor
 final class ProductionAppComposition {
+    /// Persisted fields controlled by `PlayerSnapshot.revision`. The derived
+    /// coin balance is intentionally excluded and guarded with the economy
+    /// fields below. Sync status is revision-bound here for the local runtime;
+    /// an independently changing CloudKit status needs its own future revision
+    /// domain instead of hitchhiking on player or economy changes.
+    private struct PlayerRevisionPartition: Equatable {
+        let profileID: UUID
+        let settings: PlayerSettings
+        let selection: PlayerSelection
+        let inventory: PlayerInventory
+        let career: CareerStatistics
+        let achievementProgress: [AchievementID: AchievementProgress]
+        let rewardedAdState: RewardedAdState
+        let syncStatus: ProfileSyncStatus
+        let completedRuns: [RunID: CompletedRunRecord]
+
+        init(snapshot: LocalPlayerProfileSnapshot) {
+            profileID = snapshot.player.profileID
+            settings = snapshot.player.settings
+            selection = snapshot.player.selection
+            inventory = snapshot.player.inventory
+            career = snapshot.player.career
+            achievementProgress = snapshot.player.achievementProgress
+            rewardedAdState = snapshot.player.rewardedAdState
+            syncStatus = snapshot.player.syncStatus
+            completedRuns = snapshot.completedRuns
+        }
+    }
+
+    /// Persisted economy fields plus the redundant player-facing total derived
+    /// from them. Comparing the derived total prevents an internally
+    /// inconsistent snapshot from crossing a player-only revision update.
+    private struct EconomyRevisionPartition: Equatable {
+        let inventory: PlayerInventory
+        let rewardedAdState: RewardedAdState
+        let derivedPlayerCoinBalance: Int64
+        let coinBalances: CoinBalanceSummary
+        let ledger: [LedgerEntryID: CoinLedgerEntry]
+        let pendingLedgerEntryIDs: Set<LedgerEntryID>
+
+        init(snapshot: LocalPlayerProfileSnapshot) {
+            // Catalog ownership and rewarded-ad progress are stored on the
+            // player document, but production only changes them together with
+            // a durable economy mutation. Membership in both partitions
+            // enforces that coupled invariant.
+            inventory = snapshot.player.inventory
+            rewardedAdState = snapshot.player.rewardedAdState
+            derivedPlayerCoinBalance = snapshot.player.coinBalance
+            coinBalances = snapshot.coinBalances
+            ledger = snapshot.ledger
+            pendingLedgerEntryIDs = snapshot.pendingLedgerEntryIDs
+        }
+    }
+
     private enum Message {
         static let loadFailed =
             "Saved player data could not be opened. Check available storage and try again."
@@ -86,6 +140,8 @@ final class ProductionAppComposition {
             "Saved player data is not ready. No changes were made."
         static let mutationFailed =
             "The player profile could not be saved. No unverified changes were applied."
+        static let integrityCollision =
+            "The player profile returned conflicting data for the same revision. No unverified changes were applied."
         static let selectionTooBroad =
             "That equipment change could not be verified. No changes were made."
         static let runFailed =
@@ -102,10 +158,18 @@ final class ProductionAppComposition {
 
     private let dependencies: ProductionAppDependencies
     private let repository: LocalPlayerProfileRepository
+    private let authoritativeStateChannel: ProductionAuthoritativeStateChannel
+    private let diagnosticsSink: AppleDiagnosticsSink?
     private var currentSnapshot: LocalPlayerProfileSnapshot?
 
-    init(dependencies: ProductionAppDependencies) {
+    init(
+        dependencies: ProductionAppDependencies,
+        authoritativeStateChannel: ProductionAuthoritativeStateChannel = .init(),
+        diagnosticsSink: AppleDiagnosticsSink? = nil
+    ) {
         self.dependencies = dependencies
+        self.authoritativeStateChannel = authoritativeStateChannel
+        self.diagnosticsSink = diagnosticsSink
         repository = LocalPlayerProfileRepository(
             directoryURL: Self.profileDirectoryURL(
                 applicationSupportDirectoryURL: dependencies.applicationSupportDirectoryURL,
@@ -124,6 +188,10 @@ final class ProductionAppComposition {
             loadInitialState: { [self] in
                 await loadInitialState()
             },
+            makeAuthoritativeStateUpdates: { [channel = authoritativeStateChannel] in
+                channel.makeStream()
+            },
+            diagnosticsSink: diagnosticsSink,
             makeRunID: dependencies.makeRunID,
             makeSeed: dependencies.makeSeed,
             now: dependencies.now,
@@ -154,18 +222,35 @@ final class ProductionAppComposition {
 
     private func loadInitialState() async -> AppBootstrapLoadResult {
         if let currentSnapshot {
-            return .loaded(Self.project(currentSnapshot))
+            return .loaded(Self.authoritativeSnapshot(from: currentSnapshot))
         }
 
         do {
+            let loadedAt = dependencies.now()
             let snapshot = try await repository.load(
-                at: dependencies.now(),
+                at: loadedAt,
                 newProfileID: dependencies.newProfileID
             )
-            currentSnapshot = snapshot
-            return .loaded(Self.project(snapshot))
+            let accepted = try accept(snapshot, publishUpdate: false)
+            if let report = await repository.lastLoadReport {
+                reportPersistenceRecovery(report, at: loadedAt)
+            }
+            return .loaded(Self.authoritativeSnapshot(from: accepted))
         } catch {
             return .failed(message: Message.loadFailed)
+        }
+    }
+
+    /// Reprojects the repository only after its caller has committed durable
+    /// state. SDK callbacks never construct or publish UI state themselves.
+    func refreshAuthoritativeStateFromRepository() async {
+        do {
+            let snapshot = try await repository.snapshot()
+            _ = try accept(snapshot, publishUpdate: true)
+        } catch {
+            // A refresh is advisory. The last verified projection remains
+            // authoritative and foreground mutations continue to surface their
+            // own specific failures.
         }
     }
 
@@ -188,7 +273,9 @@ final class ProductionAppComposition {
                     session: currentSnapshot.session,
                     at: dependencies.now()
                 )
-                return publish(snapshot)
+                return try publishMutation(snapshot)
+            } catch ProductionAppCompositionError.authoritativeRevisionCollision {
+                return .failed(message: Message.integrityCollision)
             } catch {
                 return .failed(message: Message.mutationFailed)
             }
@@ -227,7 +314,7 @@ final class ProductionAppComposition {
             return .failed(message: Message.selectionTooBroad)
         }
         guard changeCount == 1 else {
-            return .applied(Self.project(currentSnapshot))
+            return .applied(Self.authoritativeSnapshot(from: currentSnapshot))
         }
 
         do {
@@ -255,7 +342,9 @@ final class ProductionAppComposition {
             } else {
                 return .failed(message: Message.selectionTooBroad)
             }
-            return publish(snapshot)
+            return try publishMutation(snapshot)
+        } catch ProductionAppCompositionError.authoritativeRevisionCollision {
+            return .failed(message: Message.integrityCollision)
         } catch {
             return .failed(message: Message.mutationFailed)
         }
@@ -273,29 +362,131 @@ final class ProductionAppComposition {
                 recordedAt: dependencies.now()
             )
             let snapshot = try await repository.snapshot()
-            self.currentSnapshot = snapshot
-            let state = Self.project(snapshot)
+            let accepted = try accept(snapshot, publishUpdate: true)
+            let authoritativeSnapshot = Self.authoritativeSnapshot(from: accepted)
 
             guard run.finishReason == .timerExpired else {
-                return .settled(authoritativeState: state, results: nil)
+                return .settled(
+                    authoritativeSnapshot: authoritativeSnapshot,
+                    results: nil
+                )
             }
 
             let results = try Self.makeResults(
                 run: run,
                 settlement: settlement,
-                snapshot: snapshot
+                snapshot: accepted
             )
-            return .settled(authoritativeState: state, results: results)
+            return .settled(
+                authoritativeSnapshot: authoritativeSnapshot,
+                results: results
+            )
         } catch {
             return .failed(message: Message.runFailed)
         }
     }
 
-    private func publish(
+    private func publishMutation(
         _ snapshot: LocalPlayerProfileSnapshot
-    ) -> AppExternalRequestResult {
-        currentSnapshot = snapshot
-        return .applied(Self.project(snapshot))
+    ) throws -> AppExternalRequestResult {
+        let accepted = try accept(snapshot, publishUpdate: true)
+        return .applied(Self.authoritativeSnapshot(from: accepted))
+    }
+
+    /// Accepts only monotonic repository projections. If an older async call
+    /// finishes after a newer one, its caller receives the newest accepted
+    /// snapshot and the presentation stream never regresses.
+    func accept(
+        _ candidate: LocalPlayerProfileSnapshot,
+        publishUpdate: Bool
+    ) throws -> LocalPlayerProfileSnapshot {
+        guard let currentSnapshot else {
+            self.currentSnapshot = candidate
+            if publishUpdate {
+                authoritativeStateChannel.publish(
+                    Self.authoritativeSnapshot(from: candidate)
+                )
+            }
+            return candidate
+        }
+
+        guard candidate.session == currentSnapshot.session else {
+            throw ProductionAppCompositionError.authoritativeSessionMismatch
+        }
+        guard candidate.player.revision >= currentSnapshot.player.revision,
+              candidate.economyRevision >= currentSnapshot.economyRevision else {
+            return currentSnapshot
+        }
+
+        if candidate.player.revision == currentSnapshot.player.revision,
+           PlayerRevisionPartition(snapshot: candidate)
+            != PlayerRevisionPartition(snapshot: currentSnapshot) {
+            throw ProductionAppCompositionError.authoritativeRevisionCollision
+        }
+        if candidate.economyRevision == currentSnapshot.economyRevision,
+           EconomyRevisionPartition(snapshot: candidate)
+            != EconomyRevisionPartition(snapshot: currentSnapshot) {
+            throw ProductionAppCompositionError.authoritativeRevisionCollision
+        }
+
+        if candidate.player.revision == currentSnapshot.player.revision,
+           candidate.economyRevision == currentSnapshot.economyRevision {
+            guard candidate == currentSnapshot else {
+                throw ProductionAppCompositionError.authoritativeRevisionCollision
+            }
+            return currentSnapshot
+        }
+
+        self.currentSnapshot = candidate
+        if publishUpdate {
+            authoritativeStateChannel.publish(
+                Self.authoritativeSnapshot(from: candidate)
+            )
+        }
+        return candidate
+    }
+
+    private func reportPersistenceRecovery(
+        _ report: ProfileLoadReport,
+        at date: Date
+    ) {
+        guard let diagnosticsSink else { return }
+
+        if !report.quarantinedURLs.isEmpty {
+            diagnosticsSink.report(
+                .persistence(.quarantinedCorruptFile),
+                severity: .warning,
+                at: date
+            )
+        }
+
+        switch report.source {
+        case .primary:
+            break
+        case .backup:
+            diagnosticsSink.report(
+                .persistence(.restoredBackup),
+                severity: .warning,
+                at: date
+            )
+        case .createdFresh:
+            diagnosticsSink.report(
+                .persistence(.createdFreshProfile),
+                severity: .info,
+                at: date
+            )
+        }
+    }
+
+    private static func authoritativeSnapshot(
+        from snapshot: LocalPlayerProfileSnapshot
+    ) -> AuthoritativeAppStateSnapshot {
+        AuthoritativeAppStateSnapshot(
+            session: snapshot.session,
+            playerRevision: snapshot.player.revision,
+            economyRevision: snapshot.economyRevision,
+            state: project(snapshot)
+        )
     }
 
     private static func project(
@@ -372,44 +563,23 @@ final class ProductionAppComposition {
     }
 }
 
-private enum ProductionAppCompositionError: Error {
+enum ProductionAppCompositionError: Error, Equatable {
     case authoritativeLedgerEntryMissing
     case authoritativeLedgerOverflow
+    case authoritativeSessionMismatch
+    case authoritativeRevisionCollision
 }
 
 extension AppCoordinatorEnvironment {
-    /// Real release composition. Platform services intentionally remain
-    /// unavailable until their adapters and production identifiers are added.
     @MainActor
-    static var live: AppCoordinatorEnvironment {
-        let supportURLs = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        )
-        guard let applicationSupportDirectoryURL = supportURLs.first else {
-            return .profileStorageUnavailable
-        }
-
-        let deviceID = StableInstallationDeviceIdentifierStore(
-            userDefaults: .standard
-        ).identifier()
-        let composition = ProductionAppComposition(
-            dependencies: ProductionAppDependencies(
-                applicationSupportDirectoryURL: applicationSupportDirectoryURL,
-                accountIdentity: .local,
-                deviceID: deviceID
-            )
-        )
-        return composition.environment
-    }
-
-    private static var profileStorageUnavailable: AppCoordinatorEnvironment {
+    static var profileStorageUnavailable: AppCoordinatorEnvironment {
         AppCoordinatorEnvironment(
             loadInitialState: {
                 .failed(
                     message: "Saved player data storage is unavailable on this device."
                 )
             },
+            makeAuthoritativeStateUpdates: nil,
             makeRunID: { RunID() },
             makeSeed: { UInt32.random(in: UInt32.min ... UInt32.max) },
             now: Date.init,

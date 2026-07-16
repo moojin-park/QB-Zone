@@ -95,6 +95,16 @@
 		1A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift */; };
 		1B0000000000000000000001 /* AppleDiagnosticsAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B0000000000000000000001 /* AppleDiagnosticsAdapter.swift */; };
 		1B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift */; };
+		1C0000000000000000000001 /* ProductionAppRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C0000000000000000000001 /* ProductionAppRuntime.swift */; };
+		1C0000000000000000000002 /* ProductionAuthoritativeStateChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C0000000000000000000002 /* ProductionAuthoritativeStateChannel.swift */; };
+		1C0000000000000000000003 /* ProductionServiceConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C0000000000000000000003 /* ProductionServiceConfiguration.swift */; };
+		1C0000000000000000000004 /* AppleDiagnosticsRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C0000000000000000000004 /* AppleDiagnosticsRuntime.swift */; };
+		1C0000000000000000000005 /* UIKitGameKitPresentationHandoff.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C0000000000000000000005 /* UIKitGameKitPresentationHandoff.swift */; };
+		1C0000000000000000000006 /* AuthoritativeAppStateStreamTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C0000000000000000000006 /* AuthoritativeAppStateStreamTests.swift */; };
+		1C0000000000000000000007 /* ProductionServiceConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C0000000000000000000007 /* ProductionServiceConfigurationTests.swift */; };
+		1C0000000000000000000008 /* AppleDiagnosticsRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C0000000000000000000008 /* AppleDiagnosticsRuntimeTests.swift */; };
+		1C0000000000000000000009 /* UIKitGameKitPresentationHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C0000000000000000000009 /* UIKitGameKitPresentationHandoffTests.swift */; };
+		1C000000000000000000000A /* ProductionAppRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C000000000000000000000A /* ProductionAppRuntimeTests.swift */; };
 		120000000000000000000007 /* GameCenterServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000007 /* GameCenterServiceTests.swift */; };
 		120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000008 /* StoreTransactionServiceTests.swift */; };
 		120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000009 /* RewardedAdServiceTests.swift */; };
@@ -205,6 +215,16 @@
 		2A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DurableEconomyCoordinatorTests.swift; sourceTree = "<group>"; };
 		2B0000000000000000000001 /* AppleDiagnosticsAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleDiagnosticsAdapter.swift; sourceTree = "<group>"; };
 		2B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleDiagnosticsAdapterTests.swift; sourceTree = "<group>"; };
+		2C0000000000000000000001 /* ProductionAppRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionAppRuntime.swift; sourceTree = "<group>"; };
+		2C0000000000000000000002 /* ProductionAuthoritativeStateChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionAuthoritativeStateChannel.swift; sourceTree = "<group>"; };
+		2C0000000000000000000003 /* ProductionServiceConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionServiceConfiguration.swift; sourceTree = "<group>"; };
+		2C0000000000000000000004 /* AppleDiagnosticsRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleDiagnosticsRuntime.swift; sourceTree = "<group>"; };
+		2C0000000000000000000005 /* UIKitGameKitPresentationHandoff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIKitGameKitPresentationHandoff.swift; sourceTree = "<group>"; };
+		2C0000000000000000000006 /* AuthoritativeAppStateStreamTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthoritativeAppStateStreamTests.swift; sourceTree = "<group>"; };
+		2C0000000000000000000007 /* ProductionServiceConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionServiceConfigurationTests.swift; sourceTree = "<group>"; };
+		2C0000000000000000000008 /* AppleDiagnosticsRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleDiagnosticsRuntimeTests.swift; sourceTree = "<group>"; };
+		2C0000000000000000000009 /* UIKitGameKitPresentationHandoffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIKitGameKitPresentationHandoffTests.swift; sourceTree = "<group>"; };
+		2C000000000000000000000A /* ProductionAppRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionAppRuntimeTests.swift; sourceTree = "<group>"; };
 		220000000000000000000007 /* GameCenterServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000008 /* StoreTransactionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTransactionServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000009 /* RewardedAdServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdServiceTests.swift; sourceTree = "<group>"; };
@@ -276,6 +296,9 @@
 				240000000000000000000001 /* AppCoordinator.swift */,
 				240000000000000000000002 /* AppCoordinatorModels.swift */,
 				270000000000000000000001 /* ProductionAppComposition.swift */,
+				2C0000000000000000000001 /* ProductionAppRuntime.swift */,
+				2C0000000000000000000002 /* ProductionAuthoritativeStateChannel.swift */,
+				2C0000000000000000000003 /* ProductionServiceConfiguration.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -353,6 +376,11 @@
 				290000000000000000000003 /* TutorialPrivacyCoordinatorTests.swift */,
 				2A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift */,
 				2B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift */,
+				2C0000000000000000000006 /* AuthoritativeAppStateStreamTests.swift */,
+				2C0000000000000000000007 /* ProductionServiceConfigurationTests.swift */,
+				2C0000000000000000000008 /* AppleDiagnosticsRuntimeTests.swift */,
+				2C0000000000000000000009 /* UIKitGameKitPresentationHandoffTests.swift */,
+				2C000000000000000000000A /* ProductionAppRuntimeTests.swift */,
 			);
 			path = PocketVectorTests;
 			sourceTree = "<group>";
@@ -422,6 +450,8 @@
 				22000000000000000000000C /* ServiceAccountBindings.swift */,
 				2A0000000000000000000001 /* DurableEconomyCoordinator.swift */,
 				2B0000000000000000000001 /* AppleDiagnosticsAdapter.swift */,
+				2C0000000000000000000004 /* AppleDiagnosticsRuntime.swift */,
+				2C0000000000000000000005 /* UIKitGameKitPresentationHandoff.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -654,6 +684,11 @@
 				190000000000000000000002 /* PrivacySupportView.swift in Sources */,
 				1A0000000000000000000001 /* DurableEconomyCoordinator.swift in Sources */,
 				1B0000000000000000000001 /* AppleDiagnosticsAdapter.swift in Sources */,
+				1C0000000000000000000001 /* ProductionAppRuntime.swift in Sources */,
+				1C0000000000000000000002 /* ProductionAuthoritativeStateChannel.swift in Sources */,
+				1C0000000000000000000003 /* ProductionServiceConfiguration.swift in Sources */,
+				1C0000000000000000000004 /* AppleDiagnosticsRuntime.swift in Sources */,
+				1C0000000000000000000005 /* UIKitGameKitPresentationHandoff.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -683,6 +718,11 @@
 				190000000000000000000003 /* TutorialPrivacyCoordinatorTests.swift in Sources */,
 				1A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift in Sources */,
 				1B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift in Sources */,
+				1C0000000000000000000006 /* AuthoritativeAppStateStreamTests.swift in Sources */,
+				1C0000000000000000000007 /* ProductionServiceConfigurationTests.swift in Sources */,
+				1C0000000000000000000008 /* AppleDiagnosticsRuntimeTests.swift in Sources */,
+				1C0000000000000000000009 /* UIKitGameKitPresentationHandoffTests.swift in Sources */,
+				1C000000000000000000000A /* ProductionAppRuntimeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

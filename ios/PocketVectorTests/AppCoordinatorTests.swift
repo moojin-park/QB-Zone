@@ -46,6 +46,7 @@ final class AppCoordinatorTests: XCTestCase {
     func testSelectionOnlyChangesForOwnedTeamAndUsesReturnedAuthoritativeState() async throws {
         var requests: [AppExternalRequest] = []
         var authoritativeState = AppCoordinatorState.launchDefault()
+        var revision: UInt64 = 0
         let coordinator = AppCoordinator(
             environment: environment { request in
                 requests.append(request)
@@ -53,7 +54,13 @@ final class AppCoordinatorTests: XCTestCase {
                     return .completed
                 }
                 authoritativeState.selection = selection
-                return .applied(authoritativeState)
+                revision += 1
+                return .applied(
+                    self.authoritativeSnapshot(
+                        authoritativeState,
+                        playerRevision: revision
+                    )
+                )
             }
         )
         await coordinator.bootstrap()
@@ -112,6 +119,7 @@ final class AppCoordinatorTests: XCTestCase {
     func testSettingsAreClampedAndCommittedFromAuthoritativeResponses() async {
         var requests: [AppExternalRequest] = []
         var authoritativeState = AppCoordinatorState.launchDefault()
+        var revision: UInt64 = 0
         let coordinator = AppCoordinator(
             environment: environment { request in
                 requests.append(request)
@@ -119,7 +127,13 @@ final class AppCoordinatorTests: XCTestCase {
                     return .completed
                 }
                 authoritativeState.settings = settings
-                return .applied(authoritativeState)
+                revision += 1
+                return .applied(
+                    self.authoritativeSnapshot(
+                        authoritativeState,
+                        playerRevision: revision
+                    )
+                )
             }
         )
         await coordinator.bootstrap()
@@ -250,7 +264,7 @@ final class AppCoordinatorTests: XCTestCase {
                     if attempts == 1 {
                         return .failed(message: "Saved profile is temporarily unavailable.")
                     }
-                    return .loaded(loadedState)
+                    return .loaded(self.authoritativeSnapshot(loadedState))
                 },
                 makeRunID: { RunID() },
                 makeSeed: { 1 },
@@ -279,12 +293,32 @@ final class AppCoordinatorTests: XCTestCase {
         handler: @escaping @MainActor (AppExternalRequest) async -> AppExternalRequestResult
     ) -> AppCoordinatorEnvironment {
         AppCoordinatorEnvironment(
-            loadInitialState: nil,
+            loadInitialState: {
+                .loaded(self.authoritativeSnapshot(.launchDefault()))
+            },
             makeRunID: { RunID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!) },
             makeSeed: { 1 },
             now: { Date(timeIntervalSince1970: 1) },
             performExternalRequest: handler,
             observeLifecycleEvent: nil
+        )
+    }
+
+    @MainActor
+    private func authoritativeSnapshot(
+        _ state: AppCoordinatorState,
+        playerRevision: UInt64 = 0,
+        economyRevision: UInt64 = 0
+    ) -> AuthoritativeAppStateSnapshot {
+        AuthoritativeAppStateSnapshot(
+            session: ProfileSessionToken(
+                accountIdentity: .local,
+                nonce: UUID(uuidString: "00000000-0000-0000-0000-000000000091")!,
+                profileID: UUID(uuidString: "00000000-0000-0000-0000-000000000092")!
+            ),
+            playerRevision: playerRevision,
+            economyRevision: economyRevision,
+            state: state
         )
     }
 

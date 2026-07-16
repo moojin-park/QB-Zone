@@ -100,6 +100,149 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func testSuccessfulRepositoryMutationPublishesMatchingVersionedProjection() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let clock = TestClock(Date(timeIntervalSince1970: 15_000))
+        let channel = ProductionAuthoritativeStateChannel()
+        let composition = ProductionAppComposition(
+            dependencies: ProductionAppDependencies(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: .local,
+                deviceID: "installation-device-stream",
+                sessionNonce: fixedUUID(12),
+                newProfileID: fixedUUID(112),
+                now: { clock.date },
+                makeRunID: { self.fixedRunID(12) },
+                makeSeed: { 12 }
+            ),
+            authoritativeStateChannel: channel
+        )
+        let coordinator = AppCoordinator(environment: composition.environment)
+        await coordinator.bootstrap()
+        let initial = try XCTUnwrap(coordinator.authoritativeSnapshot)
+        var iterator = channel.makeStream().makeAsyncIterator()
+
+        clock.advance(by: 1)
+        await coordinator.selectTeam(LaunchTeamID.highMesaHelions)
+        let published = await iterator.next()
+
+        XCTAssertEqual(published, coordinator.authoritativeSnapshot)
+        XCTAssertEqual(published?.session, initial.session)
+        XCTAssertEqual(published?.playerRevision, initial.playerRevision + 1)
+        XCTAssertEqual(published?.economyRevision, initial.economyRevision)
+        XCTAssertEqual(
+            published?.state.selection.selectedTeamID,
+            LaunchTeamID.highMesaHelions
+        )
+    }
+
+    @MainActor
+    func testPlayerRevisionAdvanceCannotCarryEconomyPartitionMutation() throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let composition = makeAcceptanceComposition(root: root)
+        let initial = makeRepositorySnapshot(playerRevision: 4, economyRevision: 9)
+        _ = try composition.accept(initial, publishUpdate: false)
+
+        let entryID = LedgerEntryID("partition-test/economy")
+        let entry = CoinLedgerEntry(
+            id: entryID,
+            delta: 250,
+            reason: .gameplay(runID: fixedRunID(880), economyVersion: 1),
+            createdAt: Date(timeIntervalSince1970: 880)
+        )
+        let malformed = replacing(
+            initial,
+            playerRevision: 5,
+            coinBalances: CoinBalanceSummary(confirmed: 250, pending: 0),
+            ledger: [entryID: entry]
+        )
+
+        XCTAssertThrowsError(try composition.accept(malformed, publishUpdate: false)) {
+            XCTAssertEqual(
+                $0 as? ProductionAppCompositionError,
+                .authoritativeRevisionCollision
+            )
+        }
+        XCTAssertEqual(
+            try composition.accept(initial, publishUpdate: false),
+            initial
+        )
+    }
+
+    @MainActor
+    func testPlayerRevisionAdvanceCannotGrantInventoryWithoutEconomyRevision() throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let composition = makeAcceptanceComposition(root: root)
+        let initial = makeRepositorySnapshot(playerRevision: 4, economyRevision: 9)
+        _ = try composition.accept(initial, publishUpdate: false)
+        var inventory = initial.player.inventory
+        inventory.ownedTeamIDs.insert(LaunchTeamID.lumaCoastPrisms)
+        let malformed = replacing(
+            initial,
+            playerRevision: 5,
+            inventory: inventory
+        )
+
+        XCTAssertThrowsError(try composition.accept(malformed, publishUpdate: false)) {
+            XCTAssertEqual(
+                $0 as? ProductionAppCompositionError,
+                .authoritativeRevisionCollision
+            )
+        }
+    }
+
+    @MainActor
+    func testPlayerRevisionAdvanceCannotChangeRewardEligibilityWithoutEconomyRevision() throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let composition = makeAcceptanceComposition(root: root)
+        let initial = makeRepositorySnapshot(playerRevision: 4, economyRevision: 9)
+        _ = try composition.accept(initial, publishUpdate: false)
+        var rewardedAdState = initial.player.rewardedAdState
+        _ = rewardedAdState.recordValidRun(fixedRunID(881))
+        let malformed = replacing(
+            initial,
+            playerRevision: 5,
+            rewardedAdState: rewardedAdState
+        )
+
+        XCTAssertThrowsError(try composition.accept(malformed, publishUpdate: false)) {
+            XCTAssertEqual(
+                $0 as? ProductionAppCompositionError,
+                .authoritativeRevisionCollision
+            )
+        }
+    }
+
+    @MainActor
+    func testEconomyRevisionAdvanceCannotCarryPlayerPartitionMutation() throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let composition = makeAcceptanceComposition(root: root)
+        let initial = makeRepositorySnapshot(playerRevision: 4, economyRevision: 9)
+        _ = try composition.accept(initial, publishUpdate: false)
+        let malformed = replacing(
+            initial,
+            economyRevision: 10,
+            settings: PlayerSettings(isMuted: true)
+        )
+
+        XCTAssertThrowsError(try composition.accept(malformed, publishUpdate: false)) {
+            XCTAssertEqual(
+                $0 as? ProductionAppCompositionError,
+                .authoritativeRevisionCollision
+            )
+        }
+        XCTAssertEqual(
+            try composition.accept(initial, publishUpdate: false),
+            initial
+        )
+    }
+
+    @MainActor
     func testFailedProfileLoadDoesNotPublishPlaceholderAsReady() async throws {
         let root = try makeTemporaryDirectory()
         defer { removeTemporaryDirectory(root) }
@@ -168,14 +311,14 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
 
         let duplicate = try XCTUnwrap(environment.settleCompletedRun)
         let duplicateResult = await duplicate(run)
-        guard case let .settled(duplicateState, duplicateResults?) = duplicateResult else {
+        guard case let .settled(duplicateSnapshot, duplicateResults?) = duplicateResult else {
             return XCTFail("Expected the duplicate callback to return its durable receipt")
         }
 
-        XCTAssertEqual(duplicateState, coordinator.state)
+        XCTAssertEqual(duplicateSnapshot.state, coordinator.state)
         XCTAssertEqual(duplicateResults, firstResults)
-        XCTAssertEqual(duplicateState.pendingCoins, 277)
-        XCTAssertEqual(duplicateState.confirmedCoins, 0)
+        XCTAssertEqual(duplicateSnapshot.state.pendingCoins, 277)
+        XCTAssertEqual(duplicateSnapshot.state.confirmedCoins, 0)
     }
 
     @MainActor
@@ -324,6 +467,87 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
                 makeSeed: { 91 }
             )
         ).environment
+    }
+
+    @MainActor
+    private func makeAcceptanceComposition(root: URL) -> ProductionAppComposition {
+        ProductionAppComposition(
+            dependencies: ProductionAppDependencies(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: .local,
+                deviceID: "partition-test-device",
+                sessionNonce: fixedUUID(870),
+                newProfileID: fixedUUID(871),
+                now: { Date(timeIntervalSince1970: 870) },
+                makeRunID: { self.fixedRunID(870) },
+                makeSeed: { 870 }
+            )
+        )
+    }
+
+    private func makeRepositorySnapshot(
+        playerRevision: UInt64,
+        economyRevision: UInt64
+    ) -> LocalPlayerProfileSnapshot {
+        let state = AppCoordinatorState.launchDefault()
+        let profileID = fixedUUID(872)
+        return LocalPlayerProfileSnapshot(
+            session: ProfileSessionToken(
+                accountIdentity: .local,
+                nonce: fixedUUID(873),
+                profileID: profileID
+            ),
+            player: PlayerSnapshot(
+                profileID: profileID,
+                revision: playerRevision,
+                settings: state.settings,
+                selection: state.selection,
+                inventory: state.inventory,
+                career: CareerStatistics(),
+                coinBalance: 0,
+                achievementProgress: state.achievementProgress,
+                rewardedAdState: state.rewardedAdState,
+                syncStatus: state.syncStatus
+            ),
+            economyRevision: economyRevision,
+            coinBalances: CoinBalanceSummary(confirmed: 0, pending: 0),
+            completedRuns: [:],
+            ledger: [:],
+            pendingLedgerEntryIDs: []
+        )
+    }
+
+    private func replacing(
+        _ snapshot: LocalPlayerProfileSnapshot,
+        playerRevision: UInt64? = nil,
+        economyRevision: UInt64? = nil,
+        settings: PlayerSettings? = nil,
+        inventory: PlayerInventory? = nil,
+        rewardedAdState: RewardedAdState? = nil,
+        coinBalances: CoinBalanceSummary? = nil,
+        ledger: [LedgerEntryID: CoinLedgerEntry]? = nil
+    ) -> LocalPlayerProfileSnapshot {
+        let resolvedBalances = coinBalances ?? snapshot.coinBalances
+        return LocalPlayerProfileSnapshot(
+            session: snapshot.session,
+            player: PlayerSnapshot(
+                profileID: snapshot.player.profileID,
+                revision: playerRevision ?? snapshot.player.revision,
+                settings: settings ?? snapshot.player.settings,
+                selection: snapshot.player.selection,
+                inventory: inventory ?? snapshot.player.inventory,
+                career: snapshot.player.career,
+                coinBalance: resolvedBalances.total,
+                achievementProgress: snapshot.player.achievementProgress,
+                rewardedAdState: rewardedAdState ?? snapshot.player.rewardedAdState,
+                syncStatus: snapshot.player.syncStatus
+            ),
+            economyRevision: economyRevision ?? snapshot.economyRevision,
+            coinBalances: resolvedBalances,
+            completedRuns: snapshot.completedRuns,
+            ledger: ledger ?? snapshot.ledger,
+            pendingLedgerEntryIDs: snapshot.pendingLedgerEntryIDs
+        )
     }
 
     @MainActor

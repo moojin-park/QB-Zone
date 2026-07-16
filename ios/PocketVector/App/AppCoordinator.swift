@@ -13,11 +13,14 @@ final class AppCoordinator {
     private(set) var pendingCompletedRun: CompletedRun?
     private(set) var isRunSettlementInFlight: Bool
     private(set) var settlementErrorMessage: String?
+    private(set) var authoritativeSnapshot: AuthoritativeAppStateSnapshot?
+    private(set) var stateUpdateConsumerIsRunning: Bool
     let privacySupportConfiguration: PrivacySupportConfiguration
 
     private let environment: AppCoordinatorEnvironment
     private let matchupGenerator: MatchupGenerator
     private var bootstrapIsRunning: Bool
+    private var visibleResultsTelemetry: VisibleResultsTelemetry?
 
     init(
         catalog: LaunchCatalog = .approved,
@@ -35,7 +38,10 @@ final class AppCoordinator {
         pendingCompletedRun = nil
         isRunSettlementInFlight = false
         settlementErrorMessage = nil
+        authoritativeSnapshot = nil
+        stateUpdateConsumerIsRunning = false
         bootstrapIsRunning = false
+        visibleResultsTelemetry = nil
     }
 
     var currentDestination: AppDestination {
@@ -68,27 +74,105 @@ final class AppCoordinator {
             return
         }
 
-        switch await loadInitialState() {
-        case let .loaded(initialState):
-            state = initialState
+        let result = await loadInitialState()
+        guard !Task.isCancelled else { return }
+
+        switch result {
+        case let .loaded(initialSnapshot):
+            authoritativeSnapshot = initialSnapshot
+            state = initialSnapshot.state
             bootstrapState = .ready
         case let .failed(message):
             bootstrapState = .failed(message: message)
         }
     }
 
+    /// Bootstraps the durable profile and then consumes complete background
+    /// projections for the same immutable profile session until cancelled.
+    func run() async {
+        guard !Task.isCancelled else { return }
+        await bootstrap()
+        guard !Task.isCancelled,
+              bootstrapState == .ready,
+              let makeUpdates = environment.makeAuthoritativeStateUpdates,
+              !stateUpdateConsumerIsRunning else {
+            return
+        }
+        stateUpdateConsumerIsRunning = true
+        defer { stateUpdateConsumerIsRunning = false }
+        let updates = makeUpdates()
+
+        for await update in updates {
+            guard !Task.isCancelled else { return }
+            _ = applyAuthoritativeUpdate(update)
+        }
+    }
+
+    /// Applies a complete profile projection without changing navigation. In
+    /// particular, a gameplay destination keeps its immutable configuration
+    /// even if inventory or selection changes in the background.
+    @discardableResult
+    func applyAuthoritativeUpdate(
+        _ update: AuthoritativeAppStateSnapshot
+    ) -> AuthoritativeStateApplyResult {
+        guard let accepted = authoritativeSnapshot else {
+            return .rejected(.sessionNotEstablished)
+        }
+        guard update.session == accepted.session else {
+            return .rejected(.sessionMismatch)
+        }
+        guard update.playerRevision >= accepted.playerRevision,
+              update.economyRevision >= accepted.economyRevision else {
+            return .rejected(.staleRevision)
+        }
+
+        if update.playerRevision == accepted.playerRevision,
+           update.state.authoritativePlayerPartition
+            != accepted.state.authoritativePlayerPartition {
+            return .rejected(.revisionCollision)
+        }
+        if update.economyRevision == accepted.economyRevision,
+           update.state.authoritativeEconomyPartition
+            != accepted.state.authoritativeEconomyPartition {
+            return .rejected(.revisionCollision)
+        }
+
+        if update.playerRevision == accepted.playerRevision,
+           update.economyRevision == accepted.economyRevision {
+            guard update.state == accepted.state else {
+                return .rejected(.revisionCollision)
+            }
+            state = accepted.state
+            return .duplicateIgnored
+        }
+
+        authoritativeSnapshot = update
+        state = update.state
+        return .applied
+    }
+
     func navigate(to destination: AppDestination) {
         guard bootstrapState == .ready else { return }
         guard currentDestination != destination else { return }
+        if case .runResults = currentDestination {
+            visibleResultsTelemetry = nil
+        }
         navigationPath.append(destination)
+        if case .coinStore = destination {
+            recordTelemetry(.storeOpened, at: environment.now())
+        }
     }
 
     func goBack() {
         guard navigationPath.count > 1 else { return }
+        if case .runResults = currentDestination {
+            visibleResultsTelemetry = nil
+        }
         navigationPath.removeLast()
     }
 
     func returnToMainMenu() {
+        visibleResultsTelemetry = nil
         navigationPath = [.mainMenu]
     }
 
@@ -379,6 +463,7 @@ final class AppCoordinator {
     }
 
     func showRunResults(_ results: RunResultsPresentation) {
+        visibleResultsTelemetry = nil
         if case .gameplay = currentDestination {
             navigationPath.removeLast()
         }
@@ -409,8 +494,14 @@ final class AppCoordinator {
         case let .failed(message):
             exposeSettlementFailure(message)
 
-        case let .settled(authoritativeState, results):
-            state = authoritativeState
+        case let .settled(authoritativeSnapshot, results):
+            let applyResult = applyAuthoritativeUpdate(authoritativeSnapshot)
+            guard applyResult.acceptsRepositorySuccess else {
+                exposeSettlementFailure(
+                    "The saved profile response failed an integrity check. Retry to load verified results."
+                )
+                return
+            }
 
             switch completedRun.finishReason {
             case .timerExpired:
@@ -426,7 +517,7 @@ final class AppCoordinator {
                 pendingCompletedRun = nil
                 settlementErrorMessage = nil
                 noticeMessage = nil
-                showRunResults(results)
+                showVerifiedRunResults(results)
 
             case .abandoned:
                 pendingCompletedRun = nil
@@ -447,9 +538,24 @@ final class AppCoordinator {
     }
 
     func replayAfterResults() {
-        guard case .runResults = currentDestination else { return }
+        guard case let .runResults(results) = currentDestination else { return }
+        let replayCorrelationID: ReplayCorrelationID?
+        if visibleResultsTelemetry?.results == results {
+            replayCorrelationID = visibleResultsTelemetry?.correlationID
+        } else {
+            replayCorrelationID = nil
+        }
+        visibleResultsTelemetry = nil
         navigationPath.removeLast()
-        _ = startRun()
+        guard startRun(),
+              case let .gameplay(configuration) = currentDestination,
+              let replayCorrelationID else {
+            return
+        }
+        recordTelemetry(
+            .replayStarted(correlationID: replayCorrelationID),
+            at: configuration.startedAt
+        )
     }
 
     private func isValidRunIntent(_ intent: RunLaunchIntent) -> Bool {
@@ -494,6 +600,7 @@ final class AppCoordinator {
             }
             navigate(to: .gameplay(configuration))
             environment.observeLifecycleEvent?(.didLaunchRun(configuration))
+            recordTelemetry(.runStarted, at: configuration.startedAt)
             return true
         } catch {
             noticeMessage = "Choose an owned team, jersey, and football before starting a run."
@@ -530,15 +637,20 @@ final class AppCoordinator {
         pendingRequest = nil
 
         switch result {
-        case let .applied(authoritativeState):
-            state = authoritativeState
+        case let .applied(authoritativeSnapshot):
+            let applyResult = applyAuthoritativeUpdate(authoritativeSnapshot)
+            guard applyResult.acceptsRepositorySuccess else {
+                state = self.authoritativeSnapshot?.state ?? previous
+                noticeMessage = "The saved profile response failed an integrity check. No unverified changes were applied."
+                return false
+            }
             return true
         case .completed:
-            state = previous
+            state = authoritativeSnapshot?.state ?? previous
             noticeMessage = "The profile service did not return an updated player state."
             return false
         case let .failed(message):
-            state = previous
+            state = authoritativeSnapshot?.state ?? previous
             noticeMessage = message
             return false
         }
@@ -555,12 +667,55 @@ final class AppCoordinator {
         pendingRequest = nil
 
         switch result {
-        case let .applied(authoritativeState):
-            state = authoritativeState
+        case let .applied(authoritativeSnapshot):
+            let applyResult = applyAuthoritativeUpdate(authoritativeSnapshot)
+            if !applyResult.acceptsRepositorySuccess {
+                noticeMessage = "The profile service returned an invalid account state."
+            }
         case .completed:
             break
         case let .failed(message):
             noticeMessage = message
+        }
+    }
+
+    private func showVerifiedRunResults(_ results: RunResultsPresentation) {
+        showRunResults(results)
+        guard currentDestination == .runResults(results) else { return }
+
+        let correlationID = environment.makeReplayCorrelationID()
+        visibleResultsTelemetry = VisibleResultsTelemetry(
+            results: results,
+            correlationID: correlationID
+        )
+        recordTelemetry(
+            TelemetryBandClassifier.runResultsPayload(
+                correlationID: correlationID,
+                score: results.score,
+                displayedAccuracyPercent: results.statistics.displayedAccuracyPercent,
+                attempts: results.statistics.attempts
+            ),
+            at: environment.now()
+        )
+    }
+
+    private func recordTelemetry(_ payload: TelemetryPayload, at date: Date) {
+        environment.diagnosticsSink?.record(payload, at: date)
+    }
+}
+
+private struct VisibleResultsTelemetry {
+    let results: RunResultsPresentation
+    let correlationID: ReplayCorrelationID
+}
+
+private extension AuthoritativeStateApplyResult {
+    var acceptsRepositorySuccess: Bool {
+        switch self {
+        case .applied, .duplicateIgnored:
+            true
+        case .rejected:
+            false
         }
     }
 }

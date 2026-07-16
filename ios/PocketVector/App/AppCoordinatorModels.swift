@@ -1,6 +1,6 @@
 import Foundation
 
-enum AppDestination: Equatable {
+enum AppDestination: Equatable, Sendable {
     case mainMenu
     case teamSelection
     case locker
@@ -23,18 +23,18 @@ struct RunLaunchIntent: Equatable, Sendable {
     let selection: PlayerSelection
 }
 
-enum AppBootstrapState: Equatable {
+enum AppBootstrapState: Equatable, Sendable {
     case loading
     case ready
     case failed(message: String)
 }
 
-enum AppBootstrapLoadResult: Equatable {
-    case loaded(AppCoordinatorState)
+enum AppBootstrapLoadResult: Equatable, Sendable {
+    case loaded(AuthoritativeAppStateSnapshot)
     case failed(message: String)
 }
 
-struct AppCoordinatorState: Equatable {
+struct AppCoordinatorState: Equatable, Sendable {
     var inventory: PlayerInventory
     var selection: PlayerSelection
     var settings: PlayerSettings
@@ -64,7 +64,86 @@ struct AppCoordinatorState: Equatable {
     }
 }
 
-enum AppExternalRequest: Equatable {
+/// Fields whose durable authority is the player-profile revision. Keeping this
+/// projection explicit makes adding a new coordinator field a deliberate
+/// revision-domain decision instead of silently allowing it to hitchhike on an
+/// unrelated economy update.
+struct AuthoritativePlayerStatePartition: Equatable, Sendable {
+    let inventory: PlayerInventory
+    let selection: PlayerSelection
+    let settings: PlayerSettings
+    let personalBest: Int
+    let achievementProgress: [AchievementID: AchievementProgress]
+    let rewardedAdState: RewardedAdState
+    let syncStatus: ProfileSyncStatus
+
+    init(state: AppCoordinatorState) {
+        inventory = state.inventory
+        selection = state.selection
+        settings = state.settings
+        personalBest = state.personalBest
+        achievementProgress = state.achievementProgress
+        rewardedAdState = state.rewardedAdState
+        // Sync status is revision-bound to the player projection today. A
+        // future cloud adapter that changes it independently must introduce a
+        // dedicated sync revision/partition rather than bypass this guard.
+        syncStatus = state.syncStatus
+    }
+}
+
+/// Fields whose durable authority is the economy revision.
+struct AuthoritativeEconomyStatePartition: Equatable, Sendable {
+    let inventory: PlayerInventory
+    let confirmedCoins: Int64
+    let pendingCoins: Int64
+    let rewardedAdState: RewardedAdState
+
+    init(state: AppCoordinatorState) {
+        // Ownership grants and rewarded-ad state are player-facing fields, but
+        // every production mutation is coupled to an economy transaction. They
+        // therefore intentionally belong to both revision partitions.
+        inventory = state.inventory
+        confirmedCoins = state.confirmedCoins
+        pendingCoins = state.pendingCoins
+        rewardedAdState = state.rewardedAdState
+    }
+}
+
+extension AppCoordinatorState {
+    var authoritativePlayerPartition: AuthoritativePlayerStatePartition {
+        AuthoritativePlayerStatePartition(state: self)
+    }
+
+    var authoritativeEconomyPartition: AuthoritativeEconomyStatePartition {
+        AuthoritativeEconomyStatePartition(state: self)
+    }
+}
+
+/// A complete UI projection bound to one immutable profile session and both
+/// persistence revision domains. This is the only value permitted on the
+/// authoritative UI-state lane; deltas, transactions, and receipts require
+/// separate lossless channels.
+struct AuthoritativeAppStateSnapshot: Equatable, Sendable {
+    let session: ProfileSessionToken
+    let playerRevision: UInt64
+    let economyRevision: UInt64
+    let state: AppCoordinatorState
+}
+
+enum AuthoritativeStateRejection: Equatable, Sendable {
+    case sessionNotEstablished
+    case sessionMismatch
+    case staleRevision
+    case revisionCollision
+}
+
+enum AuthoritativeStateApplyResult: Equatable, Sendable {
+    case applied
+    case duplicateIgnored
+    case rejected(AuthoritativeStateRejection)
+}
+
+enum AppExternalRequest: Equatable, Sendable {
     case updateSelection(PlayerSelection)
     case updateSettings(PlayerSettings)
     case showLeaderboard
@@ -73,21 +152,21 @@ enum AppExternalRequest: Equatable {
     case requestRewardedAd(RewardOfferID)
 }
 
-enum AppExternalRequestResult: Equatable {
-    case applied(AppCoordinatorState)
+enum AppExternalRequestResult: Equatable, Sendable {
+    case applied(AuthoritativeAppStateSnapshot)
     case completed
     case failed(message: String)
 }
 
-enum CompletedRunSettlementResult: Equatable {
+enum CompletedRunSettlementResult: Equatable, Sendable {
     case settled(
-        authoritativeState: AppCoordinatorState,
+        authoritativeSnapshot: AuthoritativeAppStateSnapshot,
         results: RunResultsPresentation?
     )
     case failed(message: String)
 }
 
-enum AppLifecycleEvent: Equatable {
+enum AppLifecycleEvent: Equatable, Sendable {
     case didLaunchRun(RunConfiguration)
     case didExitRun(RunID)
 }
@@ -330,6 +409,11 @@ struct PrivacySupportConfiguration: Equatable, Sendable {
 
 struct AppCoordinatorEnvironment {
     var loadInitialState: (@MainActor () async -> AppBootstrapLoadResult)?
+    var makeAuthoritativeStateUpdates: (
+        @MainActor () -> AsyncStream<AuthoritativeAppStateSnapshot>
+    )?
+    var diagnosticsSink: AppleDiagnosticsSink?
+    var makeReplayCorrelationID: @MainActor () -> ReplayCorrelationID
     var makeRunID: @MainActor () -> RunID
     var makeSeed: @MainActor () -> UInt32
     var now: @MainActor () -> Date
@@ -342,6 +426,13 @@ struct AppCoordinatorEnvironment {
 
     init(
         loadInitialState: (@MainActor () async -> AppBootstrapLoadResult)?,
+        makeAuthoritativeStateUpdates: (
+            @MainActor () -> AsyncStream<AuthoritativeAppStateSnapshot>
+        )? = nil,
+        diagnosticsSink: AppleDiagnosticsSink? = nil,
+        makeReplayCorrelationID: @escaping @MainActor () -> ReplayCorrelationID = {
+            ReplayCorrelationID()
+        },
         makeRunID: @escaping @MainActor () -> RunID,
         makeSeed: @escaping @MainActor () -> UInt32,
         now: @escaping @MainActor () -> Date,
@@ -355,6 +446,9 @@ struct AppCoordinatorEnvironment {
         privacySupportConfiguration: PrivacySupportConfiguration = .from(bundle: .main)
     ) {
         self.loadInitialState = loadInitialState
+        self.makeAuthoritativeStateUpdates = makeAuthoritativeStateUpdates
+        self.diagnosticsSink = diagnosticsSink
+        self.makeReplayCorrelationID = makeReplayCorrelationID
         self.makeRunID = makeRunID
         self.makeSeed = makeSeed
         self.now = now
@@ -366,6 +460,8 @@ struct AppCoordinatorEnvironment {
 
     static let disconnected = AppCoordinatorEnvironment(
         loadInitialState: nil,
+        makeAuthoritativeStateUpdates: nil,
+        diagnosticsSink: nil,
         makeRunID: { RunID() },
         makeSeed: { UInt32.random(in: UInt32.min ... UInt32.max) },
         now: Date.init,
@@ -375,7 +471,7 @@ struct AppCoordinatorEnvironment {
     )
 }
 
-struct RunResultsPresentation: Equatable {
+struct RunResultsPresentation: Equatable, Sendable {
     let completedRun: CompletedRun
     let earnedCoins: Int64
     let pendingCoins: Int64
@@ -406,7 +502,7 @@ struct RunResultsPresentation: Equatable {
     var statistics: RunStatisticsSnapshot { completedRun.statistics }
 }
 
-enum RewardedAdOfferPresentation: Equatable {
+enum RewardedAdOfferPresentation: Equatable, Sendable {
     case progress(validRuns: Int, requiredRuns: Int)
     case eligible(offerID: RewardOfferID, rewardCoins: Int64, canPresent: Bool)
     case loading

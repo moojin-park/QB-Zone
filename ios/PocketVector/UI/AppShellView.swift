@@ -3,6 +3,7 @@ import SwiftUI
 @MainActor
 struct AppShellView: View {
     @Bindable var coordinator: AppCoordinator
+    let onRetryBootstrap: @MainActor () -> Void
     @Environment(\.accessibilityReduceMotion) private var systemReducedMotion
 
     var body: some View {
@@ -33,9 +34,6 @@ struct AppShellView: View {
         .preferredColorScheme(.dark)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
-        .task {
-            await coordinator.bootstrap()
-        }
         .alert(
             "Pocket Vector",
             isPresented: Binding(
@@ -61,9 +59,10 @@ struct AppShellView: View {
         case .loading:
             BootstrapLoadingView()
         case let .failed(message):
-            BootstrapFailureView(message: message) {
-                Task { await coordinator.bootstrap() }
-            }
+            BootstrapFailureView(
+                message: message,
+                onRetry: onRetryBootstrap
+            )
         case .ready:
             switch coordinator.currentDestination {
             case .mainMenu:
