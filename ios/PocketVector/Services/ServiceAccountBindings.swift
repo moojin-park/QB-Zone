@@ -169,6 +169,36 @@ struct AccountGenerationToken: Equatable, Hashable, Sendable {
 /// authority instance compare equal to a destroyed authority.
 fileprivate final class AccountGenerationAuthorityIdentity: Sendable {}
 
+/// A scoped, noncopyable permit delivered only while its issuing account
+/// authority holds the complete account-generation commit gate. It is
+/// Sendable solely so the borrowed permit can cross to another actor during
+/// the bounded commit body; callers cannot construct, retain, or return it.
+struct AccountGenerationCommitLease: ~Copyable, Sendable {
+    private let generation: ActiveCloudAccountGeneration
+
+    fileprivate init(generation: ActiveCloudAccountGeneration) {
+        self.generation = generation
+    }
+
+    var accountID: CloudAccountID {
+        generation.accountID
+    }
+
+    var configurationScopeFingerprint: CloudReplicaScopeFingerprint {
+        generation.configurationScopeFingerprint
+    }
+
+    var replicaEpoch: UUID {
+        generation.replicaEpoch
+    }
+
+    func wasIssued(
+        by authority: CloudAccountGenerationAuthority
+    ) -> Bool {
+        authority.owns(generation.token)
+    }
+}
+
 /// The complete account-generation binding protected by
 /// ``CloudAccountGenerationAuthority``. Derived service ownership travels with
 /// the cloud identity so a commit cannot accidentally mix account domains.
@@ -316,7 +346,9 @@ actor CloudAccountGenerationAuthority {
     /// network fetches happen before entry and are revalidated here before use.
     func withCurrentGeneration<Result: Sendable>(
         _ expectedGeneration: ActiveCloudAccountGeneration,
-        perform operation: @Sendable () async throws -> Result
+        perform operation: @Sendable (
+            borrowing AccountGenerationCommitLease
+        ) async throws -> Result
     ) async throws -> Result {
         try await acquireCommitOperationGate()
         defer { releaseCommitOperationGate() }
@@ -332,7 +364,15 @@ actor CloudAccountGenerationAuthority {
         // The body owns its outcome after admission. In particular, do not
         // turn a successfully returned durable commit into ambiguous
         // CancellationError merely because cancellation arrived during it.
-        return try await operation()
+        let lease = AccountGenerationCommitLease(generation: activeGeneration)
+        return try await operation(lease)
+    }
+
+    /// Synchronous issuer check used by stores that were explicitly composed
+    /// with this authority. It reveals neither the token nor the active
+    /// generation and cannot mint commit authority.
+    nonisolated func owns(_ token: AccountGenerationToken) -> Bool {
+        token.authorityIdentity === authorityIdentity
     }
 
     /// Narrow diagnostic used to deterministically verify FIFO admission. It

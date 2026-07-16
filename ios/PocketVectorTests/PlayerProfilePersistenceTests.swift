@@ -488,8 +488,10 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             profileDirectoryURL: directory
         )
         _ = try transactionStore.beginHydration(fixture.journal)
+        let accountAuthority = CloudAccountGenerationAuthority()
         let checkpointStore = AtomicCloudReplicaCheckpointDiskStore(
-            rootDirectoryURL: checkpointDirectory
+            rootDirectoryURL: checkpointDirectory,
+            accountGenerationAuthority: accountAuthority
         )
         try await checkpointStore.activate(
             replicaEpoch: fixture.replicaEpoch,
@@ -497,17 +499,27 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             for: fixture.cloudAccountID
         )
         try await checkpointStore.save(fixture.targetCheckpoint, at: fixture.date)
-        let observation = try await checkpointStore.observeCurrentCheckpoint(
-            for: fixture.cloudAccountID,
+        let generation = try await accountAuthority.activate(
+            accountID: fixture.cloudAccountID,
             configurationScopeFingerprint: fixture.scope,
-            replicaEpoch: fixture.replicaEpoch,
-            at: fixture.date
+            replicaEpoch: fixture.replicaEpoch
         )
-        _ = try transactionStore.installCandidate(
-            transactionID: fixture.transactionID,
-            expected: fixture.expectedBinding,
-            confirmedTargetCheckpointObservation: observation
-        )
+        let transactionID = fixture.transactionID
+        let expectedBinding = fixture.expectedBinding
+        let checkpointDate = fixture.date
+        _ = try await accountAuthority.withCurrentGeneration(generation) {
+            accountLease in
+            try await checkpointStore.withCurrentCheckpointLease(
+                generationLease: accountLease,
+                at: checkpointDate
+            ) { lease in
+                try transactionStore.installCandidate(
+                    transactionID: transactionID,
+                    expected: expectedBinding,
+                    checkpointLease: lease
+                )
+            }
+        }
 
         do {
             _ = try await repository.adoptCommittedHydration(
@@ -522,13 +534,21 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             )
         }
 
-        XCTAssertTrue(
-            try transactionStore.removeJournalAfterCheckpointConfirmation(
-                transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding,
-                confirmedTargetCheckpointObservation: observation
-            )
-        )
+        let removedJournal = try await accountAuthority.withCurrentGeneration(
+            generation
+        ) { accountLease in
+            try await checkpointStore.withCurrentCheckpointLease(
+                generationLease: accountLease,
+                at: checkpointDate
+            ) { lease in
+                try transactionStore.removeJournalAfterCheckpointConfirmation(
+                    transactionID: transactionID,
+                    expected: expectedBinding,
+                    checkpointLease: lease
+                )
+            }
+        }
+        XCTAssertTrue(removedJournal)
         let adopted = try await repository.adoptCommittedHydration(
             fixture.journal,
             session: loaded.session

@@ -249,7 +249,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         XCTAssertNotEqual(first.token, second.token)
         XCTAssertNotEqual(first, second)
         do {
-            let _: Int = try await secondAuthority.withCurrentGeneration(first) { 1 }
+            let _: Int = try await secondAuthority.withCurrentGeneration(first) { _ in 1 }
             XCTFail("A generation from another authority must be rejected")
         } catch {
             XCTAssertEqual(
@@ -257,7 +257,7 @@ final class ServiceAccountBindingTests: XCTestCase {
                 .generationNotCurrent
             )
         }
-        let accepted: Int = try await secondAuthority.withCurrentGeneration(second) { 2 }
+        let accepted: Int = try await secondAuthority.withCurrentGeneration(second) { _ in 2 }
         XCTAssertEqual(accepted, 2)
     }
 
@@ -288,7 +288,7 @@ final class ServiceAccountBindingTests: XCTestCase {
                 .generationNotCurrent
             )
         }
-        let value: Int = try await authority.withCurrentGeneration(second) { 7 }
+        let value: Int = try await authority.withCurrentGeneration(second) { _ in 7 }
         XCTAssertEqual(value, 7)
 
         try await authority.invalidate(second)
@@ -343,7 +343,7 @@ final class ServiceAccountBindingTests: XCTestCase {
                 .tokenFactoryReturnedZero
             )
         }
-        let afterZero: Int = try await authority.withCurrentGeneration(first) { 1 }
+        let afterZero: Int = try await authority.withCurrentGeneration(first) { _ in 1 }
         XCTAssertEqual(afterZero, 1)
 
         do {
@@ -360,7 +360,7 @@ final class ServiceAccountBindingTests: XCTestCase {
                 .tokenFactoryCollision
             )
         }
-        let afterCollision: Int = try await authority.withCurrentGeneration(first) { 2 }
+        let afterCollision: Int = try await authority.withCurrentGeneration(first) { _ in 2 }
         XCTAssertEqual(afterCollision, 2)
 
         let second = try await activate(
@@ -414,7 +414,7 @@ final class ServiceAccountBindingTests: XCTestCase {
             )
         }
         XCTAssertEqual(factory.callCount, 2)
-        let preserved: Int = try await authority.withCurrentGeneration(second) { 9 }
+        let preserved: Int = try await authority.withCurrentGeneration(second) { _ in 9 }
         XCTAssertEqual(preserved, 9)
     }
 
@@ -438,7 +438,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         let recorder = InvocationRecorder()
 
         do {
-            let _: Int = try await authority.withCurrentGeneration(stale) {
+            let _: Int = try await authority.withCurrentGeneration(stale) { _ in
                 await recorder.record()
                 return 1
             }
@@ -451,7 +451,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         }
         let invocationCount = await recorder.value
         XCTAssertEqual(invocationCount, 0)
-        let accepted: Int = try await authority.withCurrentGeneration(current) { 2 }
+        let accepted: Int = try await authority.withCurrentGeneration(current) { _ in 2 }
         XCTAssertEqual(accepted, 2)
     }
 
@@ -468,7 +468,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         )
         let blocker = ControlledCommitBody(result: 17)
         let bodyTask = Task {
-            try await authority.withCurrentGeneration(first) {
+            try await authority.withCurrentGeneration(first) { _ in
                 try await blocker.run()
             }
         }
@@ -509,7 +509,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         let third = try await thirdTask.value
         XCTAssertNotEqual(second.token, third.token)
         XCTAssertEqual(factory.callCount, 3)
-        let final: String = try await authority.withCurrentGeneration(third) { "third" }
+        let final: String = try await authority.withCurrentGeneration(third) { _ in "third" }
         XCTAssertEqual(final, "third")
     }
 
@@ -526,7 +526,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         )
         let blocker = ControlledCommitBody(result: 1)
         let bodyTask = Task {
-            try await authority.withCurrentGeneration(first) {
+            try await authority.withCurrentGeneration(first) { _ in
                 try await blocker.run()
             }
         }
@@ -565,7 +565,7 @@ final class ServiceAccountBindingTests: XCTestCase {
                 .generationNotCurrent
             )
         }
-        let preserved: Int = try await authority.withCurrentGeneration(second) { 2 }
+        let preserved: Int = try await authority.withCurrentGeneration(second) { _ in 2 }
         XCTAssertEqual(preserved, 2)
     }
 
@@ -582,7 +582,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         )
 
         do {
-            let _: Int = try await authority.withCurrentGeneration(first) {
+            let _: Int = try await authority.withCurrentGeneration(first) { _ in
                 throw ExpectedCommitBodyError.failure
             }
             XCTFail("The body error must escape unchanged")
@@ -596,7 +596,7 @@ final class ServiceAccountBindingTests: XCTestCase {
             scope: scope("1"),
             epoch: uuid(903)
         )
-        let accepted: Int = try await authority.withCurrentGeneration(second) { 4 }
+        let accepted: Int = try await authority.withCurrentGeneration(second) { _ in 4 }
         XCTAssertEqual(accepted, 4)
     }
 
@@ -613,7 +613,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         )
         let blocker = ControlledCommitBody(result: 1)
         let bodyTask = Task {
-            try await authority.withCurrentGeneration(first) {
+            try await authority.withCurrentGeneration(first) { _ in
                 try await blocker.run()
             }
         }
@@ -642,7 +642,7 @@ final class ServiceAccountBindingTests: XCTestCase {
             XCTAssertTrue(error is CancellationError)
         }
         let second = try await activationTask.value
-        let accepted: Int = try await authority.withCurrentGeneration(second) { 5 }
+        let accepted: Int = try await authority.withCurrentGeneration(second) { _ in 5 }
         XCTAssertEqual(accepted, 5)
     }
 
@@ -659,7 +659,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         )
         let body = NonCooperativeCommitBody(result: 41)
         let bodyTask = Task {
-            try await authority.withCurrentGeneration(first) {
+            try await authority.withCurrentGeneration(first) { _ in
                 await body.run()
             }
         }
@@ -689,7 +689,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         XCTAssertTrue(sideEffectCompleted)
 
         let second = try await activationTask.value
-        let accepted: Int = try await authority.withCurrentGeneration(second) { 6 }
+        let accepted: Int = try await authority.withCurrentGeneration(second) { _ in 6 }
         XCTAssertEqual(accepted, 6)
     }
 
@@ -706,7 +706,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         )
         let blocker = ControlledCommitBody(result: 1)
         let bodyTask = Task {
-            try await authority.withCurrentGeneration(first) {
+            try await authority.withCurrentGeneration(first) { _ in
                 try await blocker.run()
             }
         }
@@ -765,7 +765,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         )
         let blocker = ControlledCommitBody(result: 1)
         let ownerTask = Task {
-            try await authority.withCurrentGeneration(first) {
+            try await authority.withCurrentGeneration(first) { _ in
                 try await blocker.run()
             }
         }
@@ -820,7 +820,7 @@ final class ServiceAccountBindingTests: XCTestCase {
         let successor = try await successorActivation.value
         let finalAccountID = successor.accountID
         XCTAssertEqual(finalAccountID, successorAccount)
-        let current: Int = try await authority.withCurrentGeneration(successor) { 12 }
+        let current: Int = try await authority.withCurrentGeneration(successor) { _ in 12 }
         XCTAssertEqual(current, 12)
         let finalMintCount = factory.callCount
         XCTAssertEqual(finalMintCount, 2)

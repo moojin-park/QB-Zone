@@ -11,6 +11,62 @@ private enum HydrationProfileMatrixState: String, CaseIterable {
     case oversized
 }
 
+private final class CheckpointLeaseHarness: @unchecked Sendable {
+    let rootDirectoryURL: URL
+    let store: AtomicCloudReplicaCheckpointDiskStore
+    let authority: CloudAccountGenerationAuthority
+    let generation: ActiveCloudAccountGeneration
+    let observedAt: Date
+
+    init(
+        rootDirectoryURL: URL,
+        store: AtomicCloudReplicaCheckpointDiskStore,
+        authority: CloudAccountGenerationAuthority,
+        generation: ActiveCloudAccountGeneration,
+        observedAt: Date
+    ) {
+        self.rootDirectoryURL = rootDirectoryURL
+        self.store = store
+        self.authority = authority
+        self.generation = generation
+        self.observedAt = observedAt
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: rootDirectoryURL)
+    }
+}
+
+private enum ScopedHydrationLockEvent: Equatable {
+    case checkpointEntered
+    case profileEntered
+    case profileExited
+    case checkpointExited
+}
+
+private final class ScopedHydrationLockRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recordedEvents: [ScopedHydrationLockEvent] = []
+
+    func record(_ event: ScopedHydrationLockEvent) {
+        lock.lock()
+        recordedEvents.append(event)
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        recordedEvents.removeAll(keepingCapacity: true)
+        lock.unlock()
+    }
+
+    var events: [ScopedHydrationLockEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedEvents
+    }
+}
+
 final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendable {
     func testLocationsExposeOneStableLockForJournalAndProfileMutationCoordination() throws {
         let root = try temporaryDirectory()
@@ -565,7 +621,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testCrashAfterCandidateBackupLeavesClassifiedPartialInstall() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -577,13 +633,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         _ = try store.beginHydration(fixture.journal)
         fault.failNext(.beforeWrite("player-profile.json"))
 
-        XCTAssertThrowsError(
-            try store.installCandidate(
+        await assertThrowsErrorAsync {
+            try await installCandidate(
+                store: store,
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                confirmedTargetCheckpointObservation: targetObservation
+                checkpointHarness: targetObservation
             )
-        )
+        }
         let inspection = try XCTUnwrap(
             makeStore(root: root).inspectRecovery(expected: fixture.expectedBinding)
         )
@@ -591,10 +648,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         XCTAssertEqual(inspection.backupProfileState, .candidate)
         XCTAssertEqual(inspection.installationState, .partial)
 
-        let recovered = try makeStore(root: root).installCandidate(
+        let recovered = try await installCandidate(
+            store: makeStore(root: root),
             transactionID: fixture.transactionID,
             expected: fixture.expectedBinding,
-            confirmedTargetCheckpointObservation: targetObservation
+            checkpointHarness: targetObservation
         )
         XCTAssertFalse(recovered.wasAlreadyInstalled)
         XCTAssertEqual(recovered.inspection.installationState, .candidate)
@@ -602,7 +660,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testCrashAfterCandidatePrimaryIsRecognizedAsAlreadyInstalled() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -614,17 +672,19 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         _ = try store.beginHydration(fixture.journal)
         fault.failNext(.afterWrite("player-profile.json"))
 
-        XCTAssertThrowsError(
-            try store.installCandidate(
+        await assertThrowsErrorAsync {
+            try await installCandidate(
+                store: store,
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                confirmedTargetCheckpointObservation: targetObservation
+                checkpointHarness: targetObservation
             )
-        )
-        let recovered = try makeStore(root: root).installCandidate(
+        }
+        let recovered = try await installCandidate(
+            store: makeStore(root: root),
             transactionID: fixture.transactionID,
             expected: fixture.expectedBinding,
-            confirmedTargetCheckpointObservation: targetObservation
+            checkpointHarness: targetObservation
         )
         XCTAssertTrue(recovered.wasAlreadyInstalled)
         XCTAssertEqual(recovered.inspection.installationState, .candidate)
@@ -632,7 +692,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testCandidateInstallationIsDeterministicallyIdempotent() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -642,15 +702,17 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         try seedSourceProfile(fixture, locations: store.locations)
         _ = try store.beginHydration(fixture.journal)
 
-        let first = try store.installCandidate(
+        let first = try await installCandidate(
+            store: store,
             transactionID: fixture.transactionID,
             expected: fixture.expectedBinding,
-            confirmedTargetCheckpointObservation: targetObservation
+            checkpointHarness: targetObservation
         )
-        let second = try store.installCandidate(
+        let second = try await installCandidate(
+            store: store,
             transactionID: fixture.transactionID,
             expected: fixture.expectedBinding,
-            confirmedTargetCheckpointObservation: targetObservation
+            checkpointHarness: targetObservation
         )
 
         XCTAssertFalse(first.wasAlreadyInstalled)
@@ -667,7 +729,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testInstallCandidateFullFiveByFiveProfileStateMatrix() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -725,10 +787,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                     && backupState == .missing
 
                 if !hasUnexpectedState, !bothMissing {
-                    let result = try store.installCandidate(
+                    let result = try await installCandidate(
+                        store: store,
                         transactionID: fixture.transactionID,
                         expected: fixture.expectedBinding,
-                        confirmedTargetCheckpointObservation: targetObservation
+                        checkpointHarness: targetObservation
                     )
                     XCTAssertEqual(
                         result.inspection.installationState,
@@ -757,12 +820,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                     )
                     assertJournalCopiesEqual(store.locations)
                 } else {
-                    XCTAssertThrowsError(
-                        try store.installCandidate(
+                    await assertThrowsErrorAsync({
+                        try await installCandidate(
+                            store: store,
                             transactionID: fixture.transactionID,
                             expected: fixture.expectedBinding,
-                            confirmedTargetCheckpointObservation: targetObservation
-                        ),
+                            checkpointHarness: targetObservation
+                        )
+                    },
                         name
                     ) { error in
                         XCTAssertEqual(
@@ -788,7 +853,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -796,7 +861,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             generation: 1,
             cursorByte: 9
         )
-        let wrongObservation = try await checkpointObservation(
+        let wrongObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [wrongCheckpoint]
         )
@@ -810,13 +875,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             Data(contentsOf: store.locations.profileBackupURL),
         ]
 
-        XCTAssertThrowsError(
-            try store.installCandidate(
+        await assertThrowsErrorAsync {
+            try await installCandidate(
+                store: store,
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                confirmedTargetCheckpointObservation: wrongObservation
+                checkpointHarness: wrongObservation
             )
-        ) { error in
+        } errorHandler: { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
                 .checkpointConfirmationMismatch
@@ -830,22 +896,24 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             sourceEvidence
         )
 
-        _ = try store.installCandidate(
+        _ = try await installCandidate(
+            store: store,
             transactionID: fixture.transactionID,
             expected: fixture.expectedBinding,
-            confirmedTargetCheckpointObservation: targetObservation
+            checkpointHarness: targetObservation
         )
         let candidateEvidence = try [
             Data(contentsOf: store.locations.profilePrimaryURL),
             Data(contentsOf: store.locations.profileBackupURL),
         ]
-        XCTAssertThrowsError(
-            try store.installCandidate(
+        await assertThrowsErrorAsync {
+            try await installCandidate(
+                store: store,
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                confirmedTargetCheckpointObservation: wrongObservation
+                checkpointHarness: wrongObservation
             )
-        ) { error in
+        } errorHandler: { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
                 .checkpointConfirmationMismatch
@@ -861,11 +929,60 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         assertJournalCopiesEqual(store.locations)
     }
 
+    func testLaterAcceptedCheckpointRejectsStaleJournalBeforeProfileMutation()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let successor = try fixture.checkpoint(
+            generation: 2,
+            cursorByte: 2
+        )
+        let currentCheckpoint = try await checkpointLeaseHarness(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint, successor]
+        )
+        let root = try temporaryDirectory()
+        defer { remove(root) }
+        let store = makeStore(root: root)
+        try seedSourceProfile(fixture, locations: store.locations)
+        _ = try store.beginHydration(fixture.journal)
+        let evidenceBefore = try [
+            Data(contentsOf: store.locations.profilePrimaryURL),
+            Data(contentsOf: store.locations.profileBackupURL),
+            Data(contentsOf: store.locations.journalPrimaryURL),
+            Data(contentsOf: store.locations.journalBackupURL),
+        ]
+
+        await assertThrowsErrorAsync {
+            try await installCandidate(
+                store: store,
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                checkpointHarness: currentCheckpoint
+            )
+        } errorHandler: { error in
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .checkpointConfirmationMismatch
+            )
+        }
+
+        XCTAssertEqual(
+            try [
+                Data(contentsOf: store.locations.profilePrimaryURL),
+                Data(contentsOf: store.locations.profileBackupURL),
+                Data(contentsOf: store.locations.journalPrimaryURL),
+                Data(contentsOf: store.locations.journalBackupURL),
+            ],
+            evidenceBefore
+        )
+    }
+
     func testInstallRejectionsNeverRepairOrQuarantineJournalEvidence()
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -873,7 +990,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             generation: 1,
             cursorByte: 9
         )
-        let wrongObservation = try await checkpointObservation(
+        let wrongObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [wrongCheckpoint]
         )
@@ -906,16 +1023,19 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 try optionalData(at: $0)
             }
 
-            XCTAssertThrowsError(
-                try store.installCandidate(
+            let checkpointHarness = rejection == "receipt"
+                ? wrongObservation
+                : targetObservation
+            await assertThrowsErrorAsync({
+                try await installCandidate(
+                    store: store,
                     transactionID: rejection == "transaction"
                         ? fixture.fixedUUID(898)
                         : fixture.transactionID,
                     expected: fixture.expectedBinding,
-                    confirmedTargetCheckpointObservation: rejection == "receipt"
-                        ? wrongObservation
-                        : targetObservation
-                ),
+                    checkpointHarness: checkpointHarness
+                )
+            },
                 rejection
             ) { error in
                 let expectedError: ProfileHydrationTransactionStoreError
@@ -950,7 +1070,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -965,10 +1085,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             to: store.locations.journalBackupURL
         )
 
-        let result = try store.installCandidate(
+        let result = try await installCandidate(
+            store: store,
             transactionID: fixture.transactionID,
             expected: fixture.expectedBinding,
-            confirmedTargetCheckpointObservation: targetObservation
+            checkpointHarness: targetObservation
         )
 
         XCTAssertEqual(result.inspection.repairedJournalCopy, .backup)
@@ -1000,7 +1121,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testStaleButValidProfileBytesFailWithoutBeingOverwritten() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -1018,13 +1139,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
         try writeProfile(staleBytes, locations: store.locations)
 
-        XCTAssertThrowsError(
-            try store.installCandidate(
+        await assertThrowsErrorAsync {
+            try await installCandidate(
+                store: store,
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                confirmedTargetCheckpointObservation: targetObservation
+                checkpointHarness: targetObservation
             )
-        ) { error in
+        } errorHandler: { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
                 .unexpectedProfileBytes
@@ -1036,7 +1158,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testWrongAccountScopeEpochAndProfileFailBeforeAnyProfileWrite() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -1117,13 +1239,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         ]
 
         for (wrong, mismatch) in cases {
-            XCTAssertThrowsError(
-                try store.installCandidate(
+            await assertThrowsErrorAsync {
+                try await installCandidate(
+                    store: store,
                     transactionID: fixture.transactionID,
                     expected: wrong,
-                    confirmedTargetCheckpointObservation: targetObservation
+                    checkpointHarness: targetObservation
                 )
-            ) { error in
+            } errorHandler: { error in
                 XCTAssertEqual(
                     error as? ProfileHydrationTransactionStoreError,
                     .bindingMismatch(mismatch)
@@ -1138,7 +1261,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testMissingBothProfileCopiesAreInspectedWithoutDefaultSynthesis() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -1157,13 +1280,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         XCTAssertEqual(inspection.primaryProfileState, .missing)
         XCTAssertEqual(inspection.backupProfileState, .missing)
         XCTAssertEqual(inspection.installationState, .incomplete)
-        XCTAssertThrowsError(
-            try store.installCandidate(
+        await assertThrowsErrorAsync {
+            try await installCandidate(
+                store: store,
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                confirmedTargetCheckpointObservation: targetObservation
+                checkpointHarness: targetObservation
             )
-        ) { error in
+        } errorHandler: { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
                 .profileCopiesMissing
@@ -1175,7 +1299,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testOneExactSourceProfileCopyIsEnoughForJournalBoundRecovery() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -1188,10 +1312,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             at: store.locations.profileBackupURL
         )
 
-        let result = try store.installCandidate(
+        let result = try await installCandidate(
+            store: store,
             transactionID: fixture.transactionID,
             expected: fixture.expectedBinding,
-            confirmedTargetCheckpointObservation: targetObservation
+            checkpointHarness: targetObservation
         )
         XCTAssertEqual(result.inspection.installationState, .candidate)
         XCTAssertEqual(
@@ -1202,7 +1327,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testCrashAfterRemovingOneJournalCopyDirectlyFinishesCleanup() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -1212,20 +1337,22 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         let store = makeStore(root: root, fileSystem: fault)
         try seedSourceProfile(fixture, locations: store.locations)
         _ = try store.beginHydration(fixture.journal)
-        _ = try store.installCandidate(
+        _ = try await installCandidate(
+            store: store,
             transactionID: fixture.transactionID,
             expected: fixture.expectedBinding,
-            confirmedTargetCheckpointObservation: targetObservation
+            checkpointHarness: targetObservation
         )
         fault.failNext(.beforeRemove("profile-hydration-journal.json"))
 
-        XCTAssertThrowsError(
-            try store.removeJournalAfterCheckpointConfirmation(
+        await assertThrowsErrorAsync {
+            try await removeJournalAfterCheckpointConfirmation(
+                store: store,
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                confirmedTargetCheckpointObservation: targetObservation
+                checkpointHarness: targetObservation
             )
-        )
+        }
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.locations.journalPrimaryURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.locations.journalBackupURL.path))
 
@@ -1233,14 +1360,13 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         noRepairFault.failNext(
             .beforeWrite("profile-hydration-journal.backup.json")
         )
-        XCTAssertTrue(
-            try makeStore(root: root, fileSystem: noRepairFault)
-                .removeJournalAfterCheckpointConfirmation(
-                transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding,
-                confirmedTargetCheckpointObservation: targetObservation
-            )
+        let didFinishCleanup = try await removeJournalAfterCheckpointConfirmation(
+            store: makeStore(root: root, fileSystem: noRepairFault),
+            transactionID: fixture.transactionID,
+            expected: fixture.expectedBinding,
+            checkpointHarness: targetObservation
         )
+        XCTAssertTrue(didFinishCleanup)
         XCTAssertNil(
             try makeStore(root: root).inspectRecovery(expected: fixture.expectedBinding)
         )
@@ -1248,7 +1374,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testWrongCheckpointConfirmationCannotRemoveJournal() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -1256,7 +1382,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             generation: 1,
             cursorByte: 9
         )
-        let wrongObservation = try await checkpointObservation(
+        let wrongObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [otherCheckpoint]
         )
@@ -1265,19 +1391,21 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
         _ = try store.beginHydration(fixture.journal)
-        _ = try store.installCandidate(
+        _ = try await installCandidate(
+            store: store,
             transactionID: fixture.transactionID,
             expected: fixture.expectedBinding,
-            confirmedTargetCheckpointObservation: targetObservation
+            checkpointHarness: targetObservation
         )
 
-        XCTAssertThrowsError(
-            try store.removeJournalAfterCheckpointConfirmation(
+        await assertThrowsErrorAsync {
+            try await removeJournalAfterCheckpointConfirmation(
+                store: store,
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                confirmedTargetCheckpointObservation: wrongObservation
+                checkpointHarness: wrongObservation
             )
-        ) { error in
+        } errorHandler: { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
                 .checkpointConfirmationMismatch
@@ -1288,7 +1416,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testTargetCleanupFullFiveByFiveProfileStateMatrix() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -1341,12 +1469,15 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 }
 
                 if primaryState == .candidate, backupState == .candidate {
-                    XCTAssertTrue(
-                        try store.removeJournalAfterCheckpointConfirmation(
+                    let didRemoveJournal = try await
+                        removeJournalAfterCheckpointConfirmation(
+                            store: store,
                             transactionID: fixture.transactionID,
                             expected: fixture.expectedBinding,
-                            confirmedTargetCheckpointObservation: targetObservation
-                        ),
+                            checkpointHarness: targetObservation
+                        )
+                    XCTAssertTrue(
+                        didRemoveJournal,
                         name
                     )
                     XCTAssertEqual(
@@ -1378,12 +1509,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                         name
                     )
                 } else {
-                    XCTAssertThrowsError(
-                        try store.removeJournalAfterCheckpointConfirmation(
+                    await assertThrowsErrorAsync({
+                        try await removeJournalAfterCheckpointConfirmation(
+                            store: store,
                             transactionID: fixture.transactionID,
                             expected: fixture.expectedBinding,
-                            confirmedTargetCheckpointObservation: targetObservation
-                        ),
+                            checkpointHarness: targetObservation
+                        )
+                    },
                         name
                     ) { error in
                         XCTAssertEqual(
@@ -1407,11 +1540,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
-        let predecessorObservation = try await checkpointObservation(
+        let predecessorObservation = try await checkpointLeaseHarness(
             fixture: fixture
         )
         let target = fixture.expectedBinding
@@ -1462,21 +1595,23 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                     let expected = rejectedInput == "binding"
                         ? wrongBinding
                         : fixture.expectedBinding
-                    let cleanup: () throws -> Bool = {
+                    let cleanup: () async throws -> Bool = {
                         if usesTargetCleanup {
-                            return try store.removeJournalAfterCheckpointConfirmation(
+                            return try await self.removeJournalAfterCheckpointConfirmation(
+                                store: store,
                                 transactionID: transactionID,
                                 expected: expected,
-                                confirmedTargetCheckpointObservation:
+                                checkpointHarness:
                                     rejectedInput == "observation"
                                         ? predecessorObservation
                                         : targetObservation
                             )
                         }
-                        return try store.abortHydrationAfterPredecessorConfirmation(
+                        return try await self.abortHydrationAfterPredecessorConfirmation(
+                            store: store,
                             transactionID: transactionID,
                             expected: expected,
-                            confirmedPredecessorCheckpointObservation:
+                            checkpointHarness:
                                 rejectedInput == "observation"
                                     ? targetObservation
                                     : predecessorObservation
@@ -1484,7 +1619,9 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                     }
 
                     if evidenceMode == "quarantine" {
-                        XCTAssertThrowsError(try cleanup(), name) { error in
+                        await assertThrowsErrorAsync({
+                            try await cleanup()
+                        }, name) { error in
                             XCTAssertEqual(
                                 error as? ProfileHydrationTransactionStoreError,
                                 .unrecoverableJournalEvidence,
@@ -1497,7 +1634,9 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                             name
                         )
                     } else if evidenceMode == "invalid journal" {
-                        XCTAssertThrowsError(try cleanup(), name) { error in
+                        await assertThrowsErrorAsync({
+                            try await cleanup()
+                        }, name) { error in
                             XCTAssertEqual(
                                 error as? ProfileHydrationTransactionStoreError,
                                 .noValidJournalCopy,
@@ -1510,7 +1649,8 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                             name
                         )
                     } else {
-                        XCTAssertFalse(try cleanup(), name)
+                        let didCleanUp = try await cleanup()
+                        XCTAssertFalse(didCleanUp, name)
                         XCTAssertTrue(
                             try store.quarantinedEvidenceURLs().isEmpty,
                             name
@@ -1547,7 +1687,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let predecessorObservation = try await checkpointObservation(
+        let predecessorObservation = try await checkpointLeaseHarness(
             fixture: fixture
         )
         let root = try temporaryDirectory()
@@ -1556,13 +1696,13 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         try seedSourceProfile(fixture, locations: store.locations)
         _ = try store.beginHydration(fixture.journal)
 
-        XCTAssertTrue(
-            try store.abortHydrationAfterPredecessorConfirmation(
-                transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding,
-                confirmedPredecessorCheckpointObservation: predecessorObservation
-            )
+        let didAbort = try await abortHydrationAfterPredecessorConfirmation(
+            store: store,
+            transactionID: fixture.transactionID,
+            expected: fixture.expectedBinding,
+            checkpointHarness: predecessorObservation
         )
+        XCTAssertTrue(didAbort)
         XCTAssertEqual(
             try Data(contentsOf: store.locations.profilePrimaryURL),
             fixture.sourceEnvelope
@@ -1581,13 +1721,13 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 atPath: store.locations.journalBackupURL.path
             )
         )
-        XCTAssertFalse(
-            try store.abortHydrationAfterPredecessorConfirmation(
-                transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding,
-                confirmedPredecessorCheckpointObservation: predecessorObservation
-            )
+        let didRetryAbort = try await abortHydrationAfterPredecessorConfirmation(
+            store: store,
+            transactionID: fixture.transactionID,
+            expected: fixture.expectedBinding,
+            checkpointHarness: predecessorObservation
         )
+        XCTAssertFalse(didRetryAbort)
     }
 
     func testNonGenesisSourceOnlyAbortRequiresAndAcceptsExactPredecessor()
@@ -1608,7 +1748,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 cursorByte: 2
             )
         )
-        let predecessorObservation = try await checkpointObservation(
+        let predecessorObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [predecessorCheckpoint]
         )
@@ -1618,20 +1758,20 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         try seedSourceProfile(fixture, locations: store.locations)
         _ = try store.beginHydration(journal)
 
-        XCTAssertTrue(
-            try store.abortHydrationAfterPredecessorConfirmation(
-                transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding,
-                confirmedPredecessorCheckpointObservation: predecessorObservation
-            )
+        let didAbort = try await abortHydrationAfterPredecessorConfirmation(
+            store: store,
+            transactionID: fixture.transactionID,
+            expected: fixture.expectedBinding,
+            checkpointHarness: predecessorObservation
         )
-        XCTAssertFalse(
-            try store.abortHydrationAfterPredecessorConfirmation(
-                transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding,
-                confirmedPredecessorCheckpointObservation: predecessorObservation
-            )
+        XCTAssertTrue(didAbort)
+        let didRetryAbort = try await abortHydrationAfterPredecessorConfirmation(
+            store: store,
+            transactionID: fixture.transactionID,
+            expected: fixture.expectedBinding,
+            checkpointHarness: predecessorObservation
         )
+        XCTAssertFalse(didRetryAbort)
     }
 
     func testNonGenesisSourceOnlyAbortRejectsTargetUnrelatedAndAbsentObservation()
@@ -1657,15 +1797,15 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             generation: 1,
             cursorByte: 9
         )
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [predecessorCheckpoint, targetCheckpoint]
         )
-        let unrelatedObservation = try await checkpointObservation(
+        let unrelatedObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [unrelatedCheckpoint]
         )
-        let absentObservation = try await checkpointObservation(
+        let absentObservation = try await checkpointLeaseHarness(
             fixture: fixture
         )
         let root = try temporaryDirectory()
@@ -1680,22 +1820,21 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             store.locations.journalBackupURL,
         ]
         let evidenceBefore = try evidenceURLs.map { try Data(contentsOf: $0) }
-        let confirmations: [(
-            String,
-            CloudReplicaCheckpointObservationV1
-        )] = [
+        let confirmations: [(String, CheckpointLeaseHarness)] = [
             ("target", targetObservation),
             ("unrelated", unrelatedObservation),
             ("absent", absentObservation),
         ]
 
         for (name, confirmation) in confirmations {
-            XCTAssertThrowsError(
-                try store.abortHydrationAfterPredecessorConfirmation(
+            await assertThrowsErrorAsync({
+                try await abortHydrationAfterPredecessorConfirmation(
+                    store: store,
                     transactionID: fixture.transactionID,
                     expected: fixture.expectedBinding,
-                    confirmedPredecessorCheckpointObservation: confirmation
-                ),
+                    checkpointHarness: confirmation
+                )
+            },
                 name
             ) { error in
                 XCTAssertEqual(
@@ -1716,7 +1855,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let predecessorObservation = try await checkpointObservation(
+        let predecessorObservation = try await checkpointLeaseHarness(
             fixture: fixture
         )
         let unexpectedBytes = Data("unexpected-profile-bytes".utf8)
@@ -1850,12 +1989,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 try optionalData(at: $0)
             }
 
-            XCTAssertThrowsError(
-                try store.abortHydrationAfterPredecessorConfirmation(
+            await assertThrowsErrorAsync({
+                try await abortHydrationAfterPredecessorConfirmation(
+                    store: store,
                     transactionID: fixture.transactionID,
                     expected: fixture.expectedBinding,
-                    confirmedPredecessorCheckpointObservation: predecessorObservation
-                ),
+                    checkpointHarness: predecessorObservation
+                )
+            },
                 testCase.name
             ) { error in
                 XCTAssertEqual(
@@ -1878,7 +2019,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     func testSourceOnlyAbortFullFiveByFiveRejectionMatrix() async throws {
         let fixture = try ProfileHydrationTestFixture()
-        let predecessorObservation = try await checkpointObservation(
+        let predecessorObservation = try await checkpointLeaseHarness(
             fixture: fixture
         )
         let unexpectedBytes = Data("abort-matrix-unexpected".utf8)
@@ -1932,12 +2073,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                     try optionalData(at: $0)
                 }
 
-                XCTAssertThrowsError(
-                    try store.abortHydrationAfterPredecessorConfirmation(
+                await assertThrowsErrorAsync({
+                    try await abortHydrationAfterPredecessorConfirmation(
+                        store: store,
                         transactionID: fixture.transactionID,
                         expected: fixture.expectedBinding,
-                        confirmedPredecessorCheckpointObservation: predecessorObservation
-                    ),
+                        checkpointHarness: predecessorObservation
+                    )
+                },
                     name
                 ) { error in
                     XCTAssertEqual(
@@ -1971,7 +2114,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let predecessorObservation = try await checkpointObservation(
+        let predecessorObservation = try await checkpointLeaseHarness(
             fixture: fixture
         )
         let root = try temporaryDirectory()
@@ -1990,13 +2133,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
         fault.failNext(.beforeRemove("profile-hydration-journal.json"))
 
-        XCTAssertThrowsError(
-            try store.abortHydrationAfterPredecessorConfirmation(
+        await assertThrowsErrorAsync {
+            try await abortHydrationAfterPredecessorConfirmation(
+                store: store,
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                confirmedPredecessorCheckpointObservation: predecessorObservation
+                checkpointHarness: predecessorObservation
             )
-        )
+        }
         XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: store.locations.quarantineSlotURL(0).path
@@ -2018,20 +2162,20 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             .beforeWrite("profile-hydration-journal.backup.json")
         )
         let recovered = makeStore(root: root, fileSystem: noRepairFault)
-        XCTAssertTrue(
-            try recovered.abortHydrationAfterPredecessorConfirmation(
-                transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding,
-                confirmedPredecessorCheckpointObservation: predecessorObservation
-            )
+        let didFinishAbort = try await abortHydrationAfterPredecessorConfirmation(
+            store: recovered,
+            transactionID: fixture.transactionID,
+            expected: fixture.expectedBinding,
+            checkpointHarness: predecessorObservation
         )
-        XCTAssertFalse(
-            try recovered.abortHydrationAfterPredecessorConfirmation(
-                transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding,
-                confirmedPredecessorCheckpointObservation: predecessorObservation
-            )
+        XCTAssertTrue(didFinishAbort)
+        let didRetryAbort = try await abortHydrationAfterPredecessorConfirmation(
+            store: recovered,
+            transactionID: fixture.transactionID,
+            expected: fixture.expectedBinding,
+            checkpointHarness: predecessorObservation
         )
+        XCTAssertFalse(didRetryAbort)
         XCTAssertEqual(
             try Data(contentsOf: store.locations.profilePrimaryURL),
             fixture.sourceEnvelope
@@ -2046,11 +2190,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
-        let predecessorObservation = try await checkpointObservation(
+        let predecessorObservation = try await checkpointLeaseHarness(
             fixture: fixture
         )
         let failures: [(
@@ -2101,10 +2245,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 try seedSourceProfile(fixture, locations: store.locations)
                 _ = try store.beginHydration(fixture.journal)
                 if usesTargetCleanup {
-                    _ = try store.installCandidate(
+                    _ = try await installCandidate(
+                        store: store,
                         transactionID: fixture.transactionID,
                         expected: fixture.expectedBinding,
-                        confirmedTargetCheckpointObservation: targetObservation
+                        checkpointHarness: targetObservation
                     )
                 }
                 let fileSystem = FoundationProfileHydrationFileSystem()
@@ -2120,14 +2265,15 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                     : fixture.sourceEnvelope
                 fault.failNext(testCase.failure)
 
-                XCTAssertThrowsError(
-                    try performCleanup(
+                await assertThrowsErrorAsync({
+                    try await performCleanup(
                         store: store,
                         fixture: fixture,
                         usesTargetCleanup: usesTargetCleanup,
                         targetObservation: targetObservation,
                         predecessorObservation: predecessorObservation
-                    ),
+                    )
+                },
                     name
                 ) { error in
                     XCTAssertEqual(
@@ -2163,14 +2309,15 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                     fault.failNext(
                         .beforeRemove("profile-hydration-journal.backup.json")
                     )
-                    XCTAssertThrowsError(
-                        try performCleanup(
+                    await assertThrowsErrorAsync({
+                        try await performCleanup(
                             store: retryStore,
                             fixture: fixture,
                             usesTargetCleanup: usesTargetCleanup,
                             targetObservation: targetObservation,
                             predecessorObservation: predecessorObservation
-                        ),
+                        )
+                    },
                         "\(name) must execute the absence barrier"
                     ) { error in
                         XCTAssertEqual(
@@ -2187,30 +2334,26 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                             "\(name) returned before reconciling the final removal"
                         )
                     }
-                    XCTAssertFalse(
-                        try performCleanup(
-                            store: retryStore,
-                            fixture: fixture,
-                            usesTargetCleanup: usesTargetCleanup,
-                            targetObservation: targetObservation,
-                            predecessorObservation: predecessorObservation
-                        ),
-                        name
+                    let didRetryCleanup = try await performCleanup(
+                        store: retryStore,
+                        fixture: fixture,
+                        usesTargetCleanup: usesTargetCleanup,
+                        targetObservation: targetObservation,
+                        predecessorObservation: predecessorObservation
                     )
+                    XCTAssertFalse(didRetryCleanup, name)
                 } else {
                     fault.failNext(
                         .beforeWrite("profile-hydration-journal.backup.json")
                     )
-                    XCTAssertTrue(
-                        try performCleanup(
-                            store: retryStore,
-                            fixture: fixture,
-                            usesTargetCleanup: usesTargetCleanup,
-                            targetObservation: targetObservation,
-                            predecessorObservation: predecessorObservation
-                        ),
-                        name
+                    let didRetryCleanup = try await performCleanup(
+                        store: retryStore,
+                        fixture: fixture,
+                        usesTargetCleanup: usesTargetCleanup,
+                        targetObservation: targetObservation,
+                        predecessorObservation: predecessorObservation
                     )
+                    XCTAssertTrue(didRetryCleanup, name)
                 }
                 if let pendingComponent {
                     XCTAssertFalse(
@@ -2243,11 +2386,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
-        let predecessorObservation = try await checkpointObservation(
+        let predecessorObservation = try await checkpointLeaseHarness(
             fixture: fixture
         )
         let fileSystem = FoundationProfileHydrationFileSystem()
@@ -2267,10 +2410,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 try seedSourceProfile(fixture, locations: store.locations)
                 _ = try store.beginHydration(fixture.journal)
                 if usesTargetCleanup {
-                    _ = try store.installCandidate(
+                    _ = try await installCandidate(
+                        store: store,
                         transactionID: fixture.transactionID,
                         expected: fixture.expectedBinding,
-                        confirmedTargetCheckpointObservation: targetObservation
+                        checkpointHarness: targetObservation
                     )
                 }
                 let peerURL = peerCase.isPrimary
@@ -2288,16 +2432,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                     .beforeWrite(peerURL.lastPathComponent)
                 )
 
-                XCTAssertTrue(
-                    try performCleanup(
-                        store: store,
-                        fixture: fixture,
-                        usesTargetCleanup: usesTargetCleanup,
-                        targetObservation: targetObservation,
-                        predecessorObservation: predecessorObservation
-                    ),
-                    peerCase.name
+                let didCleanUp = try await performCleanup(
+                    store: store,
+                    fixture: fixture,
+                    usesTargetCleanup: usesTargetCleanup,
+                    targetObservation: targetObservation,
+                    predecessorObservation: predecessorObservation
                 )
+                XCTAssertTrue(didCleanUp, peerCase.name)
                 XCTAssertTrue(
                     try store.quarantinedEvidenceURLs().isEmpty,
                     peerCase.name
@@ -2323,11 +2465,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
-        let predecessorObservation = try await checkpointObservation(
+        let predecessorObservation = try await checkpointLeaseHarness(
             fixture: fixture
         )
         let fileSystem = FoundationProfileHydrationFileSystem()
@@ -2339,10 +2481,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             try seedSourceProfile(fixture, locations: store.locations)
             _ = try store.beginHydration(fixture.journal)
             if usesTargetCleanup {
-                _ = try store.installCandidate(
+                _ = try await installCandidate(
+                    store: store,
                     transactionID: fixture.transactionID,
                     expected: fixture.expectedBinding,
-                    confirmedTargetCheckpointObservation: targetObservation
+                    checkpointHarness: targetObservation
                 )
             }
             let exactBackup = try Data(
@@ -2356,15 +2499,15 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 .beforeRemove("profile-hydration-journal.backup.json")
             )
 
-            XCTAssertThrowsError(
-                try performCleanup(
+            await assertThrowsErrorAsync {
+                try await performCleanup(
                     store: store,
                     fixture: fixture,
                     usesTargetCleanup: usesTargetCleanup,
                     targetObservation: targetObservation,
                     predecessorObservation: predecessorObservation
                 )
-            )
+            }
             XCTAssertFalse(
                 FileManager.default.fileExists(
                     atPath: store.locations.journalPrimaryURL.path
@@ -2379,15 +2522,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             noRepairFault.failNext(
                 .beforeWrite("profile-hydration-journal.json")
             )
-            XCTAssertTrue(
-                try performCleanup(
-                    store: makeStore(root: root, fileSystem: noRepairFault),
-                    fixture: fixture,
-                    usesTargetCleanup: usesTargetCleanup,
-                    targetObservation: targetObservation,
-                    predecessorObservation: predecessorObservation
-                )
+            let didRetryCleanup = try await performCleanup(
+                store: makeStore(root: root, fileSystem: noRepairFault),
+                fixture: fixture,
+                usesTargetCleanup: usesTargetCleanup,
+                targetObservation: targetObservation,
+                predecessorObservation: predecessorObservation
             )
+            XCTAssertTrue(didRetryCleanup)
             remove(root)
         }
     }
@@ -2396,7 +2538,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
@@ -2404,7 +2546,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             generation: 1,
             cursorByte: 9
         )
-        let wrongObservation = try await checkpointObservation(
+        let wrongObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [wrongCheckpoint]
         )
@@ -2417,10 +2559,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             try seedSourceProfile(fixture, locations: store.locations)
             _ = try store.beginHydration(fixture.journal)
             if usesTargetCleanup {
-                _ = try store.installCandidate(
+                _ = try await installCandidate(
+                    store: store,
                     transactionID: fixture.transactionID,
                     expected: fixture.expectedBinding,
-                    confirmedTargetCheckpointObservation: targetObservation
+                    checkpointHarness: targetObservation
                 )
             }
             try fileSystem.writeAtomicallyDurably(
@@ -2437,21 +2580,25 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 try optionalData(at: $0)
             }
 
-            let rejectedCleanup: () throws -> Bool = {
+            let rejectedCleanup: () async throws -> Bool = {
                 if usesTargetCleanup {
-                    return try store.removeJournalAfterCheckpointConfirmation(
+                    return try await self.removeJournalAfterCheckpointConfirmation(
+                        store: store,
                         transactionID: fixture.transactionID,
                         expected: fixture.expectedBinding,
-                        confirmedTargetCheckpointObservation: wrongObservation
+                        checkpointHarness: wrongObservation
                     )
                 }
-                return try store.abortHydrationAfterPredecessorConfirmation(
+                return try await self.abortHydrationAfterPredecessorConfirmation(
+                    store: store,
                     transactionID: fixture.transactionID,
                     expected: fixture.expectedBinding,
-                    confirmedPredecessorCheckpointObservation: targetObservation
+                    checkpointHarness: targetObservation
                 )
             }
-            XCTAssertThrowsError(try rejectedCleanup()) { error in
+            await assertThrowsErrorAsync {
+                try await rejectedCleanup()
+            } errorHandler: { error in
                 XCTAssertEqual(
                     error as? ProfileHydrationTransactionStoreError,
                     .checkpointConfirmationMismatch
@@ -2470,11 +2617,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         async throws
     {
         let fixture = try ProfileHydrationTestFixture()
-        let targetObservation = try await checkpointObservation(
+        let targetObservation = try await checkpointLeaseHarness(
             fixture: fixture,
             checkpoints: [fixture.targetCheckpoint]
         )
-        let predecessorObservation = try await checkpointObservation(
+        let predecessorObservation = try await checkpointLeaseHarness(
             fixture: fixture
         )
         let target = fixture.expectedBinding
@@ -2497,10 +2644,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 try seedSourceProfile(fixture, locations: store.locations)
                 _ = try store.beginHydration(fixture.journal)
                 if usesTargetCleanup {
-                    _ = try store.installCandidate(
+                    _ = try await installCandidate(
+                        store: store,
                         transactionID: fixture.transactionID,
                         expected: fixture.expectedBinding,
-                        confirmedTargetCheckpointObservation: targetObservation
+                        checkpointHarness: targetObservation
                     )
                 }
                 try fileSystem.writeAtomicallyDurably(
@@ -2516,30 +2664,34 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 let evidenceBefore = try evidenceURLs.map {
                     try optionalData(at: $0)
                 }
-                let cleanup: () throws -> Bool = {
+                let cleanup: () async throws -> Bool = {
                     if usesTargetCleanup {
-                        return try store.removeJournalAfterCheckpointConfirmation(
+                        return try await self.removeJournalAfterCheckpointConfirmation(
+                            store: store,
                             transactionID: rejection == "transaction"
                                 ? fixture.fixedUUID(993)
                                 : fixture.transactionID,
                             expected: rejection == "binding"
                                 ? wrongBinding
                                 : fixture.expectedBinding,
-                            confirmedTargetCheckpointObservation: targetObservation
+                            checkpointHarness: targetObservation
                         )
                     }
-                    return try store.abortHydrationAfterPredecessorConfirmation(
+                    return try await self.abortHydrationAfterPredecessorConfirmation(
+                        store: store,
                         transactionID: rejection == "transaction"
                             ? fixture.fixedUUID(993)
                             : fixture.transactionID,
                         expected: rejection == "binding"
                             ? wrongBinding
                             : fixture.expectedBinding,
-                        confirmedPredecessorCheckpointObservation: predecessorObservation
+                        checkpointHarness: predecessorObservation
                     )
                 }
 
-                XCTAssertThrowsError(try cleanup(), name) { error in
+                await assertThrowsErrorAsync({
+                    try await cleanup()
+                }, name) { error in
                     XCTAssertEqual(
                         error as? ProfileHydrationTransactionStoreError,
                         rejection == "transaction"
@@ -2821,6 +2973,121 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
     }
 
+    func testProfileLockContentionEscapesScopedCheckpointLeaseUnchanged()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetCheckpoint = try await checkpointLeaseHarness(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let root = try temporaryDirectory()
+        defer { remove(root) }
+        let fault = FaultInjectingProfileHydrationFileSystem()
+        let store = makeStore(root: root, fileSystem: fault)
+        try seedSourceProfile(fixture, locations: store.locations)
+        _ = try store.beginHydration(fixture.journal)
+        fault.failNext(.lock)
+
+        await assertThrowsErrorAsync {
+            try await installCandidate(
+                store: store,
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                checkpointHarness: targetCheckpoint
+            )
+        } errorHandler: { error in
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .lockContended
+            )
+        }
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.profilePrimaryURL),
+            fixture.sourceEnvelope
+        )
+        assertJournalCopiesEqual(store.locations)
+    }
+
+    func testCheckpointLockEnclosesProfileLockForEveryHydrationMutation()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let expectedSuffix: [ScopedHydrationLockEvent] = [
+            .checkpointEntered,
+            .profileEntered,
+            .profileExited,
+            .checkpointExited,
+        ]
+
+        for operation in ["install", "abort", "cleanup"] {
+            let recorder = ScopedHydrationLockRecorder()
+            let checkpointHarness = try await checkpointLeaseHarness(
+                fixture: fixture,
+                checkpoints: operation == "abort"
+                    ? []
+                    : [fixture.targetCheckpoint],
+                fileSystem: LockRecordingCloudReplicaCheckpointFileSystem(
+                    recorder: recorder
+                )
+            )
+            let root = try temporaryDirectory()
+            let store = makeStore(
+                root: root,
+                fileSystem: LockRecordingProfileHydrationFileSystem(
+                    recorder: recorder
+                )
+            )
+            try seedSourceProfile(fixture, locations: store.locations)
+            _ = try store.beginHydration(fixture.journal)
+
+            if operation == "cleanup" {
+                _ = try await installCandidate(
+                    store: store,
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    checkpointHarness: checkpointHarness
+                )
+            }
+            recorder.reset()
+
+            switch operation {
+            case "install":
+                _ = try await installCandidate(
+                    store: store,
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    checkpointHarness: checkpointHarness
+                )
+            case "abort":
+                let didAbort = try await
+                    abortHydrationAfterPredecessorConfirmation(
+                        store: store,
+                        transactionID: fixture.transactionID,
+                        expected: fixture.expectedBinding,
+                        checkpointHarness: checkpointHarness
+                    )
+                XCTAssertTrue(didAbort, operation)
+            default:
+                let didCleanUp = try await
+                    removeJournalAfterCheckpointConfirmation(
+                        store: store,
+                        transactionID: fixture.transactionID,
+                        expected: fixture.expectedBinding,
+                        checkpointHarness: checkpointHarness
+                    )
+                XCTAssertTrue(didCleanUp, operation)
+            }
+
+            XCTAssertEqual(
+                Array(recorder.events.suffix(expectedSuffix.count)),
+                expectedSuffix,
+                operation
+            )
+            remove(root)
+        }
+    }
+
     func testFoundationFileSystemTwoDescriptorFlockContentionAndRelease()
         throws
     {
@@ -2864,56 +3131,157 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
     }
 
-    private func checkpointObservation(
+    private func checkpointLeaseHarness(
         fixture: ProfileHydrationTestFixture,
         accountID: CloudAccountID? = nil,
         scope: CloudReplicaScopeFingerprint? = nil,
         replicaEpoch: UUID? = nil,
-        checkpoints: [CloudReplicaCheckpointV1] = []
-    ) async throws -> CloudReplicaCheckpointObservationV1 {
+        checkpoints: [CloudReplicaCheckpointV1] = [],
+        fileSystem: any CloudReplicaCheckpointFileSystem =
+            FoundationCloudReplicaCheckpointFileSystem()
+    ) async throws -> CheckpointLeaseHarness {
         let accountID = accountID ?? fixture.cloudAccountID
         let scope = scope ?? fixture.scope
         let replicaEpoch = replicaEpoch ?? fixture.replicaEpoch
         let root = try temporaryDirectory()
-        defer { remove(root) }
+        let authority = CloudAccountGenerationAuthority()
         let store = AtomicCloudReplicaCheckpointDiskStore(
-            rootDirectoryURL: root
+            rootDirectoryURL: root,
+            fileSystem: fileSystem,
+            accountGenerationAuthority: authority
         )
-        try await store.activate(
-            replicaEpoch: replicaEpoch,
-            configurationScopeFingerprint: scope,
-            for: accountID
-        )
-        for checkpoint in checkpoints {
-            try await store.save(checkpoint, at: fixture.date)
+        do {
+            let generation = try await authority.activate(
+                accountID: accountID,
+                configurationScopeFingerprint: scope,
+                replicaEpoch: replicaEpoch
+            )
+            try await store.activate(
+                replicaEpoch: replicaEpoch,
+                configurationScopeFingerprint: scope,
+                for: accountID
+            )
+            for checkpoint in checkpoints {
+                try await store.save(checkpoint, at: fixture.date)
+            }
+            return CheckpointLeaseHarness(
+                rootDirectoryURL: root,
+                store: store,
+                authority: authority,
+                generation: generation,
+                observedAt: fixture.date
+            )
+        } catch {
+            remove(root)
+            throw error
         }
-        return try await store.observeCurrentCheckpoint(
-            for: accountID,
-            configurationScopeFingerprint: scope,
-            replicaEpoch: replicaEpoch,
-            at: fixture.date
-        )
+    }
+
+    private func installCandidate(
+        store: ProfileHydrationFileTransactionStore,
+        transactionID: UUID,
+        expected: ProfileHydrationExpectedBinding,
+        checkpointHarness: CheckpointLeaseHarness
+    ) async throws -> ProfileHydrationCandidateInstallResult {
+        try await checkpointHarness.authority.withCurrentGeneration(
+            checkpointHarness.generation
+        ) { accountLease in
+            try await checkpointHarness.store.withCurrentCheckpointLease(
+                generationLease: accountLease,
+                at: checkpointHarness.observedAt
+            ) { lease in
+                try store.installCandidate(
+                    transactionID: transactionID,
+                    expected: expected,
+                    checkpointLease: lease
+                )
+            }
+        }
+    }
+
+    private func removeJournalAfterCheckpointConfirmation(
+        store: ProfileHydrationFileTransactionStore,
+        transactionID: UUID,
+        expected: ProfileHydrationExpectedBinding,
+        checkpointHarness: CheckpointLeaseHarness
+    ) async throws -> Bool {
+        try await checkpointHarness.authority.withCurrentGeneration(
+            checkpointHarness.generation
+        ) { accountLease in
+            try await checkpointHarness.store.withCurrentCheckpointLease(
+                generationLease: accountLease,
+                at: checkpointHarness.observedAt
+            ) { lease in
+                try store.removeJournalAfterCheckpointConfirmation(
+                    transactionID: transactionID,
+                    expected: expected,
+                    checkpointLease: lease
+                )
+            }
+        }
+    }
+
+    private func abortHydrationAfterPredecessorConfirmation(
+        store: ProfileHydrationFileTransactionStore,
+        transactionID: UUID,
+        expected: ProfileHydrationExpectedBinding,
+        checkpointHarness: CheckpointLeaseHarness
+    ) async throws -> Bool {
+        try await checkpointHarness.authority.withCurrentGeneration(
+            checkpointHarness.generation
+        ) { accountLease in
+            try await checkpointHarness.store.withCurrentCheckpointLease(
+                generationLease: accountLease,
+                at: checkpointHarness.observedAt
+            ) { lease in
+                try store.abortHydrationAfterPredecessorConfirmation(
+                    transactionID: transactionID,
+                    expected: expected,
+                    checkpointLease: lease
+                )
+            }
+        }
     }
 
     private func performCleanup(
         store: ProfileHydrationFileTransactionStore,
         fixture: ProfileHydrationTestFixture,
         usesTargetCleanup: Bool,
-        targetObservation: CloudReplicaCheckpointObservationV1,
-        predecessorObservation: CloudReplicaCheckpointObservationV1
-    ) throws -> Bool {
+        targetObservation: CheckpointLeaseHarness,
+        predecessorObservation: CheckpointLeaseHarness
+    ) async throws -> Bool {
         if usesTargetCleanup {
-            return try store.removeJournalAfterCheckpointConfirmation(
+            return try await removeJournalAfterCheckpointConfirmation(
+                store: store,
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                confirmedTargetCheckpointObservation: targetObservation
+                checkpointHarness: targetObservation
             )
         }
-        return try store.abortHydrationAfterPredecessorConfirmation(
+        return try await abortHydrationAfterPredecessorConfirmation(
+            store: store,
             transactionID: fixture.transactionID,
             expected: fixture.expectedBinding,
-            confirmedPredecessorCheckpointObservation: predecessorObservation
+            checkpointHarness: predecessorObservation
         )
+    }
+
+    private func assertThrowsErrorAsync<Result>(
+        _ operation: () async throws -> Result,
+        _ message: String = "",
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        errorHandler: (Error) -> Void = { _ in }
+    ) async {
+        do {
+            _ = try await operation()
+            let failure = message.isEmpty
+                ? "Expected error to be thrown"
+                : "Expected error to be thrown: \(message)"
+            XCTFail(failure, file: file, line: line)
+        } catch {
+            errorHandler(error)
+        }
     }
 
     private func seedSourceProfile(
@@ -3055,6 +3423,98 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
     private func remove(_ url: URL) {
         try? FileManager.default.removeItem(at: url)
+    }
+}
+
+private struct LockRecordingCloudReplicaCheckpointFileSystem:
+    CloudReplicaCheckpointFileSystem
+{
+    private let base = FoundationCloudReplicaCheckpointFileSystem()
+    let recorder: ScopedHydrationLockRecorder
+
+    func createDirectory(at url: URL) throws {
+        try base.createDirectory(at: url)
+    }
+
+    func itemStatus(at url: URL) throws -> CloudReplicaCheckpointFileItemStatus {
+        try base.itemStatus(at: url)
+    }
+
+    func reconcileDurableItem(
+        at url: URL
+    ) throws -> CloudReplicaCheckpointFileItemStatus {
+        try base.reconcileDurableItem(at: url)
+    }
+
+    func fileSize(at url: URL) throws -> Int {
+        try base.fileSize(at: url)
+    }
+
+    func read(from url: URL) throws -> Data {
+        try base.read(from: url)
+    }
+
+    func writeAtomically(_ data: Data, to url: URL) throws {
+        try base.writeAtomically(data, to: url)
+    }
+
+    func moveItem(at sourceURL: URL, to destinationURL: URL) throws {
+        try base.moveItem(at: sourceURL, to: destinationURL)
+    }
+
+    func removeItem(at url: URL) throws {
+        try base.removeItem(at: url)
+    }
+
+    func withExclusiveLock(at url: URL, perform: () throws -> Void) throws {
+        try base.withExclusiveLock(at: url) {
+            recorder.record(.checkpointEntered)
+            defer { recorder.record(.checkpointExited) }
+            try perform()
+        }
+    }
+}
+
+private struct LockRecordingProfileHydrationFileSystem:
+    ProfileHydrationFileSystem
+{
+    private let base = FoundationProfileHydrationFileSystem()
+    let recorder: ScopedHydrationLockRecorder
+
+    func createDirectory(at url: URL) throws {
+        try base.createDirectory(at: url)
+    }
+
+    func itemStatus(at url: URL) throws -> ProfileHydrationFileItemStatus {
+        try base.itemStatus(at: url)
+    }
+
+    func fileSize(at url: URL) throws -> Int {
+        try base.fileSize(at: url)
+    }
+
+    func read(from url: URL) throws -> Data {
+        try base.read(from: url)
+    }
+
+    func writeAtomicallyDurably(_ data: Data, to url: URL) throws {
+        try base.writeAtomicallyDurably(data, to: url)
+    }
+
+    func moveItemDurably(at sourceURL: URL, to destinationURL: URL) throws {
+        try base.moveItemDurably(at: sourceURL, to: destinationURL)
+    }
+
+    func removeItemDurably(at url: URL) throws {
+        try base.removeItemDurably(at: url)
+    }
+
+    func withExclusiveLock(at url: URL, perform: () throws -> Void) throws {
+        try base.withExclusiveLock(at: url) {
+            recorder.record(.profileEntered)
+            defer { recorder.record(.profileExited) }
+            try perform()
+        }
     }
 }
 

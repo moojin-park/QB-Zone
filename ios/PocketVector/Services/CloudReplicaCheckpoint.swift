@@ -1014,6 +1014,29 @@ struct CloudReplicaCheckpointObservationV1: Equatable, Sendable {
     }
 }
 
+/// Scoped mutation authority minted only while the checkpoint store holds the
+/// exact account's durable authority lock. The lease cannot be copied, sent,
+/// persisted, or returned from its synchronous callback. Raw checkpoint
+/// observations remain useful for diagnostics and relationship inspection but
+/// are not profile-file mutation authority.
+fileprivate final class CloudReplicaCheckpointLeaseNonSendableMarker {}
+
+struct CloudReplicaCheckpointFreshnessLeaseV1: ~Copyable {
+    fileprivate let observation: CloudReplicaCheckpointObservationV1
+    private let nonSendableMarker: CloudReplicaCheckpointLeaseNonSendableMarker
+
+    fileprivate init(observation: CloudReplicaCheckpointObservationV1) {
+        self.observation = observation
+        nonSendableMarker = CloudReplicaCheckpointLeaseNonSendableMarker()
+    }
+
+    func relationship(
+        to journal: ProfileHydrationJournalV1
+    ) -> ProfileHydrationCheckpointRelationshipV1 {
+        journal.checkpointRelationship(to: observation)
+    }
+}
+
 enum CloudReplicaCheckpointStoreError: Error, Equatable, Sendable {
     case invalidCheckpoint
     case encodingFailure
@@ -1027,6 +1050,8 @@ enum CloudReplicaCheckpointStoreError: Error, Equatable, Sendable {
     case replicaEpochMismatch
     case configurationScopeMismatch
     case checkpointPublicationPending
+    case accountGenerationAuthorityNotBound
+    case accountGenerationAuthorityMismatch
     case acceptedHistoryMismatch
     case acceptedCheckpointStillAvailable
     case staleGeneration
@@ -1057,6 +1082,14 @@ protocol CloudReplicaCheckpointStoring: Sendable {
         replicaEpoch: UUID,
         at date: Date
     ) async throws -> CloudReplicaCheckpointObservationV1
+
+    func withCurrentCheckpointLease<Output: Sendable>(
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date,
+        perform: @Sendable (
+            borrowing CloudReplicaCheckpointFreshnessLeaseV1
+        ) throws -> Output
+    ) async throws -> Output
 
     func save(_ checkpoint: CloudReplicaCheckpointV1, at date: Date) async throws
     func saveReconstructedFullSnapshot(
@@ -2098,17 +2131,20 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
     nonisolated let rootDirectoryURL: URL
     private let fileSystem: any CloudReplicaCheckpointFileSystem
     private let limits: CloudReplicaResourceLimits
+    private let accountGenerationAuthority: CloudAccountGenerationAuthority?
     private var activeEpochByAccount: [CloudAccountID: UUID] = [:]
 
     init(
         rootDirectoryURL: URL,
         fileSystem: any CloudReplicaCheckpointFileSystem =
             FoundationCloudReplicaCheckpointFileSystem(),
-        limits: CloudReplicaResourceLimits = .production
+        limits: CloudReplicaResourceLimits = .production,
+        accountGenerationAuthority: CloudAccountGenerationAuthority? = nil
     ) {
         self.rootDirectoryURL = rootDirectoryURL
         self.fileSystem = fileSystem
         self.limits = limits
+        self.accountGenerationAuthority = accountGenerationAuthority
     }
 
     func activate(
@@ -2461,23 +2497,13 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
     ) throws -> CloudReplicaCheckpointObservationV1 {
         let locations = locations(for: accountID)
         try withAccountLock(locations: locations) {
-            guard let authority = try readAuthority(
-                for: accountID,
-                locations: locations
-            ) else {
-                throw CloudReplicaCheckpointStoreError.replicaEpochNotActive
-            }
-            if authority.containsRevoked(replicaEpoch) {
-                throw CloudReplicaCheckpointStoreError.replicaEpochRevoked
-            }
-            guard authority.state == .active,
-                  authority.replicaEpoch == replicaEpoch else {
-                throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
-            }
-            guard authority.configurationScopeFingerprint
-                == configurationScopeFingerprint else {
-                throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
-            }
+            _ = try validatedActiveAuthorityLocked(
+                accountID: accountID,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                replicaEpoch: replicaEpoch,
+                locations: locations,
+                requireRememberedEpoch: false
+            )
         }
         let loaded = try load(
             for: accountID,
@@ -2485,61 +2511,85 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             at: date
         )
         return try withAccountLock(locations: locations) {
-            guard let authority = try readAuthority(
-                for: accountID,
-                locations: locations
-            ) else {
-                throw CloudReplicaCheckpointStoreError.replicaEpochNotActive
-            }
-            if authority.containsRevoked(replicaEpoch) {
-                throw CloudReplicaCheckpointStoreError.replicaEpochRevoked
-            }
-            guard authority.state == .active,
-                  authority.replicaEpoch == replicaEpoch else {
-                throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
-            }
-            guard authority.configurationScopeFingerprint
-                == configurationScopeFingerprint else {
-                throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
-            }
-            guard authority.pendingCheckpointHighWatermark == nil else {
-                throw CloudReplicaCheckpointStoreError.checkpointPublicationPending
-            }
-
-            let state: CloudReplicaCheckpointObservationStateV1
-            if let checkpoint = loaded.checkpoint {
-                guard checkpoint.accountID == accountID,
-                      checkpoint.configurationScopeFingerprint
-                        == configurationScopeFingerprint,
-                      checkpoint.replicaEpoch == replicaEpoch else {
-                    throw CloudReplicaCheckpointStoreError.invalidCheckpoint
-                }
-                let exactWatermark = WatermarkV1(checkpoint: checkpoint)
-                guard authority.checkpointHighWatermark == exactWatermark else {
-                    throw CloudReplicaCheckpointStoreError.invalidCheckpoint
-                }
-                state = .checkpoint(
-                    ProfileHydrationCheckpointIdentityV1(checkpoint: checkpoint)
-                )
-            } else {
-                guard authority.checkpointHighWatermark == nil,
-                      try fileSystem.reconcileDurableItem(at: locations.watermark)
-                        == .missing,
-                      try fileSystem.reconcileDurableItem(at: locations.primary)
-                        == .missing,
-                      try fileSystem.reconcileDurableItem(at: locations.backup)
-                        == .missing else {
-                    throw CloudReplicaCheckpointStoreError.invalidCheckpoint
-                }
-                state = .absent
-            }
-            return CloudReplicaCheckpointObservationV1(
+            try makeCurrentObservationLocked(
                 accountID: accountID,
                 configurationScopeFingerprint: configurationScopeFingerprint,
                 replicaEpoch: replicaEpoch,
-                state: state
+                loaded: loaded,
+                locations: locations,
+                requireRememberedEpoch: false
             )
         }
+    }
+
+    /// Executes a bounded synchronous profile-file mutation while the exact
+    /// accepted checkpoint and durable account authority remain locked. The
+    /// borrowed outer lease proves the caller still holds the matching
+    /// process-local account-generation commit gate from the exact authority
+    /// configured at initialization. Network work, actor calls, Tasks, and
+    /// semaphore bridges are forbidden inside `perform`.
+    func withCurrentCheckpointLease<Output: Sendable>(
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date,
+        perform: @Sendable (
+            borrowing CloudReplicaCheckpointFreshnessLeaseV1
+        ) throws -> Output
+    ) throws -> Output {
+        guard let accountGenerationAuthority else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityNotBound
+        }
+        guard generationLease.wasIssued(by: accountGenerationAuthority) else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityMismatch
+        }
+
+        let accountID = generationLease.accountID
+        let configurationScopeFingerprint =
+            generationLease.configurationScopeFingerprint
+        let replicaEpoch = generationLease.replicaEpoch
+        let locations = locations(for: accountID)
+        try withAccountLock(locations: locations) {
+            _ = try validatedActiveAuthorityLocked(
+                accountID: accountID,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                replicaEpoch: replicaEpoch,
+                locations: locations,
+                requireRememberedEpoch: true
+            )
+        }
+
+        // Loading may repair an interrupted checkpoint publication, so it must
+        // run without an already-held outer account lock.
+        let loaded = try load(
+            for: accountID,
+            configurationScopeFingerprint: configurationScopeFingerprint,
+            at: date
+        )
+
+        var callbackOutcome: Result<Output, any Error>?
+        try withAccountLock(locations: locations) {
+            let observation = try makeCurrentObservationLocked(
+                accountID: accountID,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                replicaEpoch: replicaEpoch,
+                loaded: loaded,
+                locations: locations,
+                requireRememberedEpoch: true
+            )
+            let lease = CloudReplicaCheckpointFreshnessLeaseV1(
+                observation: observation
+            )
+            do {
+                callbackOutcome = .success(try perform(lease))
+            } catch {
+                callbackOutcome = .failure(error)
+            }
+        }
+        guard let callbackOutcome else {
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+        return try callbackOutcome.get()
     }
 
     func save(_ checkpoint: CloudReplicaCheckpointV1, at date: Date) throws {
@@ -3021,6 +3071,95 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         } catch {
             throw CloudReplicaCheckpointStoreError.ioFailure
         }
+    }
+
+    private func validatedActiveAuthorityLocked(
+        accountID: CloudAccountID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint,
+        replicaEpoch: UUID,
+        locations: Locations,
+        requireRememberedEpoch: Bool
+    ) throws -> ReplicaEpochAuthorityV2 {
+        if requireRememberedEpoch {
+            guard let rememberedEpoch = activeEpochByAccount[accountID] else {
+                throw CloudReplicaCheckpointStoreError.replicaEpochNotActive
+            }
+            guard rememberedEpoch == replicaEpoch else {
+                throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
+            }
+        }
+        guard let authority = try readAuthority(
+            for: accountID,
+            locations: locations
+        ) else {
+            throw CloudReplicaCheckpointStoreError.replicaEpochNotActive
+        }
+        if authority.containsRevoked(replicaEpoch) {
+            throw CloudReplicaCheckpointStoreError.replicaEpochRevoked
+        }
+        guard authority.state == .active,
+              authority.replicaEpoch == replicaEpoch else {
+            throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
+        }
+        guard authority.configurationScopeFingerprint
+            == configurationScopeFingerprint else {
+            throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
+        }
+        return authority
+    }
+
+    private func makeCurrentObservationLocked(
+        accountID: CloudAccountID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint,
+        replicaEpoch: UUID,
+        loaded: CloudReplicaCheckpointLoadResult,
+        locations: Locations,
+        requireRememberedEpoch: Bool
+    ) throws -> CloudReplicaCheckpointObservationV1 {
+        let authority = try validatedActiveAuthorityLocked(
+            accountID: accountID,
+            configurationScopeFingerprint: configurationScopeFingerprint,
+            replicaEpoch: replicaEpoch,
+            locations: locations,
+            requireRememberedEpoch: requireRememberedEpoch
+        )
+        guard authority.pendingCheckpointHighWatermark == nil else {
+            throw CloudReplicaCheckpointStoreError.checkpointPublicationPending
+        }
+
+        let state: CloudReplicaCheckpointObservationStateV1
+        if let checkpoint = loaded.checkpoint {
+            guard checkpoint.accountID == accountID,
+                  checkpoint.configurationScopeFingerprint
+                    == configurationScopeFingerprint,
+                  checkpoint.replicaEpoch == replicaEpoch else {
+                throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+            }
+            let exactWatermark = WatermarkV1(checkpoint: checkpoint)
+            guard authority.checkpointHighWatermark == exactWatermark else {
+                throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+            }
+            state = .checkpoint(
+                ProfileHydrationCheckpointIdentityV1(checkpoint: checkpoint)
+            )
+        } else {
+            guard authority.checkpointHighWatermark == nil,
+                  try fileSystem.reconcileDurableItem(at: locations.watermark)
+                    == .missing,
+                  try fileSystem.reconcileDurableItem(at: locations.primary)
+                    == .missing,
+                  try fileSystem.reconcileDurableItem(at: locations.backup)
+                    == .missing else {
+                throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+            }
+            state = .absent
+        }
+        return CloudReplicaCheckpointObservationV1(
+            accountID: accountID,
+            configurationScopeFingerprint: configurationScopeFingerprint,
+            replicaEpoch: replicaEpoch,
+            state: state
+        )
     }
 
     private func readAuthority(

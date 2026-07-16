@@ -484,7 +484,7 @@ struct ProfileHydrationFileTransactionStore: Sendable {
     func installCandidate(
         transactionID: UUID,
         expected: ProfileHydrationExpectedBinding,
-        confirmedTargetCheckpointObservation: CloudReplicaCheckpointObservationV1
+        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1
     ) throws -> ProfileHydrationCandidateInstallResult {
         try withLock {
             guard let preflight = try resolveJournal(
@@ -496,9 +496,7 @@ struct ProfileHydrationFileTransactionStore: Sendable {
             guard preflight.journal.transactionID == transactionID else {
                 throw ProfileHydrationTransactionStoreError.transactionMismatch
             }
-            guard preflight.journal.checkpointRelationship(
-                to: confirmedTargetCheckpointObservation
-            ) == .target else {
+            guard checkpointLease.relationship(to: preflight.journal) == .target else {
                 throw ProfileHydrationTransactionStoreError
                     .checkpointConfirmationMismatch
             }
@@ -518,9 +516,7 @@ struct ProfileHydrationFileTransactionStore: Sendable {
             guard resolved.journal.transactionID == transactionID else {
                 throw ProfileHydrationTransactionStoreError.transactionMismatch
             }
-            guard resolved.journal.checkpointRelationship(
-                to: confirmedTargetCheckpointObservation
-            ) == .target else {
+            guard checkpointLease.relationship(to: resolved.journal) == .target else {
                 throw ProfileHydrationTransactionStoreError
                     .checkpointConfirmationMismatch
             }
@@ -574,19 +570,19 @@ struct ProfileHydrationFileTransactionStore: Sendable {
         }
     }
 
-    /// Abandons a prepared hydration only while the independently confirmed
-    /// checkpoint is still the journal's exact predecessor and both profile
-    /// copies remain the exact source bytes. No missing or divergent profile
-    /// copy is repaired: ambiguous state retains the complete barrier.
+    /// Abandons a prepared hydration only while a scoped checkpoint lease
+    /// confirms that the journal's exact predecessor is still current and both
+    /// profile copies remain the exact source bytes. No missing or divergent
+    /// profile copy is repaired: ambiguous state retains the complete barrier.
     /// When no journal or quarantine evidence exists, `false` is an
     /// unauthenticated, non-destructive durable-absence reconciliation; there
-    /// is no journal against which transaction, binding, or observation inputs
+    /// is no journal against which transaction, binding, or lease inputs
     /// could be authenticated.
     @discardableResult
     func abortHydrationAfterPredecessorConfirmation(
         transactionID: UUID,
         expected: ProfileHydrationExpectedBinding,
-        confirmedPredecessorCheckpointObservation: CloudReplicaCheckpointObservationV1
+        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1
     ) throws -> Bool {
         try withLock {
             guard let resolved = try resolveJournal(
@@ -599,9 +595,8 @@ struct ProfileHydrationFileTransactionStore: Sendable {
             guard resolved.journal.transactionID == transactionID else {
                 throw ProfileHydrationTransactionStoreError.transactionMismatch
             }
-            guard resolved.journal.checkpointRelationship(
-                to: confirmedPredecessorCheckpointObservation
-            ) == .predecessor else {
+            guard checkpointLease.relationship(to: resolved.journal)
+                == .predecessor else {
                 throw ProfileHydrationTransactionStoreError
                     .checkpointConfirmationMismatch
             }
@@ -626,18 +621,18 @@ struct ProfileHydrationFileTransactionStore: Sendable {
         }
     }
 
-    /// The caller supplies a sealed observation independently minted by the
-    /// checkpoint store. No cleanup occurs unless it confirms the exact target
-    /// bound into the journal.
+    /// The caller supplies a scoped lease minted while the checkpoint store
+    /// holds the account authority lock. No cleanup occurs unless it confirms
+    /// the exact target bound into the journal.
     /// When no journal or quarantine evidence exists, `false` is an
     /// unauthenticated, non-destructive durable-absence reconciliation; there
-    /// is no journal against which transaction, binding, or observation inputs
+    /// is no journal against which transaction, binding, or lease inputs
     /// could be authenticated.
     @discardableResult
     func removeJournalAfterCheckpointConfirmation(
         transactionID: UUID,
         expected: ProfileHydrationExpectedBinding,
-        confirmedTargetCheckpointObservation: CloudReplicaCheckpointObservationV1
+        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1
     ) throws -> Bool {
         try withLock {
             guard let resolved = try resolveJournal(
@@ -650,9 +645,8 @@ struct ProfileHydrationFileTransactionStore: Sendable {
             guard resolved.journal.transactionID == transactionID else {
                 throw ProfileHydrationTransactionStoreError.transactionMismatch
             }
-            guard resolved.journal.checkpointRelationship(
-                to: confirmedTargetCheckpointObservation
-            ) == .target else {
+            guard checkpointLease.relationship(to: resolved.journal)
+                == .target else {
                 throw ProfileHydrationTransactionStoreError.checkpointConfirmationMismatch
             }
             let inspection = try inspect(journal: resolved.journal, repair: resolved.repair)

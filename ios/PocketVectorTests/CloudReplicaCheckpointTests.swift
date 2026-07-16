@@ -1495,6 +1495,672 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testCurrentCheckpointLeaseBlocksSuccessorPublicationUntilBodyReturns()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let accountAuthority = CloudAccountGenerationAuthority()
+        let leaseStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem,
+            accountGenerationAuthority: accountAuthority
+        )
+        let writer = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let first = try checkpoint(modifications: [])
+        try await leaseStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await writer.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await leaseStore.save(first, at: Date(timeIntervalSince1970: 3_147))
+        var accumulator = try self.accumulator(from: first)
+        let second = try XCTUnwrap(
+            accumulator.apply(
+                page(
+                    accountID: accountA,
+                    requestedAfter: "seed-cursor",
+                    cursor: "lease-successor",
+                    moreComing: false
+                )
+            )
+        )
+        let generation = try await accountAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        let bodyGate = CheckpointLeaseBodyGate()
+        let bodyRecorder = CheckpointLeaseInvocationRecorder()
+        let leaseTask = Task {
+            try await accountAuthority.withCurrentGeneration(generation) {
+                accountLease in
+                try await leaseStore.withCurrentCheckpointLease(
+                    generationLease: accountLease,
+                    at: Date(timeIntervalSince1970: 3_148)
+                ) { _ in
+                    bodyRecorder.recordInvocation()
+                    bodyGate.enterAndWait()
+                    return 17
+                }
+            }
+        }
+        let bodyEntered = bodyGate.waitUntilEntered()
+        guard bodyEntered else {
+            bodyGate.release()
+            _ = try? await leaseTask.value
+            XCTFail("The checkpoint lease body never started")
+            return
+        }
+
+        let saveCompletion = CheckpointLeaseCompletionProbe()
+        let attemptsBeforeSave = fileSystem.exclusiveLockAttemptCount()
+        let saveTask = Task {
+            let outcome: CheckpointLeaseAsyncOutcome
+            do {
+                try await writer.save(
+                    second,
+                    at: Date(timeIntervalSince1970: 3_149)
+                )
+                outcome = .success
+            } catch let error as CloudReplicaCheckpointStoreError {
+                outcome = .storeError(error)
+            } catch {
+                outcome = .unexpectedError(String(describing: error))
+            }
+            saveCompletion.recordCompletion()
+            return outcome
+        }
+        let saveReachedLock = await waitUntil {
+            fileSystem.exclusiveLockAttemptCount() > attemptsBeforeSave
+        }
+        XCTAssertTrue(saveReachedLock)
+        let completedWhileLeased = saveCompletion.isComplete
+        XCTAssertFalse(completedWhileLeased)
+
+        bodyGate.release()
+        let leasedValue = try await leaseTask.value
+        XCTAssertEqual(leasedValue, 17)
+        let saveOutcome = await saveTask.value
+        XCTAssertEqual(saveOutcome, .success)
+        let invocationCount = bodyRecorder.invocationCount
+        XCTAssertEqual(invocationCount, 1)
+    }
+
+    func testCurrentCheckpointLeaseRejectsRevocationBeforeBodyAdmission()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let accountAuthority = CloudAccountGenerationAuthority()
+        let leaseStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: accountAuthority
+        )
+        let revoker = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        let first = try checkpoint(modifications: [])
+        try await leaseStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await leaseStore.save(first, at: Date(timeIntervalSince1970: 3_150))
+        let generation = try await accountAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        try await revoker.remove(for: accountA, revoking: epoch)
+        let bodyRecorder = CheckpointLeaseInvocationRecorder()
+
+        do {
+            _ = try await accountAuthority.withCurrentGeneration(generation) {
+                accountLease in
+                try await leaseStore.withCurrentCheckpointLease(
+                    generationLease: accountLease,
+                    at: Date(timeIntervalSince1970: 3_151)
+                ) { _ in
+                    bodyRecorder.recordInvocation()
+                    return true
+                }
+            }
+            XCTFail("Revocation must reject the lease before its body starts")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochRevoked
+            )
+        }
+        let invocationCount = bodyRecorder.invocationCount
+        XCTAssertEqual(invocationCount, 0)
+    }
+
+    func testRevocationRacingHeldCheckpointLeaseLinearizesAfterBody()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let accountAuthority = CloudAccountGenerationAuthority()
+        let leaseStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem,
+            accountGenerationAuthority: accountAuthority
+        )
+        let revoker = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let first = try checkpoint(modifications: [])
+        try await leaseStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await leaseStore.save(first, at: Date(timeIntervalSince1970: 3_152))
+        let generation = try await accountAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        let bodyGate = CheckpointLeaseBodyGate()
+        let bodyRecorder = CheckpointLeaseInvocationRecorder()
+        let leaseTask = Task {
+            try await accountAuthority.withCurrentGeneration(generation) {
+                accountLease in
+                try await leaseStore.withCurrentCheckpointLease(
+                    generationLease: accountLease,
+                    at: Date(timeIntervalSince1970: 3_153)
+                ) { _ in
+                    bodyRecorder.recordInvocation()
+                    bodyGate.enterAndWait()
+                    return 19
+                }
+            }
+        }
+        let bodyEntered = bodyGate.waitUntilEntered()
+        guard bodyEntered else {
+            bodyGate.release()
+            _ = try? await leaseTask.value
+            XCTFail("The checkpoint lease body never started")
+            return
+        }
+
+        let revocationCompletion = CheckpointLeaseCompletionProbe()
+        let attemptsBeforeRevocation = fileSystem.exclusiveLockAttemptCount()
+        let revocationTask = Task {
+            let outcome: CheckpointLeaseAsyncOutcome
+            do {
+                try await revoker.remove(for: self.accountA, revoking: self.epoch)
+                outcome = .success
+            } catch let error as CloudReplicaCheckpointStoreError {
+                outcome = .storeError(error)
+            } catch {
+                outcome = .unexpectedError(String(describing: error))
+            }
+            revocationCompletion.recordCompletion()
+            return outcome
+        }
+        let revocationReachedLock = await waitUntil {
+            fileSystem.exclusiveLockAttemptCount() > attemptsBeforeRevocation
+        }
+        XCTAssertTrue(revocationReachedLock)
+        let revokedWhileLeased = revocationCompletion.isComplete
+        XCTAssertFalse(revokedWhileLeased)
+
+        bodyGate.release()
+        let leasedValue = try await leaseTask.value
+        XCTAssertEqual(leasedValue, 19)
+        let revocationOutcome = await revocationTask.value
+        XCTAssertEqual(revocationOutcome, .success)
+
+        do {
+            _ = try await accountAuthority.withCurrentGeneration(generation) {
+                accountLease in
+                try await leaseStore.withCurrentCheckpointLease(
+                    generationLease: accountLease,
+                    at: Date(timeIntervalSince1970: 3_154)
+                ) { _ in
+                    bodyRecorder.recordInvocation()
+                    return true
+                }
+            }
+            XCTFail("A lease after durable revocation must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochRevoked
+            )
+        }
+        let invocationCount = bodyRecorder.invocationCount
+        XCTAssertEqual(invocationCount, 1)
+    }
+
+    func testCurrentCheckpointLeaseRejectsPublicationPendingAtFinalRevalidation()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let accountAuthority = CloudAccountGenerationAuthority()
+        let writer = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let leaseStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem,
+            accountGenerationAuthority: accountAuthority
+        )
+        let first = try checkpoint(modifications: [])
+        try await writer.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await leaseStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await writer.save(first, at: Date(timeIntervalSince1970: 3_155))
+        var accumulator = try self.accumulator(from: first)
+        let second = try XCTUnwrap(
+            accumulator.apply(
+                page(
+                    accountID: accountA,
+                    requestedAfter: "seed-cursor",
+                    cursor: "lease-pending-race",
+                    moreComing: false
+                )
+            )
+        )
+        let generation = try await accountAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        let bodyRecorder = CheckpointLeaseInvocationRecorder()
+        let blockedAttempt = fileSystem.exclusiveLockAttemptCount() + 3
+        fileSystem.blockExclusiveLockAttempt(blockedAttempt)
+        defer { fileSystem.releaseExclusiveLockAttempt() }
+        let leaseTask = Task { () -> CloudReplicaCheckpointStoreError? in
+            do {
+                _ = try await accountAuthority.withCurrentGeneration(generation) {
+                    accountLease in
+                    try await leaseStore.withCurrentCheckpointLease(
+                        generationLease: accountLease,
+                        at: Date(timeIntervalSince1970: 3_156)
+                    ) { _ in
+                        bodyRecorder.recordInvocation()
+                        return true
+                    }
+                }
+                return nil
+            } catch {
+                return error as? CloudReplicaCheckpointStoreError
+            }
+        }
+        let reachedFinalRevalidation = await waitUntil {
+            fileSystem.isExclusiveLockAttemptBlocked()
+        }
+        guard reachedFinalRevalidation else {
+            fileSystem.releaseExclusiveLockAttempt()
+            _ = await leaseTask.value
+            XCTFail("The lease never reached its final locked revalidation")
+            return
+        }
+
+        fileSystem.failNextWrite(named: "checkpoint.watermark.json")
+        do {
+            try await writer.save(second, at: Date(timeIntervalSince1970: 3_157))
+            XCTFail("The injected successor publication must remain pending")
+        } catch {
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+        fileSystem.releaseExclusiveLockAttempt()
+        let leaseError = await leaseTask.value
+        XCTAssertEqual(leaseError, .checkpointPublicationPending)
+        let invocationCount = bodyRecorder.invocationCount
+        XCTAssertEqual(invocationCount, 0)
+    }
+
+    func testCurrentCheckpointLeasePreservesBodyErrorAndReleasesLock()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let accountAuthority = CloudAccountGenerationAuthority()
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: accountAuthority
+        )
+        let first = try checkpoint(modifications: [])
+        try await store.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await store.save(first, at: Date(timeIntervalSince1970: 3_158))
+        let generation = try await accountAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+
+        do {
+            let _: Int = try await accountAuthority
+                .withCurrentGeneration(generation) { accountLease in
+                    try await store.withCurrentCheckpointLease(
+                        generationLease: accountLease,
+                        at: Date(timeIntervalSince1970: 3_159)
+                    ) { _ in
+                        throw CheckpointLeaseSentinelError.expected
+                    }
+                }
+            XCTFail("The lease body sentinel must escape unchanged")
+        } catch {
+            XCTAssertEqual(error as? CheckpointLeaseSentinelError, .expected)
+            XCTAssertNil(error as? CloudReplicaCheckpointStoreError)
+        }
+
+        let accepted = try await accountAuthority.withCurrentGeneration(generation) {
+            accountLease in
+            try await store.withCurrentCheckpointLease(
+                generationLease: accountLease,
+                at: Date(timeIntervalSince1970: 3_160)
+            ) { _ in
+                23
+            }
+        }
+        XCTAssertEqual(accepted, 23)
+    }
+
+    func testCurrentCheckpointLeaseRejectsWrongAndUnrememberedGenerationBindings()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let canonicalAuthority = CloudAccountGenerationAuthority()
+        let rememberedStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: canonicalAuthority
+        )
+        let first = try checkpoint(modifications: [])
+        try await rememberedStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await rememberedStore.save(
+            first,
+            at: Date(timeIntervalSince1970: 3_161)
+        )
+        let bodyRecorder = CheckpointLeaseInvocationRecorder()
+
+        let canonicalGeneration = try await canonicalAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        let foreignAuthority = CloudAccountGenerationAuthority()
+        let foreignGeneration = try await foreignAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        do {
+            _ = try await foreignAuthority.withCurrentGeneration(
+                foreignGeneration
+            ) { accountLease in
+                try await rememberedStore.withCurrentCheckpointLease(
+                    generationLease: accountLease,
+                    at: Date(timeIntervalSince1970: 3_162)
+                ) { _ in
+                    bodyRecorder.recordInvocation()
+                    return true
+                }
+            }
+            XCTFail("A permit from another authority must be rejected")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .accountGenerationAuthorityMismatch
+            )
+        }
+
+        let unboundStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        )
+        do {
+            _ = try await canonicalAuthority.withCurrentGeneration(
+                canonicalGeneration
+            ) { accountLease in
+                try await unboundStore.withCurrentCheckpointLease(
+                    generationLease: accountLease,
+                    at: Date(timeIntervalSince1970: 3_163)
+                ) { _ in
+                    bodyRecorder.recordInvocation()
+                    return true
+                }
+            }
+            XCTFail("A store without a canonical authority must reject permits")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .accountGenerationAuthorityNotBound
+            )
+        }
+
+        let wrongAccountAuthority = CloudAccountGenerationAuthority()
+        let wrongAccountStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: wrongAccountAuthority
+        )
+        try await wrongAccountStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let wrongAccountGeneration = try await wrongAccountAuthority.activate(
+            accountID: accountB,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        do {
+            _ = try await wrongAccountAuthority.withCurrentGeneration(
+                wrongAccountGeneration
+            ) { accountLease in
+                try await wrongAccountStore.withCurrentCheckpointLease(
+                    generationLease: accountLease,
+                    at: Date(timeIntervalSince1970: 3_164)
+                ) { _ in
+                    bodyRecorder.recordInvocation()
+                    return true
+                }
+            }
+            XCTFail("A generation for another account must be rejected")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochNotActive
+            )
+        }
+
+        let wrongScopeAuthority = CloudAccountGenerationAuthority()
+        let wrongScopeStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: wrongScopeAuthority
+        )
+        try await wrongScopeStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let wrongScopeGeneration = try await wrongScopeAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: alternateScopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        do {
+            _ = try await wrongScopeAuthority.withCurrentGeneration(
+                wrongScopeGeneration
+            ) { accountLease in
+                try await wrongScopeStore.withCurrentCheckpointLease(
+                    generationLease: accountLease,
+                    at: Date(timeIntervalSince1970: 3_165)
+                ) { _ in
+                    bodyRecorder.recordInvocation()
+                    return true
+                }
+            }
+            XCTFail("A generation for another scope must be rejected")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .configurationScopeMismatch
+            )
+        }
+
+        let wrongEpochAuthority = CloudAccountGenerationAuthority()
+        let wrongEpochStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: wrongEpochAuthority
+        )
+        try await wrongEpochStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let wrongEpochGeneration = try await wrongEpochAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: UUID(uuidString: "30000000-0000-4000-8000-000000000003")!
+        )
+        do {
+            _ = try await wrongEpochAuthority.withCurrentGeneration(
+                wrongEpochGeneration
+            ) { accountLease in
+                try await wrongEpochStore.withCurrentCheckpointLease(
+                    generationLease: accountLease,
+                    at: Date(timeIntervalSince1970: 3_166)
+                ) { _ in
+                    bodyRecorder.recordInvocation()
+                    return true
+                }
+            }
+            XCTFail("A generation for another replica epoch must be rejected")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochMismatch
+            )
+        }
+
+        let correctAuthority = CloudAccountGenerationAuthority()
+        let correctGeneration = try await correctAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        let unrememberedStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: correctAuthority
+        )
+        do {
+            _ = try await correctAuthority.withCurrentGeneration(correctGeneration) {
+                accountLease in
+                try await unrememberedStore.withCurrentCheckpointLease(
+                    generationLease: accountLease,
+                    at: Date(timeIntervalSince1970: 3_167)
+                ) { _ in
+                    bodyRecorder.recordInvocation()
+                    return true
+                }
+            }
+            XCTFail("A store that never remembered the generation must reject it")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochNotActive
+            )
+        }
+        let invocationCount = bodyRecorder.invocationCount
+        XCTAssertEqual(invocationCount, 0)
+    }
+
+    func testCurrentCheckpointLeaseRejectsStaleSameBindingGenerationBeforeAdmission()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = CloudAccountGenerationAuthority()
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: authority
+        )
+        try await store.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let first = try checkpoint(modifications: [])
+        try await store.save(first, at: Date(timeIntervalSince1970: 3_168))
+        let stale = try await authority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        try await authority.invalidate(stale)
+        let current = try await authority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        let bodyRecorder = CheckpointLeaseInvocationRecorder()
+
+        do {
+            _ = try await authority.withCurrentGeneration(stale) {
+                accountLease in
+                try await store.withCurrentCheckpointLease(
+                    generationLease: accountLease,
+                    at: Date(timeIntervalSince1970: 3_169)
+                ) { _ in
+                    bodyRecorder.recordInvocation()
+                    return true
+                }
+            }
+            XCTFail("A stale same-binding generation must not mint a permit")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudAccountGenerationAuthorityError,
+                .generationNotCurrent
+            )
+        }
+
+        let accepted = try await authority.withCurrentGeneration(current) {
+            accountLease in
+            try await store.withCurrentCheckpointLease(
+                generationLease: accountLease,
+                at: Date(timeIntervalSince1970: 3_170)
+            ) { _ in
+                bodyRecorder.recordInvocation()
+                return 29
+            }
+        }
+        XCTAssertEqual(accepted, 29)
+        XCTAssertEqual(bodyRecorder.invocationCount, 1)
+    }
+
     func testResumeRejectsRevokedRememberedEpochWithoutMutation() async throws {
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -4071,6 +4737,83 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             ".pocket-vector-checkpoint-remove-\(digest).tmp",
             isDirectory: true
         )
+    }
+}
+
+private enum CheckpointLeaseSentinelError: Error, Equatable, Sendable {
+    case expected
+}
+
+private enum CheckpointLeaseAsyncOutcome: Equatable, Sendable {
+    case success
+    case storeError(CloudReplicaCheckpointStoreError)
+    case unexpectedError(String)
+}
+
+private final class CheckpointLeaseBodyGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var hasEntered = false
+    private var isReleased = false
+
+    func enterAndWait() {
+        condition.lock()
+        hasEntered = true
+        condition.broadcast()
+        while !isReleased {
+            condition.wait()
+        }
+        condition.unlock()
+    }
+
+    func waitUntilEntered(timeout: TimeInterval = 5) -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while !hasEntered {
+            guard condition.wait(until: deadline) else { return hasEntered }
+        }
+        return true
+    }
+
+    func release() {
+        condition.lock()
+        isReleased = true
+        condition.broadcast()
+        condition.unlock()
+    }
+}
+
+private final class CheckpointLeaseInvocationRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var invocationCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func recordInvocation() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
+}
+
+private final class CheckpointLeaseCompletionProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+
+    var isComplete: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return completed
+    }
+
+    func recordCompletion() {
+        lock.lock()
+        completed = true
+        lock.unlock()
     }
 }
 
