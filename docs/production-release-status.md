@@ -12,8 +12,9 @@ tracks execution, evidence, dependencies, and owner decisions.
 The native foundation, launch rules, durable local repository, production app
 shell, first-run tutorial, fail-closed release information, eight-team shipping
 visuals, retained production runtime, and Apple-only diagnostics composition
-are complete. The latest cloud-replica and durable-economy foundation is
-versioned at `701c069` (`Build cloud replica and durable reward foundations`).
+are complete. The latest cloud-replica checkpoint and transactional-hydration
+recovery boundary is versioned at `766d5a0` (`Harden cloud checkpoint hydration
+recovery`).
 The iOS-only repository cleanup is versioned at `24cd2c7` (`Remove legacy
 browser project from iOS repository`).
 
@@ -25,15 +26,18 @@ uniform and football presentation, randomized opponent presentation, visible
 texture readiness, and an explicit release-blocking state when support or
 privacy destinations are missing.
 
-The current foundation passed 372 simulator tests and produced an unsigned
-generic-iOS Release archive. It includes account- and epoch-bound CloudKit
-record-change transport, crash-recoverable two-phase replica checkpoints, and
-complete-history verification for version 3 durable economy heads, ledger
-markers, and reward markers. Cloud capabilities still fail closed in the
-Release composition: complete profile-schema integration, transactional
-hydration, and account/runtime composition remain unfinished. Game Center,
-StoreKit 2, and rewarded advertisements also remain unavailable. The archive is
-therefore an engineering gate, not a release-readiness claim.
+The current foundation passed 577 simulator tests and produced an unsigned
+generic-iOS Release archive from an exact detached worktree. It includes
+account-, scope-, and epoch-bound CloudKit record-change transport,
+crash-recoverable two-phase replica checkpoints, sealed checkpoint
+observations, cache-loss reconstruction rules, durable transactional-hydration
+journals, and complete-history verification for version 3 durable economy
+heads, ledger markers, and reward markers. Cloud capabilities still fail closed
+in the Release composition: exact repository adoption, observation freshness,
+typed `requireExisting` reconstruction enforcement, local-to-cloud bootstrap,
+and account/runtime coordination remain unfinished. Game Center, StoreKit 2,
+and rewarded advertisements also remain unavailable. The archive is therefore
+an engineering gate, not a release-readiness claim.
 
 ## Delivery board
 
@@ -43,7 +47,7 @@ therefore an engineering gate, not a release-readiness claim.
 | Reproducible native foundation                  | Complete            | Clean-checkout tests and unsigned Release archive pass at `49d8a6b`                                                                   |
 | Domain, catalog, economy, and achievement rules | Complete            | Eight teams, inventory, matchup, clash, reward, coin-pack, and eight-achievement rules pass exhaustive tests                          |
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
-| Account-independent service seams               | In progress         | Cloud transport/checkpoint and durable economy foundations pass; profile hydration, account composition, Game Center, StoreKit, and live ads remain |
+| Account-independent service seams               | In progress         | Cloud transport/checkpoint, hydration recovery, and durable economy foundations pass; live repository adoption, account composition, Game Center, StoreKit, and ads remain |
 | Production app shell and menus                  | Complete            | Home, teams, locker, store, leaderboard, achievements, settings, tutorial, privacy/support, gameplay, and results all ship             |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
@@ -94,6 +98,9 @@ or runtime ownership boundaries.
 | 2026-07-15 | `701c069` | Cloud-checkpoint focused simulator suite          | 41 passed, 0 failed, 0 skipped; independent post-audit found no P0/P1/P2 defects |
 | 2026-07-15 | `701c069` | Cloud/economy foundation full simulator suite     | 372 passed, 0 failed, 0 skipped                                |
 | 2026-07-15 | `701c069` | Unsigned generic-iOS Release archive              | Passed at `/tmp/PocketVectorCloudFoundation-20260715-3.xcarchive`; archive and app metadata valid; 22 MB app |
+| 2026-07-16 | `766d5a0` | Checkpoint/hydration focused detached suite       | 140 passed, 0 failed, 0 skipped; exact frozen patch independently audited with no P0/P1/P2 defects |
+| 2026-07-16 | `766d5a0` | Checkpoint/hydration detached full suite          | 577 passed, 0 failed, 0 skipped                                |
+| 2026-07-16 | `766d5a0` | Detached unsigned generic-iOS Release archive     | Passed at `/tmp/PocketVectorCommitGateArchive-20260716-01.xcarchive` |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -104,27 +111,31 @@ Release behavior. A wave is not complete merely because its files exist.
 1. **Complete:** retain the production runtime, typed fail-closed service
    configuration, lifecycle cancellation, UIKit presentation handoff,
    authoritative state subscriptions, and Apple-only diagnostics.
-2. Integrate the canonical profile replica schema and bind transport, profile,
-   and economy contracts into one versioned scope fingerprint. Explicitly
-   revoke the pre-release epoch and reset development version 1/version 2 cloud
-   state rather than attempting an ambiguous in-place migration.
-3. Add account-derived profile bootstrap and crash-recoverable transactional
-   hydration. Journal recovery must run before local profile loading; the
-   repository mutation gate begins only after fetch, full-history validation,
-   deterministic merge, and exact source-state comparison.
-4. Compose account switching and durable economy authority. A switch must
-   invalidate the active session, isolate account-derived identities, and
-   publish no candidate profile until both profile and checkpoint are durable.
+2. **Complete:** bind the canonical profile, transport, and economy contracts
+   into one versioned scope fingerprint; add epoch revocation, two-phase
+   checkpoint recovery, sealed observations, cache-loss reconstruction, and
+   durable hydration journals without enabling the live capability.
+3. Add exact repository adoption, an account-generation freshness lease, and a
+   sealed reconstruction/fetch context that makes `requireExisting` enforceable
+   by type. Prove that a previously valid observation cannot install after a
+   later accepted checkpoint, account switch, or authority revocation.
+4. Add the explicit local-to-cloud bootstrap/migration workflow and dormant
+   coordinator in the required order: resume epoch, recover checkpoint, recover
+   hydration before repository load, fetch and validate, merge, journal,
+   checkpoint, install, clean up, adopt, recheck generation, then publish.
+   Account switching must isolate account-derived identities and publish no
+   candidate until profile and checkpoint durability are proven.
 5. Add persistent Game Center delivery and presentation, then StoreKit product
    state, localized prices, unfinished-transaction recovery, and purchases.
 6. Add persisted rewarded-ad orchestration and a verified-receipt client. No
    client ad callback may grant coins without a unique server-verified provider
    transaction.
 
-The critical path is atomic CloudKit restoration, not basic CloudKit CRUD. The
-current transport can discover and validate complete record history, and the
-economy verifier can prove that history, but a fresh device cannot yet install
-the merged profile and checkpoint as one crash-recoverable transaction.
+The critical path is safely connecting atomic CloudKit restoration to the live
+repository, not basic CloudKit CRUD. Checkpoint and hydration recovery now prove
+their durable transitions in isolation, but a fresh device cannot yet bootstrap
+the account-derived profile, adopt the exact installed candidate under a fresh
+single-writer lease, and publish it through the retained runtime.
 
 ## Owner decisions and external dependencies
 
@@ -160,7 +171,7 @@ workflow reaches that gate.
 | Crash-free sessions                  | 99.5%+ | Instrumentation decision open                   |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local and version 3 cloud-history foundations pass; live transactional hydration/composition pending |
-| Clean-checkout archive               |   Pass | Unsigned Release archive passes at `701c069`; final detached RC proof remains |
+| Clean-checkout archive               |   Pass | Detached unsigned Release archive passes at `766d5a0`; final signed RC proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner

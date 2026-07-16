@@ -226,15 +226,18 @@ the cloud account-derived profile and player identities, scope and epoch,
 predecessor checkpoint, exact target checkpoint, transaction ID, and merge
 policy version.
 
-Installation writes and verifies the candidate profile backup and primary,
-commits and reloads the exact target checkpoint, removes both journal copies,
-and only then publishes the new in-memory profile. Startup recovery runs before
-ordinary `loadOrCreate`, accepts only the exact predecessor or target
-checkpoint, and deterministically completes or cleans up the interrupted
-transaction. A wrong account, profile binding, schema scope, or authority epoch
-can never install. The local repository uses deterministic account-derived
-identities for cloud profiles; switching iCloud accounts opens a separate
-profile and never silently merges identities.
+Installation first durably writes both immutable journal copies, then commits
+and reloads the exact target checkpoint to obtain a sealed checkpoint
+observation. Only that observation can authorize writing and verifying the
+candidate profile backup and primary. Both journal copies are removed after the
+candidate is durable, and the repository may adopt the exact installed
+candidate only after cleanup succeeds. Startup recovery runs before ordinary
+`loadOrCreate`, accepts only the exact predecessor or target checkpoint, and
+deterministically completes or cleans up the interrupted transaction. A wrong
+account, profile binding, schema scope, authority epoch, checkpoint state, or
+candidate digest can never install. The local repository uses deterministic
+account-derived identities for cloud profiles; switching iCloud accounts opens
+a separate profile and never silently merges identities.
 
 Material hydration advances local player and economy revisions exactly once
 without copying a remote root revision. A no-op merge does not advance either
