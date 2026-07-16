@@ -2,7 +2,7 @@
 
 Status: implementation contract for version 1
 
-Last updated: 2026-07-15
+Last updated: 2026-07-16
 
 This document translates the approved release charter into ownership and data
 boundaries. It is deliberately narrower than a feature specification: it says
@@ -227,17 +227,24 @@ predecessor checkpoint, exact target checkpoint, transaction ID, and merge
 policy version.
 
 Installation first durably writes both immutable journal copies, then commits
-and reloads the exact target checkpoint to obtain a sealed checkpoint
-observation. Only that observation can authorize writing and verifying the
-candidate profile backup and primary. Both journal copies are removed after the
-candidate is durable, and the repository may adopt the exact installed
-candidate only after cleanup succeeds. Startup recovery runs before ordinary
-`loadOrCreate`, accepts only the exact predecessor or target checkpoint, and
-deterministically completes or cleans up the interrupted transaction. A wrong
-account, profile binding, schema scope, authority epoch, checkpoint state, or
-candidate digest can never install. The local repository uses deterministic
-account-derived identities for cloud profiles; switching iCloud accounts opens
-a separate profile and never silently merges identities.
+and reloads the exact target checkpoint. While the outer account-generation
+commit permit remains borrowed, the caller enters an authority-bound
+checkpoint-freshness lease. The checkpoint store verifies the remembered
+account, scope, and epoch, performs any checkpoint recovery outside the outer
+file lock, then reacquires that lock and revalidates the exact accepted
+checkpoint or exact durable absence with no pending publication. It holds the
+checkpoint account lock while the synchronous profile-file mutation runs. Only
+the borrowed lease may authorize candidate installation, predecessor-confirmed
+abort, or target-confirmed journal cleanup; raw checkpoint observations remain
+diagnostic and recovery values, not mutation authority. Both journal copies are
+removed after the candidate is durable, and the repository may adopt the exact
+installed candidate only after cleanup succeeds. Startup recovery runs before
+ordinary `loadOrCreate`, accepts only the exact predecessor or target
+checkpoint, and deterministically completes or cleans up the interrupted
+transaction. A wrong account, profile binding, schema scope, authority epoch,
+checkpoint state, or candidate digest can never install. The local repository
+uses deterministic account-derived identities for cloud profiles; switching
+iCloud accounts opens a separate profile and never silently merges identities.
 
 The exact repository-adoption seam is implemented but dormant. It validates the
 journal before file-system I/O, requires no journal or quarantine barrier,
@@ -253,14 +260,32 @@ invalidation/reactivation, or authority-instance transition mints a distinct
 generation. Compare-and-swap invalidation cannot retire a newer generation. A
 cancellation-safe FIFO gate keeps account transitions outside bounded local
 commit, adoption, and publication work while preserving the exact outcome of
-an admitted commit. Network work is forbidden inside that gate.
+an admitted commit. Admission delivers a borrowed, noncopyable
+`AccountGenerationCommitLease` bound to the exact authority instance and active
+generation. It is Sendable only so the borrow can cross an actor boundary
+during bounded commit work; callers cannot construct, copy, retain, or return
+it. The admitted body preserves its exact success or error outcome, including
+cancellation that arrives after admission. Network work is forbidden inside
+that gate.
 
-Live composition still requires a checkpoint freshness lease. The outer
-account-generation gate must span checkpoint commit, leased profile-file
-mutation, repository adoption, generation revalidation, and publication. The
-checkpoint lease itself must remain synchronous and span only install, abort,
-or journal cleanup while the checkpoint account lock is held; a previously
-minted checkpoint observation is not mutation authority.
+The scoped checkpoint-freshness seam is implemented but dormant. A
+mutation-capable checkpoint store must be composed with the canonical
+account-generation authority; an unbound store or a permit from a foreign
+authority fails closed before checkpoint path derivation or I/O. The store
+requires its exact epoch to be remembered locally, revalidates durable authority
+before and after recovery, and invokes the synchronous callback while holding
+the checkpoint account lock. The inner lease is noncopyable and non-Sendable
+and exposes only its relationship to a hydration journal. Checkpoint publication
+or revocation racing an admitted callback linearizes after that callback, while
+a later accepted checkpoint rejects a stale journal before profile mutation.
+The enforced lock order is checkpoint account lock followed by profile-file
+lock.
+
+Live composition still requires sealed typed `requireExisting` reconstruction,
+local-to-cloud bootstrap, and the account-scoped runtime coordinator. The outer
+generation permit must span checkpoint commit, leased profile mutation,
+repository adoption, and publication; all network fetches occur before
+admission and are revalidated inside it.
 
 Material hydration advances local player and economy revisions exactly once
 without copying a remote root revision. A no-op merge does not advance either
