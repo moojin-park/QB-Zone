@@ -198,5 +198,6 @@ retry states without blocking gameplay.
 - Production IDs, entitlements, SDK credentials, ad units, CloudKit schema, and
   App Store Connect records remain injected configuration, never test literals
   embedded in a Release build.
-- Browser cleanup occurs only after the final native resource audit proves that
-  no shipping code or asset depends on the browser tree.
+- The repository is iOS-only. Native asset sources and regeneration tools stay
+  outside the shipping resource bundle, whose manifest must exactly match its
+  physical files.

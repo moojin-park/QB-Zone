@@ -207,10 +207,10 @@ acquisition baseline are approved.
 
 ## Repository-cleanup gate
 
-The recoverable native baseline and curated iOS resource bundle were completed
-and committed on 2026-07-15. The browser tree remains temporarily as migration
-provenance and must not be removed until the production app layers have been
-integrated and the final native asset inventory has been re-audited.
+The recoverable native baseline, curated iOS resource bundle, retained native
+source art and tools, and iOS-only repository cleanup were completed on
+2026-07-15. The historical browser product remains available in its separate
+project and is not a build or asset dependency of this repository.
 
 Required order:
 
@@ -219,9 +219,9 @@ Required order:
    resource location.
 3. **Complete:** retarget Xcode and add resource-presence tests.
 4. **Complete:** prove build, tests, and archive from a clean checkout.
-5. Remove browser source, browser tests/configuration, Bounty Board integration,
-   browser-only dependencies, build output, and unused web assets.
-6. Rewrite the root documentation for the iOS-only project.
+5. **Complete:** remove browser source, browser tests/configuration, Bounty Board
+   integration, browser-only dependencies, build output, and unused web assets.
+6. **Complete:** rewrite the root documentation for the iOS-only project.
 
 ## Delivery sequence
 

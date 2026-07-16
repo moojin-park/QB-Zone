@@ -1,17 +1,15 @@
-node_modules/
-dist/
-coverage/
-playwright-report/
-test-results/
 .DS_Store
 *.log
 .env
 .env.local
-screenshots/
-output/
-*.tsbuildinfo
 
 # Xcode local state
 DerivedData/
 xcuserdata/
 *.xcuserstate
+*.xcresult
+*.xcarchive
+
+# Native asset tool caches
+__pycache__/
+*.pyc

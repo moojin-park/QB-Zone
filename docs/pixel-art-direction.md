@@ -1,117 +1,67 @@
-# Pocket Vector pixel-art direction
+# Shipping visual direction
 
-## Approved direction
+Pocket Vector uses a high-contrast arcade-broadcast presentation: dark navy
+surfaces, cyan structure, warm score accents, crisp pixel characters, and
+team-specific field identity. Visual changes must remain readable on compact
+landscape iPhones without obscuring the playfield.
 
-The complete presentation is grounded, high-detail pixel-art football. It is
-not a fantasy setting. Gameplay, timing, scoring, input, collision geometry,
-camera projection, team names, and Pocket Vector branding remain unchanged.
+## Team identity
 
-The visual target is a 512x384 authored pixel density presented crisply at 2x
-inside the canonical 1024x768 game camera. The palette combines red/cream Nova
-City offense, blue/cream Iron Bay defense, deep navy and gunmetal cabinets,
-cream typography, cobalt accents, and limited gold/red callouts.
+The launch catalog contains eight original fictional teams. Every team has a
+primary and alternate uniform palette, an emblem, a wordmark, and field/HUD
+colors. The selected offense controls the field, end zone, scorebug, aim guide,
+and player uniform. The randomized opponent controls defender uniforms.
 
-## Built-in image-generation prompt set
+Team identity is data-driven in:
 
-All source generations used the built-in image-generation tool. The
-approved concept was used as the visual and composition reference for the
-production assets.
+- `ios/PocketVector/Catalog/LaunchTeamCatalog.swift`
+- `ios/PocketVector/Presentation/LaunchVisualIdentity.swift`
 
-### Approved concept
+Do not add real league marks, team names, logos, uniform designs, or other
+third-party trade dress.
 
-Reimagine the supplied Pocket Vector gameplay frame as grounded, high-detail
-pixel-art American football. Preserve the exact behind-the-quarterback 4:3
-composition, field geometry, gameplay readability, Pocket Vector identity,
-Nova City Comets red/cream offense, and Iron Bay Phantoms blue/cream defense.
-Use richly shaded 16-bit-era pixel craft at a 512x384 logical density, crisp
-edges, expressive football poses, a detailed night stadium, and a matching
-pixel HUD. No fantasy imagery, magic, swords, monsters, licensed teams, or real
-players.
+## Character sprites
 
-### Stadium and field plate
+The four approved source strips live in
+`ios/AssetSources/PixelCharacters/`. Generated runtime frames use a 384 x 512
+transparent canvas with a bottom-center anchor at `[192, 496]`.
 
-Perform a precise object removal from the approved concept. Remove every
-player, quarterback, player shadow, football, aim marker, HUD, score, timer,
-meter, icon, and debug control. Reconstruct a clean night stadium and football
-field while preserving the exact 4:3 camera, yard-line perspective, goalposts,
-Nova City end-zone treatment, NC Comets midfield identity, detailed crowd, and
-approved high-detail pixel style. No fantasy elements and no UI text.
+- Quarterback: four rear-view poses.
+- Receiver: four run phases, catch, four carry phases, and touchdown; left
+  frames mirror right frames.
+- Defender: four run phases and interception; square/front-facing art is reused
+  without mirroring the jersey number.
+- Official: two wave phases; left frames mirror right frames.
 
-### Quarterback strip
+Nearest-neighbor processing and lossless WebP encoding are required. Runtime
+uniform recoloring must preserve transparent padding, skin details, authored
+shading, helmet structure, and pose silhouettes.
 
-Create one exact horizontal four-frame sprite strip on a flat #00ff00
-background. Show the same rear-view Nova City quarterback, red/cream uniform,
-helmet, and jersey 7 in every equally spaced slot on one consistent baseline:
-idle, aim/wind-up, throw release, recovery. Preserve identity, proportions,
-palette, lighting, crisp pixel clusters, and readable silhouette. One complete
-athlete per slot; no labels, overlap, shadows, effects, extra objects, or
-fantasy elements.
+## Field and ball
 
-### Receiver strip
+The checked-in wide stadium plate supplies turf, stands, and authored texture.
+SpriteKit draws current sidelines, team end zones, and wordmarks so team identity
+is never baked into the base plate. The selected football cosmetic is a runtime
+vector/material choice and remains attached to the player across teams.
 
-Create one exact horizontal ten-frame sprite strip on a flat #00ff00
-background. Show the same right-facing Nova City receiver, red/cream uniform
-and jersey 11, on one consistent baseline: four distinct running phases, catch,
-four post-catch carry phases, and touchdown celebration. Every carry phase must
-show the football tucked securely against the receiver's body while the legs
-repeat the established four-phase sprint cycle. Preserve identity, scale,
-palette, lighting, crisp pixel clusters, separated limbs, and football-readable
-motion. One athlete per slot; no duplicate or floating footballs, labels,
-overlap, shadows, effects, extra objects, or fantasy elements.
+## HUD and safe areas
 
-### Defender strip
+- Keep gameplay, matchup, score, clock, Adrenaline, pause, mute, and exit
+  controls inside the current device safe area.
+- Protect the central throwing lane and receiver crossing space.
+- Compact layouts must not overlap the matchup/exit chrome with the Adrenaline
+  meter or scorebug.
+- Preserve visible texture-readiness and failure states; never hide a stalled
+  preload behind an unresponsive scene.
+- Reduced motion must remove ornamental motion without changing simulation.
 
-Create one exact horizontal five-frame sprite strip on a flat #00ff00
-background. Show the same square/front-facing Iron Bay defender, blue/cream
-uniform and jersey 24, on one consistent baseline: four lateral ready/shuffle
-phases and an interception pose. Preserve identity, scale, palette, lighting,
-crisp pixel clusters, wide stance, and open hands. One athlete per slot; no
-labels, overlap, shadows, effects, extra objects, or fantasy elements.
+## Source and runtime boundaries
 
-### Sideline official strip
+Editable sources live under `ios/AssetSources/`; regeneration tools live under
+`ios/Tools/`; exact shipping files live under
+`ios/PocketVector/Resources/GameAssets/`. Only the runtime directory is bundled.
+See `asset-generation.md` for commands and inventory checks.
 
-Create one isolated full-body American football sideline official using the
-approved receiver and defender sprites as exact pixel-density, proportion,
-lighting, and rendering references. Use a black cap, black-and-white striped
-shirt, black pants, and black shoes; pose both arms lowered naturally in the
-resting frame. Keep a crisp bottom-center silhouette on a perfectly
-flat #00ff00 background with no shadow, floor, text, number, logo, watermark,
-football, or extra character. For the second frame, raise both arms together in
-a balanced touchdown signal while preserving identity, stance, clothing, scale,
-canvas placement, and every other visual detail. Chroma-key both frames, align
-them to one baseline, and join them into the two-slot source strip.
-
-## Local post-processing
-
-The source strips were chroma-keyed locally, then processed by
-`scripts/process-pixel-character-strips.py`. The processor validates slot
-counts and transparency, normalizes all frames in a role to one scale, uses
-nearest-neighbor sampling, preserves a 16-pixel safe area, anchors at
-`[192, 496]`, and writes 38 lossless 384x512 WebPs plus metadata. Receiver and
-official art is mirrored for direction; square defender art is reused unchanged
-in both directions to preserve jersey number 24. A detached ball in the QB release
-source is removed during normalization because the simulated runtime projectile
-is rendered independently.
-
-The live background was normalized to 1024x768 through nearest-neighbor 2x
-presentation. The logo was pixel-normalized from the existing Pocket Vector
-mark, retaining the name and branding. The football is an original stepped SVG
-source rasterized to a small transparent PNG. It shows the foreshortened rear
-end toward the quarterback, with off-axis highlights that visibly rotate around
-the longitudinal spiral.
-
-## Source and runtime paths
-
-```text
-art/pixel-source/concept-approved.png
-art/pixel-source/qb-strip.png
-art/pixel-source/receiver-strip.png
-art/pixel-source/defender-strip.png
-art/pixel-source/official-strip.png
-public/assets/pixel/stadium-field.png
-public/assets/pixel/logo.png
-public/assets/pixel/football-source.svg
-public/assets/pixel/football.png
-public/assets/characters/*.webp
-public/assets/characters/sprites.json
-```
+Every visual change requires focused geometry or presentation tests plus
+representative landscape screenshots on compact and regular iPhone sizes and
+an iPad before release approval.

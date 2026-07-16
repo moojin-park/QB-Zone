@@ -1,38 +1,34 @@
 {
   "schemaVersion": 1,
   "bundleRoot": "GameAssets",
-  "sourceRoot": "public/assets",
+  "sourceRoot": "ios/AssetSources",
   "provenance": {
     "characters": {
-      "generator": "scripts/process-pixel-character-strips.py",
+      "generator": "ios/Tools/process-pixel-character-strips.py",
       "inputs": [
-        "art/pixel-source/qb-strip.png",
-        "art/pixel-source/receiver-strip.png",
-        "art/pixel-source/defender-strip.png",
-        "art/pixel-source/official-strip.png"
+        "ios/AssetSources/PixelCharacters/qb-strip.png",
+        "ios/AssetSources/PixelCharacters/receiver-strip.png",
+        "ios/AssetSources/PixelCharacters/defender-strip.png",
+        "ios/AssetSources/PixelCharacters/official-strip.png"
       ]
     },
-    "fieldAndEndZone": {
-      "generator": "scripts/generate-native-field-plate.mjs",
-      "input": "public/assets/pixel/stadium-field-wide-endzone-v2.png"
+    "field": {
+      "generator": "ios/Tools/generate-native-field-plate.mjs",
+      "input": "ios/AssetSources/Field/stadium-field-wide-endzone-v2.png"
     },
     "controls": {
-      "generator": "scripts/generate-native-control-icons.mjs",
+      "generator": "ios/Tools/generate-native-control-icons.mjs",
       "inputs": [
-        "public/assets/art/icon-mute.svg",
-        "public/assets/art/icon-unmute.svg",
-        "public/assets/art/icon-pause.svg"
+        "ios/AssetSources/Controls/icon-mute.svg",
+        "ios/AssetSources/Controls/icon-unmute.svg",
+        "ios/AssetSources/Controls/icon-pause.svg"
       ]
     },
     "audio": {
-      "generator": "scripts/generate-assets.mjs"
-    },
-    "logo": {
-      "approvedSource": "art/pixel-source/concept-approved.png"
+      "policy": "Checked-in shipping masters; no generator is required"
     }
   },
   "assets": [
-    { "path": "art/endzone-nova-city-native.png", "kind": "image" },
     { "path": "art/icon-mute-native.png", "kind": "image" },
     { "path": "art/icon-pause-native.png", "kind": "image" },
     { "path": "art/icon-unmute-native.png", "kind": "image" },
@@ -90,7 +86,6 @@
     { "path": "characters/receiver-run-4-right.webp", "kind": "image" },
     { "path": "characters/receiver-touchdown-left.webp", "kind": "image" },
     { "path": "characters/receiver-touchdown-right.webp", "kind": "image" },
-    { "path": "pixel/logo.png", "kind": "image" },
     { "path": "pixel/stadium-field-wide-endzone-v3.png", "kind": "image" }
   ]
 }

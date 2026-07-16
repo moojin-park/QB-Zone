@@ -700,10 +700,20 @@ final class GameCoreTests: XCTestCase {
       from: Data(contentsOf: manifestURL)
     )
     let paths = manifest.assets.map(\.path)
+    let assetRootURL = manifestURL.deletingLastPathComponent()
+    let physicalPaths = try bundledAssetPaths(
+      under: assetRootURL,
+      excluding: GameAssetResources.manifestRelativePath
+    )
 
     XCTAssertEqual(manifest.schemaVersion, 1)
-    XCTAssertEqual(paths.count, 60)
+    XCTAssertEqual(paths.count, 58)
     XCTAssertEqual(Set(paths).count, paths.count, "Manifest contains duplicate paths")
+    XCTAssertEqual(
+      Set(paths),
+      physicalPaths,
+      "Manifest paths must exactly match the physical bundled asset files"
+    )
 
     for asset in manifest.assets {
       let url = try XCTUnwrap(
@@ -724,6 +734,31 @@ final class GameCoreTests: XCTestCase {
         XCTFail("Unknown native asset kind '\(asset.kind)' for \(asset.path)")
       }
     }
+  }
+
+  private func bundledAssetPaths(
+    under rootURL: URL,
+    excluding excludedRelativePath: String
+  ) throws -> Set<String> {
+    let resourceKeys: Set<URLResourceKey> = [.isRegularFileKey]
+    let enumerator = try XCTUnwrap(
+      FileManager.default.enumerator(
+        at: rootURL,
+        includingPropertiesForKeys: Array(resourceKeys),
+        options: [.skipsHiddenFiles]
+      )
+    )
+    var paths = Set<String>()
+
+    for case let fileURL as URL in enumerator {
+      let values = try fileURL.resourceValues(forKeys: resourceKeys)
+      guard values.isRegularFile == true else { continue }
+      let relativePath = String(fileURL.path.dropFirst(rootURL.path.count + 1))
+      guard relativePath != excludedRelativePath else { continue }
+      paths.insert(relativePath)
+    }
+
+    return paths
   }
 
   @MainActor

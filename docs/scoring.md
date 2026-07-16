@@ -1,113 +1,82 @@
-# Scoring rules
+# Scoring and run rewards
 
-`src/game/config/scoringConfig.ts` and
-`src/game/simulation/scoring.ts` are authoritative for points, TD Bonus, and
-touchdown streaks.
+`GameplayConfig`, `ScoringConfig`, and `GameSimulation.calculatePlayScore` are
+authoritative for points. `EconomyConfiguration` and `RunRewardCalculator` are
+authoritative for coins. UI copy must present these rules without implementing
+a second calculation.
 
-## Lane values
+## Lane points
 
-| Result lane          | Base points | TD Bonus meter gain |
-| -------------------- | ----------: | ------------------: |
-| Short / 15           |         500 |                  15 |
-| Medium / 30          |       1,000 |                  35 |
-| Deep / 45            |       1,500 |                  50 |
-| Touchdown / end zone |       2,500 |                   0 |
+| Target lane | Base points | Adrenaline gain |
+| ----------- | ----------: | ---------------: |
+| 15 yards    |         500 |               15 |
+| 30 yards    |       1,000 |               35 |
+| 45 yards    |       1,500 |               50 |
+| End zone    |       2,500 |                0 |
 
-An incompletion or interception awards 0 points.
+A completion or touchdown awards its lane's base points. Incompletions and
+interceptions award zero.
 
-## TD Bonus meter
+## Adrenaline meter
 
-- The meter begins at `0` and is full at `100` TD Meter Points.
-- Short, medium, and deep completions add 15, 35, and 50 meter points,
-  respectively, capped at 100.
-- Touchdowns do not build the meter; they are the payoff play for an active TD
-  Bonus.
-- An incompletion or interception immediately resets the meter to 0.
-- Ordinary completions do not spend a full meter and do not receive the
-  3,000-point TD bonus.
-- A touchdown receives the 3,000-point bonus only when the meter was already
-  full before that touchdown.
-- A successful play leaves a full meter full. It remains active until an
-  incompletion or interception resets it.
+The meter ranges from 0 to 100. Successful passes add the lane value and clamp
+at 100. An incompletion or interception resets the meter to zero.
 
-The pre-play check is intentional. A meter at 85 remains at 85 after a
-touchdown, and that touchdown has no TD bonus. A later 15-point short completion
-activates the meter for the next touchdown if no miss or interception occurs
-first.
+When the meter is already full before a touchdown resolves, that touchdown
+receives a 3,000-point TD Bonus. The end-zone catch does not itself add meter,
+so a player must fill the meter with prior completions.
 
 ## Touchdown streak multiplier
 
-The touchdown multiplier depends on the number of consecutive touchdowns
-completed before the current touchdown:
+Consecutive touchdowns use these multipliers:
 
-| Consecutive touchdown being scored | Multiplier |
-| ---------------------------------- | ---------: |
-| First                              |         1x |
-| Second                             |      1.25x |
-| Third                              |       1.5x |
-| Fourth                             |         2x |
-| Fifth                              |       2.5x |
-| Sixth and later                    |         3x |
-
-Only touchdowns advance the streak. Any non-touchdown result—including a
-successful short, medium, or deep completion—resets the current touchdown streak
-to zero. The longest streak reached during the run remains in the results stats.
-
-## Award formula
-
-For an ordinary completion:
-
-```text
-awarded points = lane base points
-```
+| Touchdown in streak | Multiplier |
+| ------------------- | ---------: |
+| First               |       1.00 |
+| Second              |       1.25 |
+| Third               |       1.50 |
+| Fourth              |       2.00 |
+| Fifth               |       2.50 |
+| Sixth and later     |       3.00 |
 
 For a touchdown:
 
 ```text
-bonus = meter was full before play ? 3,000 : 0
-awarded points = round((2,500 + bonus) x touchdown multiplier)
+awarded points = round((2,500 + eligible TD Bonus) * streak multiplier)
 ```
 
-The multiplier applies to both the touchdown lane's 2,500 base points and an
-active 3,000-point TD Bonus. The result is rounded to the nearest integer before
-being added to the run total.
+Any non-touchdown outcome resets the touchdown streak. Normal completions keep
+the score but reset that streak.
 
-## Touchdown examples
+## Statistics
 
-| Situation                               |            Calculation |  Award |
-| --------------------------------------- | ---------------------: | -----: |
-| First TD, meter not full                |              2,500 x 1 |  2,500 |
-| Second consecutive TD, meter not full   |           2,500 x 1.25 |  3,125 |
-| Fourth consecutive TD, meter not full   |              2,500 x 2 |  5,000 |
-| First TD with active bonus              |    (2,500 + 3,000) x 1 |  5,500 |
-| Second consecutive TD with active bonus | (2,500 + 3,000) x 1.25 |  6,875 |
-| Sixth-or-later TD with active bonus     |    (2,500 + 3,000) x 3 | 16,500 |
+Every resolved throw increments attempts exactly once. Completion percentage is
+the rounded percentage of completions plus touchdowns divided by attempts. The
+completed run also records touchdowns, incompletions, interceptions, longest
+touchdown streak, bonus touchdowns, and final score.
 
-The maximum configured single-play award is therefore 16,500 points.
+## Gameplay coin reward
 
-## Score reporting and plausibility limits
+A natural run must contain at least three attempts to be reward eligible.
+Abandoned and debug-preview runs receive no coins. One eligible run awards:
 
-The platform receives a live score only after an authoritative score change;
-0-point outcomes do not submit a changed score. The final score is a
-non-negative safe integer and is submitted once when the run permanently ends.
+- 10 completion coins;
+- 1 coin per 1,000 score, capped at 25 performance coins;
+- 5 accuracy coins at 70% or better with at least 10 attempts.
 
-The checked-in conservative platform limits are:
+The resulting range is 10–40 coins. The first eligible run also grants the
+one-time 250-coin signing bonus. Run and signing rewards use deterministic
+ledger IDs, so duplicate callbacks or retries cannot grant them twice.
 
-- maximum final score: `3,000,000`;
-- maximum score rate: `45,000` points/second; and
-- maximum supported rewarded run: `75,000 ms`.
+## Rewarded-ad cadence
 
-These limits assume the configured minimum 430 ms flight and the maximum 15
-rewarded seconds. Recalculate all three before a Bounty Board submission if
-points, multipliers, minimum flight time, cooldown, regulation time, or rewarded
-time changes. See
-[bounty-board-integration.md](bounty-board-integration.md#score-plausibility-settings)
-for the current rationale.
+Each eligible completed run advances the optional rewarded-ad counter. At five
+runs, one offer may grant 100 coins after provider verification. Declining does
+not consume the offer. The counter resets only in the same durable operation
+that grants the verified reward; offers do not stack beyond one.
 
-## Duplicate configuration warning
+## Verification
 
-`PASSING_LANES` in `src/game/config/gameplayConfig.ts` repeats each lane's point
-and meter values for descriptive consistency and tests, but the score calculator
-reads `SCORE_CONFIG.lanes`. Keep both tables identical when tuning. A mismatch
-can make UI/gameplay documentation disagree with awarded points even if the game
-still builds.
+Scoring changes require focused `GameCoreTests`, reward changes require
+`EconomyAchievementTests` and persistence/economy coordinator coverage, and
+the complete simulator suite must pass before release evidence is updated.

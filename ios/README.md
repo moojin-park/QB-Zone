@@ -1,38 +1,51 @@
-# Pocket Vector for iOS
+# Pocket Vector iOS target
 
-This directory contains the native iOS port of Pocket Vector. It uses SwiftUI
-for the application shell, SpriteKit for rendering and touch input, and a
-deterministic Swift gameplay core. There are no CocoaPods, Swift packages, or
-other third-party runtime dependencies.
+Pocket Vector uses SwiftUI for app navigation, SpriteKit for gameplay
+presentation and touch input, and a deterministic Swift gameplay core. The
+target has no third-party runtime dependencies or Swift package dependencies.
 
-## Run in Xcode
+## Target contract
 
-1. Open `PocketVector.xcodeproj`.
-2. Select the shared `PocketVector` scheme.
-3. Choose a landscape-capable iPhone or iPad simulator.
-4. Press Run.
+- iPhone and iPad
+- iOS 17 or later
+- landscape left and landscape right only
+- one app scene
+- Swift 6 concurrency checks
+- checked-in privacy manifest and encryption declaration
 
-The target supports iOS 17 and later and is locked to landscape. Its bundle
-identifier is currently `com.pocketvector.game`; choose your Apple Developer
-team and replace that identifier before installing on a physical device or
-creating an App Store archive.
+Open `PocketVector.xcodeproj`, select the shared `PocketVector` scheme, and run
+on a landscape-capable simulator. The development bundle identifier is
+`com.pocketvector.game`; physical-device and distribution builds require the
+owner's Apple Developer team and permanent bundle identity.
 
-The native target bundles only the curated files in
-`PocketVector/Resources/GameAssets/`. The runtime inventory and source
-provenance are recorded in `GameAssets/native-assets.json`; the target does not
-depend on the browser project's `../public/assets/` directory.
+## Runtime ownership
 
-## Command-line verification
+- SwiftUI owns launch, menus, settings, tutorial, locker, store, results, and
+  platform presentation.
+- `AppCoordinator` owns navigation and validates every transition into gameplay.
+- SpriteKit receives one immutable run configuration, simulates one run, and
+  emits one immutable completion callback.
+- The profile repository is the only authority for durable selections, runs,
+  records, achievements, ownership, and coin-ledger mutations.
+- Apple and advertising adapters report verified outcomes through service
+  contracts; they do not mutate the player profile directly.
 
-List the available schemes and simulator destinations:
+The complete contract is in `../docs/production-architecture.md`.
 
-```bash
-xcodebuild -list -project ios/PocketVector.xcodeproj
-xcrun simctl list devices available
-```
+## Resources
 
-Build and run the unit tests by replacing the destination name with any
-installed iOS simulator:
+The app bundles `PocketVector/Resources/GameAssets/` as an opaque resource
+folder. `GameAssets/native-assets.json` is the authoritative 58-file inventory,
+and `GameCoreTests.testNativeAssetManifestMatchesBundledResources` checks both
+directions: every manifest path exists and every physical bundled file is
+declared.
+
+Editable native source art lives in `AssetSources/`; regeneration tools live in
+`Tools/`. No source art or tool is included in the shipping resource bundle.
+
+## Verification
+
+From the repository root:
 
 ```bash
 xcodebuild \
@@ -42,34 +55,14 @@ xcodebuild \
   test
 ```
 
-## Current native scope
+Resource, capability, app-composition, or Release changes also require an
+unsigned generic-iOS archive. Use the command in the root `README.md`.
 
-- Title, countdown, live play, pause, results, and replay phases
-- Fixed-step 60 Hz gameplay with seeded receiver and defender movement
-- Press-drag-release throwing with speed-dependent trajectories
-- Completions, incompletions, interceptions, touchdowns, score, bonus meter,
-  streak multiplier, statistics, and the 60-second game clock
-- Original field, logo, quarterback, receiver, and defender art, plus a native
-  football that follows the throw direction and rolls its laces around its axis
-- Looping native music and layered event sound effects using the bundled WAVs
-- Original broadcast HUD with the curved Adrenaline meter, centered clock,
-  POINTS scorebug, working mute/pause controls, feedback panels, and compact
-  iPhone sizing
-- Original cabinet-style side rails around the fixed 4:3 playfield on wide
-  landscape displays
-- XCTest coverage for randomization, lane setup, throws, trajectory, scoring,
-  countdown, timer behavior, HUD geometry/formatting, audio playback, and
-  ball-rendering math
+## Release dependencies
 
-The first port intentionally leaves several browser features for later parity
-passes: saved settings and high scores, accessibility/options menus, precise
-defender body hit masks, Game Center, StoreKit purchases, and App Store assets
-and metadata.
-
-## App Store setup still needed
-
-Before distribution, provide an Apple Developer team, a permanent bundle ID,
-a final 1024-point app icon, signing capabilities, privacy declarations, and
-App Store Connect records. StoreKit 2 can then be added against product IDs
-created in App Store Connect; no purchase SDK is required for Apple's native
-in-app purchase flow.
+The native target is not yet an App Store release candidate. Live CloudKit
+profile hydration, retained production service orchestration, permanent
+identifiers and capabilities, StoreKit products, Game Center records,
+rewarded-ad verification, signed device testing, accessibility review,
+TestFlight metrics, and App Store metadata remain gated work. See
+`../docs/production-release-status.md` for current evidence and dependency order.
