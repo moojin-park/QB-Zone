@@ -48,7 +48,8 @@ enum PlayerProfileFactory {
             ),
             economyRevision: 0,
             pendingLedgerEntryIDs: [],
-            settlementReceipts: [:]
+            settlementReceipts: [:],
+            rewardedRunObservations: [:]
         )
     }
 }
@@ -104,7 +105,8 @@ enum PlayerProfileProjection {
             coinBalances: balances,
             completedRuns: player.completedRuns,
             ledger: player.ledger,
-            pendingLedgerEntryIDs: document.pendingLedgerEntryIDs
+            pendingLedgerEntryIDs: document.pendingLedgerEntryIDs,
+            rewardedRunObservations: document.rewardedRunObservations ?? [:]
         )
     }
 }
@@ -123,6 +125,7 @@ enum PlayerProfileValidator {
         try validateLedger(document, catalog: catalog)
         try validateRuns(document, catalog: catalog)
         try validateRewardedAdState(document.player)
+        try validateRewardedRunObservations(document)
         try validateCareer(document.player)
     }
 
@@ -249,6 +252,8 @@ enum PlayerProfileValidator {
             )
             guard signingEntry.id == expectedID,
                   signingEntry.delta == PersistedEconomyRulesV1.signingBonusCoins,
+                  signingEntry.createdAt
+                    == PersistedEconomyRulesV1.signingBonusLedgerCreatedAt,
                   case .signingBonus(PersistedEconomyRulesV1.signingBonusVersion) = signingEntry.reason else {
                 throw ProfileValidationError.invalidSigningBonus(signingEntry.id)
             }
@@ -419,6 +424,33 @@ enum PlayerProfileValidator {
         }
         guard UInt64(settledOfferIDs.count) == state.cycle else {
             throw ProfileValidationError.invalidRewardedAdState
+        }
+    }
+
+    private static func validateRewardedRunObservations(
+        _ document: LocalPlayerDocumentV1
+    ) throws {
+        guard let observations = document.rewardedRunObservations else {
+            throw ProfileValidationError.missingRewardedRunObservations
+        }
+
+        let eligibleRunIDs = Set(document.player.completedRuns.values.compactMap {
+            CompletedRunValidator.isRewardEligible($0.run) ? $0.run.runID : nil
+        })
+        guard Set(observations.keys) == eligibleRunIDs else {
+            throw ProfileValidationError.missingRewardedRunObservations
+        }
+
+        for (runID, observation) in observations {
+            guard let record = document.player.completedRuns[runID],
+                  CompletedRunValidator.isRewardEligible(record.run),
+                  (observation.disposition == .legacyNonCounting
+                      ? observation.observedCycle == 0
+                      : observation.observedCycle
+                          <= document.player.rewardedAdState.cycle)
+            else {
+                throw ProfileValidationError.invalidRewardedRunObservation(runID)
+            }
         }
     }
 

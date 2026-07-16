@@ -72,6 +72,8 @@ struct CloudKitCloudSyncConfiguration: Equatable, Sendable {
 enum CloudKitCloudSyncRecovery: Equatable, Sendable {
     case retry(afterSeconds: TimeInterval?)
     case waitForAccountChange
+    case discardCursorAndRestartBootstrap
+    case requireAccountCloudReset
     case refreshCommittedOperation(recordIDs: [CloudRecordID])
     case doNotRetry
 }
@@ -90,7 +92,12 @@ enum CloudKitCloudSyncError: Error, Equatable, Sendable, LocalizedError {
     case permissionDenied
     case requestTooLarge
     case malformedRecord(CloudRecordID)
+    case malformedDiscoveredRecord
     case malformedOperationMarker
+    case malformedChangeCursor
+    case changeCursorExpired
+    case inconsistentChangePage
+    case zoneResetRequired
     case providerConfigurationRejected
     case providerRequestRejected
     case operationCancelled
@@ -107,6 +114,10 @@ enum CloudKitCloudSyncError: Error, Equatable, Sendable, LocalizedError {
             .retry(afterSeconds: delay)
         case .accountTemporarilyUnavailable:
             .waitForAccountChange
+        case .malformedChangeCursor, .changeCursorExpired:
+            .discardCursorAndRestartBootstrap
+        case .zoneResetRequired:
+            .requireAccountCloudReset
         case let .committedOperationRequiresRefresh(_, recordIDs):
             .refreshCommittedOperation(recordIDs: recordIDs)
         case .invalidRequest,
@@ -115,7 +126,9 @@ enum CloudKitCloudSyncError: Error, Equatable, Sendable, LocalizedError {
              .permissionDenied,
              .requestTooLarge,
              .malformedRecord,
+             .malformedDiscoveredRecord,
              .malformedOperationMarker,
+             .inconsistentChangePage,
              .providerConfigurationRejected,
              .providerRequestRejected,
              .operationCancelled:
@@ -141,8 +154,13 @@ enum CloudKitCloudSyncError: Error, Equatable, Sendable, LocalizedError {
             "The iCloud account cannot access this private game data."
         case .requestTooLarge:
             "The cloud sync request is too large."
-        case .malformedRecord, .malformedOperationMarker:
+        case .malformedRecord, .malformedDiscoveredRecord, .malformedOperationMarker,
+             .inconsistentChangePage:
             "Stored private game data could not be read safely."
+        case .malformedChangeCursor, .changeCursorExpired:
+            "The saved cloud position must be rebuilt safely."
+        case .zoneResetRequired:
+            "The private game-data zone was reset and requires recovery."
         case .providerConfigurationRejected:
             "Cloud sync is not configured for this build."
         case .providerRequestRejected:
@@ -183,6 +201,18 @@ struct CloudKitClientWrite: Equatable, Sendable {
     let precondition: CloudKitClientWritePrecondition
 }
 
+struct CloudKitClientRecordDeletion: Equatable, Sendable {
+    let recordName: String
+    let recordType: String
+}
+
+struct CloudKitClientChangePage: Equatable, Sendable {
+    let modifications: [CloudKitClientRecord]
+    let deletions: [CloudKitClientRecordDeletion]
+    let nextCursor: Data
+    let moreComing: Bool
+}
+
 enum CloudKitClientFailure: Error, Equatable, Sendable {
     case conflict(recordNames: [String])
     case missingRecord(recordNames: [String])
@@ -196,6 +226,9 @@ enum CloudKitClientFailure: Error, Equatable, Sendable {
     case quotaExceeded
     case requestTooLarge
     case zoneMissing
+    case providerAccountMismatch
+    case changeTokenExpired
+    case malformedChangeCursor
     case invalidConfiguration
     case responseLost
     case operationCancelled
@@ -207,7 +240,14 @@ protocol CloudKitPrivateDatabaseClient: Sendable {
     func accountStatus() async throws -> CloudKitClientAccountStatus
     func currentUserRecordName() async throws -> String
     func fetchRecords(named recordNames: [String]) async throws -> [CloudKitClientRecord]
-    func saveAtomically(_ writes: [CloudKitClientWrite]) async throws -> [CloudKitClientRecord]
+    func saveAtomically(
+        _ writes: [CloudKitClientWrite],
+        expectedProviderRecordName: String
+    ) async throws -> [CloudKitClientRecord]
+    func fetchRecordZoneChanges(
+        afterArchivedCursor cursor: Data?,
+        allowZoneCreation: Bool
+    ) async throws -> CloudKitClientChangePage
 }
 
 enum CloudKitSDKFailureClassifier {
@@ -253,6 +293,8 @@ enum CloudKitSDKFailureClassifier {
             return .zoneMissing
         case .serverRecordChanged:
             return .conflict(recordNames: fallbackRecordName.map { [$0] } ?? [])
+        case .changeTokenExpired:
+            return .changeTokenExpired
         case .serverResponseLost:
             return .responseLost
         case .operationCancelled:
@@ -268,7 +310,6 @@ enum CloudKitSDKFailureClassifier {
              .assetFileModified,
              .incompatibleVersion,
              .constraintViolation,
-             .changeTokenExpired,
              .tooManyParticipants,
              .alreadyShared,
              .referenceViolation,
@@ -302,6 +343,11 @@ enum CloudKitSDKFailureClassifier {
         if candidates.contains(.permissionDenied) { return .permissionDenied }
         if candidates.contains(.quotaExceeded) { return .quotaExceeded }
         if candidates.contains(.requestTooLarge) { return .requestTooLarge }
+        if candidates.contains(.providerAccountMismatch) {
+            return .providerAccountMismatch
+        }
+        if candidates.contains(.changeTokenExpired) { return .changeTokenExpired }
+        if candidates.contains(.malformedChangeCursor) { return .malformedChangeCursor }
         if candidates.contains(.invalidConfiguration) { return .invalidConfiguration }
 
         var rateLimited = (wasFound: false, delay: Optional<TimeInterval>.none)
@@ -354,9 +400,16 @@ enum CloudKitSDKFailureClassifier {
         return .providerRejected
     }
 
-    static func isMissing(_ error: any Error) -> Bool {
+    static func isMissingRecord(_ error: any Error) -> Bool {
         guard let cloudError = error as? CKError else { return false }
-        return cloudError.code == .unknownItem || cloudError.code == .zoneNotFound
+        return cloudError.code == .unknownItem
+    }
+
+    static func isMissingZone(_ error: any Error) -> Bool {
+        guard let cloudError = error as? CKError else { return false }
+        return cloudError.code == .unknownItem
+            || cloudError.code == .zoneNotFound
+            || cloudError.code == .userDeletedZone
     }
 
     private static func sanitizedRetryAfter(_ error: CKError) -> TimeInterval? {
@@ -380,6 +433,41 @@ enum CloudKitSDKFailureClassifier {
     }
 }
 
+/// CKServerChangeToken is opaque NSSecureCoding state. Keeping its codec at the
+/// SDK boundary prevents domain code from accidentally inspecting or logging
+/// provider cursor contents.
+enum CloudKitServerChangeTokenCodec {
+    static func encode(_ token: CKServerChangeToken) throws -> Data {
+        do {
+            return try NSKeyedArchiver.archivedData(
+                withRootObject: token,
+                requiringSecureCoding: true
+            )
+        } catch {
+            throw CloudKitClientFailure.malformedChangeCursor
+        }
+    }
+
+    static func decode(_ data: Data) throws -> CKServerChangeToken {
+        guard !data.isEmpty else {
+            throw CloudKitClientFailure.malformedChangeCursor
+        }
+        do {
+            guard let token = try NSKeyedUnarchiver.unarchivedObject(
+                ofClass: CKServerChangeToken.self,
+                from: data
+            ) else {
+                throw CloudKitClientFailure.malformedChangeCursor
+            }
+            return token
+        } catch let failure as CloudKitClientFailure {
+            throw failure
+        } catch {
+            throw CloudKitClientFailure.malformedChangeCursor
+        }
+    }
+}
+
 /// The only type in this file that talks to CloudKit. The adapter above it is
 /// fully deterministic and tests use a protocol fake, so no test opens or
 /// mutates a live container.
@@ -388,7 +476,7 @@ actor LiveCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {
     private let database: CKDatabase
     private let zoneID: CKRecordZone.ID
     private let payloadFieldName: String
-    private var zoneIsReady = false
+    private var preparedZoneProviderRecordName: String?
 
     init(configuration: CloudKitCloudSyncConfiguration) {
         let container = CKContainer(identifier: configuration.containerIdentifier)
@@ -439,7 +527,7 @@ actor LiveCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {
     }
 
     func fetchRecords(named recordNames: [String]) async throws -> [CloudKitClientRecord] {
-        try await ensureZoneExists()
+        try await ensureZoneExists(allowCreation: false)
         let raw = try await fetchRawRecords(named: recordNames)
         return try recordNames.compactMap { name in
             guard let record = raw[name] else { return nil }
@@ -447,8 +535,14 @@ actor LiveCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {
         }
     }
 
-    func saveAtomically(_ writes: [CloudKitClientWrite]) async throws -> [CloudKitClientRecord] {
-        try await ensureZoneExists()
+    func saveAtomically(
+        _ writes: [CloudKitClientWrite],
+        expectedProviderRecordName: String
+    ) async throws -> [CloudKitClientRecord] {
+        guard try await currentUserRecordName() == expectedProviderRecordName else {
+            throw CloudKitClientFailure.providerAccountMismatch
+        }
+        try await ensureZoneExists(allowCreation: false)
         let names = writes.map(\.recordName)
         let existing = try await fetchRawRecords(named: names)
         var conflicts: [String] = []
@@ -486,6 +580,13 @@ actor LiveCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {
             )
             record[payloadFieldName] = write.payload as NSData
             recordsToSave.append(record)
+        }
+
+        // Account state can change while existing records are fetched. Bind
+        // the mutating SDK call to the exact raw provider identity that the
+        // transport validated for this request.
+        guard try await currentUserRecordName() == expectedProviderRecordName else {
+            throw CloudKitClientFailure.providerAccountMismatch
         }
 
         let result: (
@@ -534,16 +635,111 @@ actor LiveCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {
         }
     }
 
-    private func ensureZoneExists() async throws {
-        guard !zoneIsReady else { return }
+    func fetchRecordZoneChanges(
+        afterArchivedCursor cursor: Data?,
+        allowZoneCreation: Bool
+    ) async throws -> CloudKitClientChangePage {
+        try await ensureZoneExists(allowCreation: allowZoneCreation)
+
+        let token: CKServerChangeToken?
+        if let cursor {
+            token = try CloudKitServerChangeTokenCodec.decode(cursor)
+        } else {
+            token = nil
+        }
+
+        let result: (
+            modificationResultsByID: [
+                CKRecord.ID: Result<CKDatabase.RecordZoneChange.Modification, any Error>
+            ],
+            deletions: [CKDatabase.RecordZoneChange.Deletion],
+            changeToken: CKServerChangeToken,
+            moreComing: Bool
+        )
+        do {
+            result = try await database.recordZoneChanges(
+                inZoneWith: zoneID,
+                since: token,
+                desiredKeys: [payloadFieldName],
+                resultsLimit: nil
+            )
+        } catch {
+            let classified = CloudKitSDKFailureClassifier.classify(error)
+            if classified == .zoneMissing {
+                preparedZoneProviderRecordName = nil
+            }
+            throw classified
+        }
+
+        var modifications: [CloudKitClientRecord] = []
+        var failures: [CloudKitClientFailure] = []
+        for (recordID, recordResult) in result.modificationResultsByID {
+            guard recordID.zoneID == zoneID else {
+                failures.append(.providerRejected)
+                continue
+            }
+            switch recordResult {
+            case let .success(modification):
+                let record = modification.record
+                guard record.recordID == recordID, record.recordID.zoneID == zoneID else {
+                    failures.append(.providerRejected)
+                    continue
+                }
+                do {
+                    modifications.append(try makeClientRecord(record))
+                } catch let failure as CloudKitClientFailure {
+                    failures.append(failure)
+                } catch {
+                    failures.append(.providerRejected)
+                }
+            case let .failure(error):
+                failures.append(
+                    CloudKitSDKFailureClassifier.classify(
+                        error,
+                        fallbackRecordName: recordID.recordName
+                    )
+                )
+            }
+        }
+
+        var deletions: [CloudKitClientRecordDeletion] = []
+        for deletion in result.deletions {
+            guard deletion.recordID.zoneID == zoneID,
+                  !deletion.recordID.recordName.isEmpty,
+                  !deletion.recordType.isEmpty else {
+                failures.append(.providerRejected)
+                continue
+            }
+            deletions.append(
+                CloudKitClientRecordDeletion(
+                    recordName: deletion.recordID.recordName,
+                    recordType: deletion.recordType
+                )
+            )
+        }
+
+        guard failures.isEmpty else {
+            throw CloudKitSDKFailureClassifier.aggregate(failures)
+        }
+        return CloudKitClientChangePage(
+            modifications: modifications.sorted { $0.recordName < $1.recordName },
+            deletions: deletions.sorted { $0.recordName < $1.recordName },
+            nextCursor: try CloudKitServerChangeTokenCodec.encode(result.changeToken),
+            moreComing: result.moreComing
+        )
+    }
+
+    private func ensureZoneExists(allowCreation: Bool) async throws {
+        let providerRecordName = try await currentUserRecordName()
+        guard preparedZoneProviderRecordName != providerRecordName else { return }
         do {
             let results = try await database.recordZones(for: [zoneID])
             if let result = results[zoneID] {
                 switch result {
                 case .success:
-                    zoneIsReady = true
+                    preparedZoneProviderRecordName = providerRecordName
                     return
-                case let .failure(error) where CloudKitSDKFailureClassifier.isMissing(error):
+                case let .failure(error) where CloudKitSDKFailureClassifier.isMissingZone(error):
                     break
                 case let .failure(error):
                     throw CloudKitSDKFailureClassifier.classify(error)
@@ -556,6 +752,16 @@ actor LiveCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {
             guard classified == .zoneMissing else { throw classified }
         }
 
+        guard allowCreation else {
+            preparedZoneProviderRecordName = nil
+            throw CloudKitClientFailure.zoneMissing
+        }
+
+        guard try await currentUserRecordName() == providerRecordName else {
+            preparedZoneProviderRecordName = nil
+            throw CloudKitClientFailure.notAuthenticated
+        }
+
         do {
             let result = try await database.modifyRecordZones(
                 saving: [CKRecordZone(zoneID: zoneID)],
@@ -566,7 +772,11 @@ actor LiveCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {
             }
             switch saved {
             case .success:
-                zoneIsReady = true
+                guard try await currentUserRecordName() == providerRecordName else {
+                    preparedZoneProviderRecordName = nil
+                    throw CloudKitClientFailure.notAuthenticated
+                }
+                preparedZoneProviderRecordName = providerRecordName
             case let .failure(error):
                 throw CloudKitSDKFailureClassifier.classify(error)
             }
@@ -598,7 +808,7 @@ actor LiveCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {
             switch result {
             case let .success(record):
                 found[name] = record
-            case let .failure(error) where CloudKitSDKFailureClassifier.isMissing(error):
+            case let .failure(error) where CloudKitSDKFailureClassifier.isMissingRecord(error):
                 continue
             case let .failure(error):
                 failures.append(
@@ -636,7 +846,7 @@ actor LiveCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {
     }
 }
 
-actor CloudKitCloudSyncTransport: CloudSyncTransport {
+actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
     private let configuration: CloudKitCloudSyncConfiguration
     private let client: any CloudKitPrivateDatabaseClient
 
@@ -675,11 +885,121 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
         }
     }
 
+    func recordChanges(
+        accountID: CloudAccountID,
+        after cursor: CloudChangeCursor?,
+        zonePreparation: CloudZonePreparationPolicy
+    ) async throws -> CloudRecordChangePage {
+        if cursor != nil, zonePreparation == .createIfMissingForInitialBootstrap {
+            throw CloudKitCloudSyncError.invalidRequest
+        }
+        _ = try await requireActive(accountID)
+
+        let clientPage: CloudKitClientChangePage
+        do {
+            clientPage = try await client.fetchRecordZoneChanges(
+                afterArchivedCursor: cursor?.rawValue,
+                allowZoneCreation: zonePreparation == .createIfMissingForInitialBootstrap
+            )
+        } catch let failure as CloudKitClientFailure {
+            switch failure {
+            case .zoneMissing:
+                throw CloudKitCloudSyncError.zoneResetRequired
+            case .changeTokenExpired:
+                throw CloudKitCloudSyncError.changeCursorExpired
+            case .malformedChangeCursor:
+                throw CloudKitCloudSyncError.malformedChangeCursor
+            default:
+                throw translated(failure, recordNameToID: [:])
+            }
+        }
+        _ = try await revalidate(accountID)
+
+        guard !clientPage.nextCursor.isEmpty else {
+            throw CloudKitCloudSyncError.malformedChangeCursor
+        }
+
+        var modifications: [CloudDiscoveredRecord] = []
+        var modificationLocators: Set<CloudProviderRecordLocator> = []
+        var logicalRecordIDs: Set<CloudRecordID> = []
+        for clientRecord in clientPage.modifications {
+            if clientRecord.recordType == configuration.operationRecordType {
+                continue
+            }
+            guard !clientRecord.recordName.isEmpty,
+                  !clientRecord.recordType.isEmpty,
+                  !clientRecord.changeTag.isEmpty else {
+                throw CloudKitCloudSyncError.malformedDiscoveredRecord
+            }
+
+            let envelope: CloudKitRecordPayloadV2
+            do {
+                envelope = try CloudKitPayloadCodec.decode(
+                    CloudKitRecordPayloadV2.self,
+                    from: clientRecord.payload
+                )
+            } catch {
+                throw CloudKitCloudSyncError.malformedDiscoveredRecord
+            }
+            guard envelope.schemaVersion == CloudKitRecordPayloadV2.currentSchemaVersion,
+                  !envelope.logicalRecordID.rawValue.isEmpty,
+                  recordName(for: envelope.logicalRecordID) == clientRecord.recordName else {
+                throw CloudKitCloudSyncError.malformedDiscoveredRecord
+            }
+
+            let locator = CloudProviderRecordLocator(clientRecord.recordName)
+            guard modificationLocators.insert(locator).inserted,
+                  logicalRecordIDs.insert(envelope.logicalRecordID).inserted else {
+                throw CloudKitCloudSyncError.inconsistentChangePage
+            }
+            modifications.append(
+                CloudDiscoveredRecord(
+                    locator: locator,
+                    record: CloudRecord(
+                        id: envelope.logicalRecordID,
+                        recordType: clientRecord.recordType,
+                        fields: envelope.fields,
+                        changeTag: CloudChangeTag(clientRecord.changeTag)
+                    )
+                )
+            )
+        }
+
+        var deletions: [CloudDeletedRecord] = []
+        var deletionLocators: Set<CloudProviderRecordLocator> = []
+        for deletion in clientPage.deletions {
+            if deletion.recordType == configuration.operationRecordType {
+                continue
+            }
+            guard !deletion.recordName.isEmpty, !deletion.recordType.isEmpty else {
+                throw CloudKitCloudSyncError.inconsistentChangePage
+            }
+            let locator = CloudProviderRecordLocator(deletion.recordName)
+            guard deletionLocators.insert(locator).inserted,
+                  !modificationLocators.contains(locator) else {
+                throw CloudKitCloudSyncError.inconsistentChangePage
+            }
+            deletions.append(
+                CloudDeletedRecord(locator: locator, recordType: deletion.recordType)
+            )
+        }
+
+        modifications.sort { $0.locator.rawValue < $1.locator.rawValue }
+        deletions.sort { $0.locator.rawValue < $1.locator.rawValue }
+        return CloudRecordChangePage(
+            accountID: accountID,
+            modifications: modifications,
+            deletions: deletions,
+            nextCursor: CloudChangeCursor(clientPage.nextCursor),
+            moreComing: clientPage.moreComing
+        )
+    }
+
     func records(
         accountID: CloudAccountID,
         ids: [CloudRecordID]
     ) async throws -> [CloudRecord] {
-        try await requireActive(accountID)
+        _ = try await requireActive(accountID)
         let uniqueIDs = unique(ids)
         let mapping = try recordNameMapping(for: uniqueIDs)
         let names = uniqueIDs.compactMap { id in
@@ -691,23 +1011,28 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
         } catch let failure as CloudKitClientFailure {
             throw translated(failure, recordNameToID: mapping)
         }
-        try await revalidate(accountID)
+        _ = try await revalidate(accountID)
 
         var byID: [CloudRecordID: CloudRecord] = [:]
         for record in fetched {
             guard let id = mapping[record.recordName] else {
                 throw CloudKitCloudSyncError.providerRequestRejected
             }
-            let envelope: CloudKitRecordPayloadV1
+            let envelope: CloudKitRecordPayloadV2
             do {
                 envelope = try CloudKitPayloadCodec.decode(
-                    CloudKitRecordPayloadV1.self,
+                    CloudKitRecordPayloadV2.self,
                     from: record.payload
                 )
             } catch {
                 throw CloudKitCloudSyncError.malformedRecord(id)
             }
-            guard envelope.schemaVersion == CloudKitRecordPayloadV1.currentSchemaVersion else {
+            guard envelope.schemaVersion == CloudKitRecordPayloadV2.currentSchemaVersion,
+                  envelope.logicalRecordID == id,
+                  recordName(for: id) == record.recordName,
+                  !record.recordType.isEmpty,
+                  !record.changeTag.isEmpty,
+                  byID[id] == nil else {
                 throw CloudKitCloudSyncError.malformedRecord(id)
             }
             byID[id] = CloudRecord(
@@ -723,7 +1048,7 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
     func commitAtomically(
         _ request: CloudAtomicWriteRequest
     ) async throws -> CloudAtomicWriteReceipt {
-        try await requireActive(request.accountID)
+        _ = try await requireActive(request.accountID)
         try validate(request)
 
         let writeIDs = request.writes.map(\.id)
@@ -745,7 +1070,7 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
         // Account can change while the marker lookup is suspended. Recheck
         // before the only mutating call so the new private database never
         // receives the old account's queued operation.
-        try await revalidate(request.accountID)
+        let expectedProviderRecordName = try await revalidate(request.accountID)
 
         let marker = CloudKitOperationMarkerV1(
             schemaVersion: CloudKitOperationMarkerV1.currentSchemaVersion,
@@ -758,8 +1083,9 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
             guard let recordName = mapping.first(where: { $0.value == write.id })?.key else {
                 throw CloudKitCloudSyncError.invalidRequest
             }
-            let payload = CloudKitRecordPayloadV1(
-                schemaVersion: CloudKitRecordPayloadV1.currentSchemaVersion,
+            let payload = CloudKitRecordPayloadV2(
+                schemaVersion: CloudKitRecordPayloadV2.currentSchemaVersion,
+                logicalRecordID: write.id,
                 fields: write.fields,
                 lastOperationFingerprint: fingerprint
             )
@@ -781,7 +1107,10 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
 
         let saved: [CloudKitClientRecord]
         do {
-            saved = try await client.saveAtomically(clientWrites)
+            saved = try await client.saveAtomically(
+                clientWrites,
+                expectedProviderRecordName: expectedProviderRecordName
+            )
         } catch let failure as CloudKitClientFailure {
             if shouldAttemptMarkerRecovery(failure, markerName: markerName),
                let recovered = try await recoverReceiptIfPresent(
@@ -795,7 +1124,7 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
             }
             throw translated(failure, recordNameToID: mapping)
         }
-        try await revalidate(request.accountID)
+        _ = try await revalidate(request.accountID)
 
         let savedByName = Dictionary(uniqueKeysWithValues: saved.map { ($0.recordName, $0) })
         var tags: [CloudRecordID: CloudChangeTag] = [:]
@@ -871,10 +1200,12 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
             guard let record = targetByName[name],
                   let id = recordNameToID[name],
                   let payload = try? CloudKitPayloadCodec.decode(
-                      CloudKitRecordPayloadV1.self,
+                      CloudKitRecordPayloadV2.self,
                       from: record.payload
                   ),
-                  payload.schemaVersion == CloudKitRecordPayloadV1.currentSchemaVersion,
+                  payload.schemaVersion == CloudKitRecordPayloadV2.currentSchemaVersion,
+                  payload.logicalRecordID == id,
+                  recordName(for: id) == name,
                   payload.lastOperationFingerprint == fingerprint
             else {
                 throw CloudKitCloudSyncError.committedOperationRequiresRefresh(
@@ -884,7 +1215,7 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
             }
             tags[id] = CloudChangeTag(record.changeTag)
         }
-        try await revalidate(request.accountID)
+        _ = try await revalidate(request.accountID)
         return CloudAtomicWriteReceipt(
             accountID: request.accountID,
             operationID: request.operationID,
@@ -895,29 +1226,40 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
     private func validate(_ request: CloudAtomicWriteRequest) throws {
         let ids = request.writes.map(\.id)
         guard Set(ids).count == ids.count,
-              request.writes.allSatisfy({ !$0.recordType.isEmpty })
+              request.writes.allSatisfy({
+                  !$0.recordType.isEmpty
+                      && $0.recordType != configuration.operationRecordType
+              })
         else {
             throw CloudKitCloudSyncError.invalidRequest
         }
     }
 
-    private func requireActive(_ expectedAccountID: CloudAccountID) async throws {
-        let active = try await activeAccountID()
-        guard active == expectedAccountID else {
+    private func requireActive(
+        _ expectedAccountID: CloudAccountID
+    ) async throws -> String {
+        let active = try await activeAccount()
+        guard active.accountID == expectedAccountID else {
             throw CloudSyncTransportError.accountMismatch
         }
+        return active.providerRecordName
     }
 
-    private func revalidate(_ expectedAccountID: CloudAccountID) async throws {
+    private func revalidate(
+        _ expectedAccountID: CloudAccountID
+    ) async throws -> String {
         do {
-            try await requireActive(expectedAccountID)
+            return try await requireActive(expectedAccountID)
         } catch CloudSyncTransportError.accountUnavailable,
                 CloudKitCloudSyncError.accountRestricted {
             throw CloudSyncTransportError.accountMismatch
         }
     }
 
-    private func activeAccountID() async throws -> CloudAccountID {
+    private func activeAccount() async throws -> (
+        accountID: CloudAccountID,
+        providerRecordName: String
+    ) {
         let status: CloudKitClientAccountStatus
         do {
             status = try await client.accountStatus()
@@ -928,7 +1270,10 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
         case .available:
             do {
                 let providerName = try await client.currentUserRecordName()
-                return accountID(forProviderRecordName: providerName)
+                return (
+                    accountID(forProviderRecordName: providerName),
+                    providerName
+                )
             } catch let failure as CloudKitClientFailure {
                 throw translated(failure, recordNameToID: [:])
             }
@@ -946,17 +1291,21 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
     ) throws -> [String: CloudRecordID] {
         var mapping: [String: CloudRecordID] = [:]
         for id in ids {
-            let name = CloudKitOpaqueIdentifier.make(
-                namespace: configuration.recordNameNamespace,
-                kind: "record-v1",
-                value: id.rawValue
-            )
+            let name = recordName(for: id)
             if let existing = mapping[name], existing != id {
                 throw CloudKitCloudSyncError.invalidRequest
             }
             mapping[name] = id
         }
         return mapping
+    }
+
+    private func recordName(for id: CloudRecordID) -> String {
+        CloudKitOpaqueIdentifier.make(
+            namespace: configuration.recordNameNamespace,
+            kind: "record-v1",
+            value: id.rawValue
+        )
     }
 
     private func accountID(forProviderRecordName recordName: String) -> CloudAccountID {
@@ -1037,7 +1386,13 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
         case .requestTooLarge:
             return CloudKitCloudSyncError.requestTooLarge
         case .zoneMissing:
-            return CloudKitCloudSyncError.serviceUnavailable(retryAfterSeconds: nil)
+            return CloudKitCloudSyncError.zoneResetRequired
+        case .providerAccountMismatch:
+            return CloudSyncTransportError.accountMismatch
+        case .changeTokenExpired:
+            return CloudKitCloudSyncError.changeCursorExpired
+        case .malformedChangeCursor:
+            return CloudKitCloudSyncError.malformedChangeCursor
         case .invalidConfiguration:
             return CloudKitCloudSyncError.providerConfigurationRejected
         case .responseLost, .batchRequestFailed:
@@ -1055,10 +1410,11 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport {
     }
 }
 
-private struct CloudKitRecordPayloadV1: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 1
+private struct CloudKitRecordPayloadV2: Codable, Equatable, Sendable {
+    static let currentSchemaVersion = 2
 
     let schemaVersion: Int
+    let logicalRecordID: CloudRecordID
     let fields: [String: Data]
     let lastOperationFingerprint: Data
 }

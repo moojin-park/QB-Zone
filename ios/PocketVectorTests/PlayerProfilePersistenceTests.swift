@@ -30,6 +30,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(snapshot.player.settings.reducedMotion)
         XCTAssertFalse(snapshot.player.settings.tutorialCompleted)
         XCTAssertEqual(snapshot.coinBalances, CoinBalanceSummary(confirmed: 0, pending: 0))
+        XCTAssertTrue(snapshot.rewardedRunObservations.isEmpty)
         XCTAssertEqual(snapshot.player.revision, 0)
         XCTAssertEqual(snapshot.economyRevision, 0)
 
@@ -38,6 +39,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(FileManager.default.fileExists(atPath: locations.backupURL.path))
         let document = try decodePrimary(in: directory)
         XCTAssertTrue(document.player.ledger.isEmpty)
+        XCTAssertEqual(document.rewardedRunObservations, [:])
         XCTAssertNil(
             document.player.ledger[
                 CoinLedgerID.signingBonus(version: PersistedEconomyRulesV1.signingBonusVersion)
@@ -133,6 +135,10 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             return false
         }
         XCTAssertEqual(signingEntries.count, 1)
+        XCTAssertEqual(
+            signingEntries.first?.createdAt,
+            PersistedEconomyRulesV1.signingBonusLedgerCreatedAt
+        )
         XCTAssertTrue(
             document.pendingLedgerEntryIDs.contains(
                 CoinLedgerID.signingBonus(version: PersistedEconomyRulesV1.signingBonusVersion)
@@ -853,6 +859,94 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             snapshot.player.rewardedAdState.eligibleOfferID,
             RewardedAdState.offerID(for: 0)
         )
+        for index in 1 ... 5 {
+            XCTAssertEqual(
+                snapshot.rewardedRunObservations[fixedRunID(100 + index)],
+                RewardedRunObservation(
+                    observedCycle: 0,
+                    disposition: .candidate
+                )
+            )
+        }
+        XCTAssertEqual(
+            snapshot.rewardedRunObservations[fixedRunID(106)],
+            RewardedRunObservation(
+                observedCycle: 0,
+                disposition: .ignoredWhileOfferPending
+            )
+        )
+        XCTAssertEqual(snapshot.rewardedRunObservations.count, 6)
+        XCTAssertEqual(
+            try decodePrimary(in: directory).rewardedRunObservations,
+            snapshot.rewardedRunObservations
+        )
+    }
+
+    func testLegacyV1DecodeWithoutRewardedRunObservationsMigratesToEmptyMap() throws {
+        let migrator = PlayerProfileMigrator()
+        let original = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "legacy-observation-test",
+            createdAt: baseDate
+        )
+        let encoded = try migrator.encode(original, savedAt: baseDate)
+        guard var envelope = try JSONSerialization.jsonObject(with: encoded)
+            as? [String: Any],
+            var document = envelope["document"] as? [String: Any]
+        else {
+            return XCTFail("Expected a current profile envelope")
+        }
+        XCTAssertNotNil(document.removeValue(forKey: "rewardedRunObservations"))
+        envelope["document"] = document
+        envelope["schemaVersion"] = PlayerProfileEnvelopeV1.schemaVersion
+        let legacyData = try JSONSerialization.data(
+            withJSONObject: envelope,
+            options: [.sortedKeys]
+        )
+
+        let decoded = try migrator.decode(legacyData)
+
+        XCTAssertEqual(decoded.rewardedRunObservations, [:])
+        XCTAssertNoThrow(try PlayerProfileValidator.validate(decoded))
+        let projected = try PlayerProfileProjection.snapshot(
+            for: decoded,
+            session: ProfileSessionToken(
+                accountIdentity: decoded.accountIdentity,
+                nonce: UUID(uuidString: "00000000-0000-0000-0000-000000000777")!,
+                profileID: decoded.player.profileID
+            )
+        )
+        XCTAssertTrue(projected.rewardedRunObservations.isEmpty)
+    }
+
+    func testCurrentEnvelopeWithoutRewardedRunObservationsFailsClosed() throws {
+        let migrator = PlayerProfileMigrator()
+        let original = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "current-observation-test",
+            createdAt: baseDate
+        )
+        let encoded = try migrator.encode(original, savedAt: baseDate)
+        guard var envelope = try JSONSerialization.jsonObject(with: encoded)
+            as? [String: Any],
+            var document = envelope["document"] as? [String: Any]
+        else {
+            return XCTFail("Expected a V2 profile envelope")
+        }
+        document.removeValue(forKey: "rewardedRunObservations")
+        envelope["document"] = document
+        let malformed = try JSONSerialization.data(
+            withJSONObject: envelope,
+            options: [.sortedKeys]
+        )
+
+        let decoded = try migrator.decode(malformed)
+        XCTAssertThrowsError(try PlayerProfileValidator.validate(decoded)) {
+            XCTAssertEqual(
+                $0 as? ProfileValidationError,
+                .missingRewardedRunObservations
+            )
+        }
     }
 
     func testVerifiedRewardedAdSettlementIsAtomicIdempotentAndSessionBoundAcrossRelaunch()

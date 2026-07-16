@@ -153,7 +153,7 @@ actor LocalPlayerProfileRepository {
                     reason: .signingBonus(
                         version: PersistedEconomyRulesV1.signingBonusVersion
                     ),
-                    createdAt: recordedAt
+                    createdAt: PersistedEconomyRulesV1.signingBonusLedgerCreatedAt
                 )
                 next.pendingLedgerEntryIDs.insert(entryID)
                 signingBonusEntryID = entryID
@@ -179,9 +179,20 @@ actor LocalPlayerProfileRepository {
         }
 
         var rewardedOfferUnlocked: RewardOfferID?
-        if isRewardEligible,
-           next.player.rewardedAdState.recordValidRun(run.runID) {
-            rewardedOfferUnlocked = next.player.rewardedAdState.eligibleOfferID
+        if isRewardEligible {
+            let observation = RewardedRunObservation(
+                observedCycle: next.player.rewardedAdState.cycle,
+                disposition: next.player.rewardedAdState.eligibleOfferID == nil
+                    ? .candidate
+                    : .ignoredWhileOfferPending
+            )
+            if next.rewardedRunObservations == nil {
+                next.rewardedRunObservations = [:]
+            }
+            next.rewardedRunObservations?[run.runID] = observation
+            if next.player.rewardedAdState.recordValidRun(run.runID) {
+                rewardedOfferUnlocked = next.player.rewardedAdState.eligibleOfferID
+            }
         }
 
         let record = CompletedRunRecord(

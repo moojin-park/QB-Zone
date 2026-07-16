@@ -141,6 +141,26 @@ struct RewardedAdState: Codable, Equatable, Sendable {
     }
 }
 
+/// Immutable context captured when a reward-eligible run settles locally.
+///
+/// The cloud economy head owns the canonical reward cycle. A run created while
+/// offline must retain the cycle the device actually observed so a delayed
+/// upload can never become progress in a later cycle after another device has
+/// redeemed the offer.
+struct RewardedRunObservation: Codable, Equatable, Sendable {
+    enum Disposition: String, Codable, Equatable, Sendable {
+        case candidate
+        case ignoredWhileOfferPending
+        /// A pre-observation-schema run whose original reward cycle cannot be
+        /// reconstructed safely. Its gameplay coins remain deliverable, but it
+        /// can never contribute rewarded-ad progress.
+        case legacyNonCounting
+    }
+
+    let observedCycle: UInt64
+    let disposition: Disposition
+}
+
 struct CoinPackDescriptor: Codable, Equatable, Hashable, Sendable {
     let id: CoinPackID
     let displayName: String

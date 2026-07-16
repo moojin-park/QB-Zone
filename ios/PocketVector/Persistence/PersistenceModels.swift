@@ -27,11 +27,32 @@ struct LocalPlayerDocumentV1: Codable, Equatable, Sendable {
     var economyRevision: UInt64
     var pendingLedgerEntryIDs: Set<LedgerEntryID>
     var settlementReceipts: [RunID: RunSettlementOutcome]
+    /// Optional only at the Codable boundary for legacy V1 envelopes. The V1
+    /// migrator immediately supplies explicit non-counting observations, and
+    /// every V2 document persists a complete map.
+    var rewardedRunObservations: [RunID: RewardedRunObservation]?
 }
 
 struct PlayerProfileEnvelopeV1: Codable, Equatable, Sendable {
     static let formatIdentifier = "com.pocketvector.player-profile"
     static let schemaVersion = 1
+
+    let format: String
+    let schemaVersion: Int
+    let savedAt: Date
+    let document: LocalPlayerDocumentV1
+
+    init(document: LocalPlayerDocumentV1, savedAt: Date) {
+        format = Self.formatIdentifier
+        schemaVersion = Self.schemaVersion
+        self.savedAt = savedAt
+        self.document = document
+    }
+}
+
+struct PlayerProfileEnvelopeV2: Codable, Equatable, Sendable {
+    static let formatIdentifier = PlayerProfileEnvelopeV1.formatIdentifier
+    static let schemaVersion = 2
 
     let format: String
     let schemaVersion: Int
@@ -67,6 +88,27 @@ struct LocalPlayerProfileSnapshot: Equatable, Sendable {
     let completedRuns: [RunID: CompletedRunRecord]
     let ledger: [LedgerEntryID: CoinLedgerEntry]
     let pendingLedgerEntryIDs: Set<LedgerEntryID>
+    let rewardedRunObservations: [RunID: RewardedRunObservation]
+
+    init(
+        session: ProfileSessionToken,
+        player: PlayerSnapshot,
+        economyRevision: UInt64,
+        coinBalances: CoinBalanceSummary,
+        completedRuns: [RunID: CompletedRunRecord],
+        ledger: [LedgerEntryID: CoinLedgerEntry],
+        pendingLedgerEntryIDs: Set<LedgerEntryID>,
+        rewardedRunObservations: [RunID: RewardedRunObservation] = [:]
+    ) {
+        self.session = session
+        self.player = player
+        self.economyRevision = economyRevision
+        self.coinBalances = coinBalances
+        self.completedRuns = completedRuns
+        self.ledger = ledger
+        self.pendingLedgerEntryIDs = pendingLedgerEntryIDs
+        self.rewardedRunObservations = rewardedRunObservations
+    }
 
     var personalBest: Int {
         player.career.highestScore
@@ -263,6 +305,8 @@ enum ProfileValidationError: Error, Equatable {
     case invalidSettings
     case invalidAchievementProgress(AchievementID)
     case invalidRewardedAdState
+    case invalidRewardedRunObservation(RunID)
+    case missingRewardedRunObservations
     case careerAggregateMismatch
     case invalidLedger(CoinLedgerValidationError)
     case arithmeticOverflow

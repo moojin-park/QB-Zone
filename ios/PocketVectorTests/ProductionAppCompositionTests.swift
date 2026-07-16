@@ -121,6 +121,8 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
         let coordinator = AppCoordinator(environment: composition.environment)
         await coordinator.bootstrap()
         let initial = try XCTUnwrap(coordinator.authoritativeSnapshot)
+        XCTAssertEqual(initial.syncRevision, 0)
+        XCTAssertEqual(initial.state.syncStatus, .localOnly)
         var iterator = channel.makeStream().makeAsyncIterator()
 
         clock.advance(by: 1)
@@ -135,6 +137,137 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
             published?.state.selection.selectedTeamID,
             LaunchTeamID.highMesaHelions
         )
+    }
+
+    @MainActor
+    func testSyncTransitionPublishesOnlyOnChangeAndPersistsAcrossRepositoryMutations() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let clock = TestClock(Date(timeIntervalSince1970: 16_000))
+        let channel = ProductionAuthoritativeStateChannel()
+        let composition = ProductionAppComposition(
+            dependencies: ProductionAppDependencies(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: .local,
+                deviceID: "sync-transition-device",
+                sessionNonce: fixedUUID(13),
+                newProfileID: fixedUUID(113),
+                now: { clock.date },
+                makeRunID: { self.fixedRunID(13) },
+                makeSeed: { 13 }
+            ),
+            authoritativeStateChannel: channel
+        )
+        let coordinator = AppCoordinator(environment: composition.environment)
+        await coordinator.bootstrap()
+        let initial = try XCTUnwrap(coordinator.authoritativeSnapshot)
+        var iterator = channel.makeStream().makeAsyncIterator()
+
+        let syncing = try XCTUnwrap(
+            composition.publishSyncStatusTransition(.syncing)
+        )
+        let publishedSyncing = await iterator.next()
+
+        XCTAssertEqual(publishedSyncing, syncing)
+        XCTAssertEqual(syncing.playerRevision, initial.playerRevision)
+        XCTAssertEqual(syncing.economyRevision, initial.economyRevision)
+        XCTAssertEqual(syncing.syncRevision, initial.syncRevision + 1)
+        XCTAssertEqual(syncing.state.syncStatus, .syncing)
+        XCTAssertNil(try composition.publishSyncStatusTransition(.syncing))
+        XCTAssertEqual(coordinator.applyAuthoritativeUpdate(syncing), .applied)
+
+        clock.advance(by: 1)
+        await coordinator.setTutorialEnabled(false)
+        let settingsUpdate = await iterator.next()
+        XCTAssertEqual(settingsUpdate, coordinator.authoritativeSnapshot)
+        XCTAssertEqual(settingsUpdate?.syncRevision, syncing.syncRevision)
+        XCTAssertEqual(settingsUpdate?.state.syncStatus, .syncing)
+        XCTAssertGreaterThan(settingsUpdate?.playerRevision ?? 0, initial.playerRevision)
+        XCTAssertEqual(settingsUpdate?.economyRevision, initial.economyRevision)
+
+        let configuration = try await launchConfiguration(from: coordinator)
+        let run = makeNaturalRun(configuration: configuration)
+        clock.date = run.endedAt.addingTimeInterval(1)
+        await coordinator.handleCompletedRun(run)
+        let settlementUpdate = await iterator.next()
+
+        XCTAssertEqual(settlementUpdate, coordinator.authoritativeSnapshot)
+        XCTAssertEqual(settlementUpdate?.syncRevision, syncing.syncRevision)
+        XCTAssertEqual(settlementUpdate?.state.syncStatus, .syncing)
+        XCTAssertGreaterThan(
+            settlementUpdate?.economyRevision ?? 0,
+            initial.economyRevision
+        )
+    }
+
+    @MainActor
+    func testSyncTransitionBeforeProfileLoadIsRetainedInBootstrapSnapshot() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let composition = ProductionAppComposition(
+            dependencies: ProductionAppDependencies(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: .local,
+                deviceID: "preload-sync-transition-device",
+                sessionNonce: fixedUUID(15),
+                newProfileID: fixedUUID(115),
+                now: { Date(timeIntervalSince1970: 18_000) },
+                makeRunID: { self.fixedRunID(15) },
+                makeSeed: { 15 }
+            )
+        )
+
+        XCTAssertNil(try composition.publishSyncStatusTransition(.syncing))
+        XCTAssertNil(try composition.publishSyncStatusTransition(.syncing))
+
+        let coordinator = AppCoordinator(environment: composition.environment)
+        await coordinator.bootstrap()
+        let bootstrap = try XCTUnwrap(coordinator.authoritativeSnapshot)
+
+        XCTAssertEqual(bootstrap.syncRevision, 1)
+        XCTAssertEqual(bootstrap.state.syncStatus, .syncing)
+    }
+
+    @MainActor
+    func testRepositorySnapshotCannotSelectRuntimeSyncStatus() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let channel = ProductionAuthoritativeStateChannel()
+        let composition = ProductionAppComposition(
+            dependencies: ProductionAppDependencies(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: .local,
+                deviceID: "repository-sync-isolation-device",
+                sessionNonce: fixedUUID(14),
+                newProfileID: fixedUUID(114),
+                now: { Date(timeIntervalSince1970: 17_000) },
+                makeRunID: { self.fixedRunID(14) },
+                makeSeed: { 14 }
+            ),
+            authoritativeStateChannel: channel
+        )
+        let initial = makeRepositorySnapshot(playerRevision: 4, economyRevision: 9)
+        _ = try composition.accept(initial, publishUpdate: false)
+        let syncing = try XCTUnwrap(
+            composition.publishSyncStatusTransition(.syncing)
+        )
+        var iterator = channel.makeStream().makeAsyncIterator()
+        let replayedSyncing = await iterator.next()
+        XCTAssertEqual(replayedSyncing, syncing)
+
+        let repositoryCandidate = replacing(
+            initial,
+            playerRevision: 5,
+            syncStatus: .current
+        )
+        _ = try composition.accept(repositoryCandidate, publishUpdate: true)
+        let nextPublished = await iterator.next()
+        let published = try XCTUnwrap(nextPublished)
+
+        XCTAssertEqual(published.playerRevision, 5)
+        XCTAssertEqual(published.economyRevision, 9)
+        XCTAssertEqual(published.syncRevision, syncing.syncRevision)
+        XCTAssertEqual(published.state.syncStatus, .syncing)
     }
 
     @MainActor
@@ -207,6 +340,33 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
             initial,
             playerRevision: 5,
             rewardedAdState: rewardedAdState
+        )
+
+        XCTAssertThrowsError(try composition.accept(malformed, publishUpdate: false)) {
+            XCTAssertEqual(
+                $0 as? ProductionAppCompositionError,
+                .authoritativeRevisionCollision
+            )
+        }
+    }
+
+    @MainActor
+    func testPlayerRevisionAdvanceCannotCarryRewardObservationWithoutEconomyRevision() throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let composition = makeAcceptanceComposition(root: root)
+        let initial = makeRepositorySnapshot(playerRevision: 4, economyRevision: 9)
+        _ = try composition.accept(initial, publishUpdate: false)
+        let runID = fixedRunID(882)
+        let malformed = replacing(
+            initial,
+            playerRevision: 5,
+            rewardedRunObservations: [
+                runID: RewardedRunObservation(
+                    observedCycle: 3,
+                    disposition: .candidate
+                ),
+            ]
         )
 
         XCTAssertThrowsError(try composition.accept(malformed, publishUpdate: false)) {
@@ -524,8 +684,10 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
         settings: PlayerSettings? = nil,
         inventory: PlayerInventory? = nil,
         rewardedAdState: RewardedAdState? = nil,
+        syncStatus: ProfileSyncStatus? = nil,
         coinBalances: CoinBalanceSummary? = nil,
-        ledger: [LedgerEntryID: CoinLedgerEntry]? = nil
+        ledger: [LedgerEntryID: CoinLedgerEntry]? = nil,
+        rewardedRunObservations: [RunID: RewardedRunObservation]? = nil
     ) -> LocalPlayerProfileSnapshot {
         let resolvedBalances = coinBalances ?? snapshot.coinBalances
         return LocalPlayerProfileSnapshot(
@@ -540,13 +702,15 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
                 coinBalance: resolvedBalances.total,
                 achievementProgress: snapshot.player.achievementProgress,
                 rewardedAdState: rewardedAdState ?? snapshot.player.rewardedAdState,
-                syncStatus: snapshot.player.syncStatus
+                syncStatus: syncStatus ?? snapshot.player.syncStatus
             ),
             economyRevision: economyRevision ?? snapshot.economyRevision,
             coinBalances: resolvedBalances,
             completedRuns: snapshot.completedRuns,
             ledger: ledger ?? snapshot.ledger,
-            pendingLedgerEntryIDs: snapshot.pendingLedgerEntryIDs
+            pendingLedgerEntryIDs: snapshot.pendingLedgerEntryIDs,
+            rewardedRunObservations:
+                rewardedRunObservations ?? snapshot.rewardedRunObservations
         )
     }
 

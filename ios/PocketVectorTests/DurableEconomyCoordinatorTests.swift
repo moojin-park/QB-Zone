@@ -769,6 +769,102 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testConcurrentCatalogUnlockCollisionRecoversWinnersImmutableTimestamp()
+        async throws
+    {
+        let firstDirectory = makeTemporaryDirectory()
+        let secondDirectory = makeTemporaryDirectory()
+        defer {
+            removeTemporaryDirectory(firstDirectory)
+            removeTemporaryDirectory(secondDirectory)
+        }
+        let base = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let sharedProfileID = uuid(107)
+        let first = try await makeFixture(
+            directory: firstDirectory,
+            cloud: base,
+            sessionNonce: uuid(108),
+            newProfileID: sharedProfileID
+        )
+        let second = try await makeFixture(
+            directory: secondDirectory,
+            cloud: base,
+            sessionNonce: uuid(109),
+            newProfileID: sharedProfileID
+        )
+        let pack = EconomyConfiguration.coinPacks[1]
+        let firstPackRequest = storeDeliveryRequest(
+            transactionID: 10_700,
+            context: first.context,
+            pack: pack
+        )
+        let secondPackRequest = storeDeliveryRequest(
+            transactionID: 10_700,
+            context: second.context,
+            pack: pack
+        )
+        _ = try await first.coordinator.deliver(firstPackRequest)
+        _ = try await second.coordinator.deliver(secondPackRequest)
+
+        let blockedCloud = BlockingFirstCommitTransport(base: base)
+        let loserTimestamp = baseDate.addingTimeInterval(60_000)
+        let winnerTimestamp = baseDate.addingTimeInterval(61_000)
+        let loserCoordinator = DurableEconomyCoordinator(
+            context: first.context,
+            sessionAuthority: first.authority,
+            repository: first.repository,
+            cloud: blockedCloud,
+            configuration: try DurableEconomyCloudConfiguration(
+                recordID: economyRecordID,
+                recordType: "TestEconomyHead",
+                payloadFieldName: "economyPayload"
+            ),
+            now: { loserTimestamp }
+        )
+        let winnerCoordinator = DurableEconomyCoordinator(
+            context: second.context,
+            sessionAuthority: second.authority,
+            repository: second.repository,
+            cloud: base,
+            configuration: try DurableEconomyCloudConfiguration(
+                recordID: economyRecordID,
+                recordType: "TestEconomyHead",
+                payloadFieldName: "economyPayload"
+            ),
+            now: { winnerTimestamp }
+        )
+        let item = alternateJerseyItem()
+        let ledgerID = CoinLedgerID.catalogUnlock(itemID: item.id)
+        let loserTask = Task {
+            try await loserCoordinator.unlock(
+                itemID: item.id,
+                requestOperationID: OperationID("loser-catalog-collision"),
+                session: first.snapshot.session
+            )
+        }
+        await blockedCloud.waitUntilFirstCommitStarts()
+        let winnerResult = try await winnerCoordinator.unlock(
+            itemID: item.id,
+            requestOperationID: OperationID("winner-catalog-collision"),
+            session: second.snapshot.session
+        )
+        await blockedCloud.releaseFirstCommit()
+        let recovered = try await loserTask.value
+
+        XCTAssertEqual(winnerResult.cloudReceipt.status, .committed)
+        XCTAssertEqual(recovered.cloudReceipt.status, .committedThenRefreshed)
+        let firstAfter = try await first.repository.snapshot()
+        let secondAfter = try await second.repository.snapshot()
+        XCTAssertEqual(firstAfter.ledger[ledgerID]?.createdAt, winnerTimestamp)
+        XCTAssertEqual(secondAfter.ledger[ledgerID]?.createdAt, winnerTimestamp)
+        XCTAssertNotEqual(firstAfter.ledger[ledgerID]?.createdAt, loserTimestamp)
+        XCTAssertTrue(
+            firstAfter.player.inventory.ownedJerseyIDs.contains(alternateJerseyID())
+        )
+    }
+
     func testCatalogUnlockRejectsEveryMismatchedPreparedRequestBeforeCloudWrite() async throws {
         let directory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(directory) }
@@ -869,9 +965,1049 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(first.outcome.coins, 100)
         XCTAssertEqual(retry.cloudReceipt.status, .alreadyCommitted)
         let snapshot = try await fixture.repository.snapshot()
-        XCTAssertEqual(snapshot.coinBalances.confirmed, 100)
+        XCTAssertEqual(snapshot.coinBalances.confirmed, 550)
         XCTAssertNil(snapshot.player.rewardedAdState.eligibleOfferID)
-        XCTAssertGreaterThan(snapshot.coinBalances.pending, 0)
+        XCTAssertEqual(snapshot.coinBalances.pending, 0)
+
+        let history = try decodeCloudHistory(
+            await cloud.allRecords(for: cloudAccountID)
+        )
+        XCTAssertEqual(history.head.rewardedAd.cycle, 1)
+        XCTAssertEqual(history.head.rewardedAd.validRunsSinceReward, 0)
+        XCTAssertNil(history.head.rewardedAd.eligibleOfferID)
+        XCTAssertEqual(
+            history.rewardOfferMarkers[offerID]?.redemption,
+            DurableEconomyCoordinator.RewardRedemption(
+                offerID: offerID,
+                providerTransactionID: request.providerTransactionID,
+                ledgerEntryID: first.outcome.ledgerEntryID
+            )
+        )
+        let verifiedRewardHistory = try await fixture.coordinator
+            .verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: history.ledgerMarkers,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+        XCTAssertEqual(
+            verifiedRewardHistory.rewardedAd,
+            history.head.rewardedAd
+        )
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: history.ledgerMarkers,
+                rewardOfferMarkers: [:]
+            )
+            XCTFail("A complete replica cannot omit a reward-offer marker")
+        } catch {
+            XCTAssertEqual(
+                error as? DurableEconomyCoordinatorError,
+                .malformedCloudRecord
+            )
+        }
+    }
+
+    func testCanonicalRewardBatchUnlocksFiveIgnoresSixthAndRetriesExactlyOnce()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let cloud = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let fixture = try await makeFixture(
+            directory: directory,
+            cloud: cloud,
+            sessionNonce: uuid(112),
+            newProfileID: uuid(113)
+        )
+        var runIDs: [RunID] = []
+        for index in 210 ..< 216 {
+            let settlement = try await settleRun(
+                index: index,
+                repository: fixture.repository,
+                session: fixture.snapshot.session
+            )
+            runIDs.append(settlement.outcome.record.run.runID)
+        }
+        let pending = try await fixture.repository.snapshot()
+        let pendingIDs = pending.pendingLedgerEntryIDs
+
+        let first = try await fixture.coordinator.confirmPendingCredits(
+            pendingIDs,
+            session: pending.session
+        )
+        let recordsAfterFirst = await cloud.allRecords(for: cloudAccountID)
+        let history = try decodeCloudHistory(recordsAfterFirst)
+
+        XCTAssertEqual(first.cloudReceipt.status, .committed)
+        XCTAssertEqual(history.head.rewardedAd.cycle, 0)
+        XCTAssertEqual(history.head.rewardedAd.validRunsSinceReward, 5)
+        XCTAssertEqual(
+            history.head.rewardedAd.eligibleOfferID,
+            RewardedAdState.offerID(for: 0)
+        )
+        let orderedMarkers = history.ledgerMarkers.values.sorted {
+            $0.eventPosition < $1.eventPosition
+        }
+        XCTAssertEqual(
+            orderedMarkers.map(\.record.entry.id),
+            pendingIDs.sorted { $0.rawValue < $1.rawValue }
+        )
+        XCTAssertEqual(
+            orderedMarkers.map(\.eventPosition.cloudHeadRevision),
+            Array(repeating: 1, count: pendingIDs.count)
+        )
+        XCTAssertEqual(
+            orderedMarkers.map(\.eventPosition.batchIndex),
+            (0 ..< UInt32(pendingIDs.count)).map { $0 }
+        )
+
+        for (offset, runID) in runIDs.prefix(5).enumerated() {
+            let marker = try XCTUnwrap(
+                history.ledgerMarkers[CoinLedgerID.gameplay(runID: runID)]
+            )
+            XCTAssertEqual(
+                marker.gameplayRewardObservation,
+                RewardedRunObservation(observedCycle: 0, disposition: .candidate)
+            )
+            XCTAssertEqual(
+                marker.gameplayRewardResolution,
+                .counted(
+                    cycle: 0,
+                    resultingCount: offset + 1,
+                    unlockedOfferID: offset == 4
+                        ? RewardedAdState.offerID(for: 0)
+                        : nil
+                )
+            )
+        }
+        let sixthMarker = try XCTUnwrap(
+            history.ledgerMarkers[CoinLedgerID.gameplay(runID: runIDs[5])]
+        )
+        XCTAssertEqual(
+            sixthMarker.gameplayRewardObservation,
+            RewardedRunObservation(
+                observedCycle: 0,
+                disposition: .ignoredWhileOfferPending
+            )
+        )
+        XCTAssertEqual(
+            sixthMarker.gameplayRewardResolution,
+            .ignoredActiveOffer(
+                cycle: 0,
+                offerID: RewardedAdState.offerID(for: 0)
+            )
+        )
+        let verifiedBatchHistory = try await fixture.coordinator
+            .verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: history.ledgerMarkers,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+        XCTAssertEqual(
+            verifiedBatchHistory.rewardedAd,
+            history.head.rewardedAd
+        )
+        var duplicatePositionMarkers = history.ledgerMarkers
+        let firstGameplayID = CoinLedgerID.gameplay(runID: runIDs[0])
+        let secondGameplayID = CoinLedgerID.gameplay(runID: runIDs[1])
+        let firstGameplayMarker = try XCTUnwrap(
+            history.ledgerMarkers[firstGameplayID]
+        )
+        let secondGameplayMarker = try XCTUnwrap(
+            history.ledgerMarkers[secondGameplayID]
+        )
+        duplicatePositionMarkers[secondGameplayID] =
+            DurableEconomyCoordinator.CloudLedgerMarkerV2(
+                schemaVersion: secondGameplayMarker.schemaVersion,
+                headRecordID: secondGameplayMarker.headRecordID,
+                record: secondGameplayMarker.record,
+                eventPosition: firstGameplayMarker.eventPosition,
+                gameplayRewardObservation:
+                    secondGameplayMarker.gameplayRewardObservation,
+                gameplayRewardResolution:
+                    secondGameplayMarker.gameplayRewardResolution
+            )
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: duplicatePositionMarkers,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+            XCTFail("Duplicate event positions must fail complete replay")
+        } catch {
+            XCTAssertEqual(
+                error as? DurableEconomyCoordinatorError,
+                .invalidRewardEventPosition
+            )
+        }
+
+        let retry = try await fixture.coordinator.confirmPendingCredits(
+            pendingIDs,
+            session: pending.session
+        )
+        let recordsAfterRetry = await cloud.allRecords(for: cloudAccountID)
+        XCTAssertEqual(retry.cloudReceipt.status, .alreadyCommitted)
+        XCTAssertEqual(recordsAfterRetry, recordsAfterFirst)
+    }
+
+    func testStaleRewardCycleAfterRedemptionNeverBanksAndFutureCycleFailsClosed()
+        async throws
+    {
+        let staleDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(staleDirectory) }
+        let staleCloud = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let fixture = try await makeFixture(
+            directory: staleDirectory,
+            cloud: staleCloud,
+            sessionNonce: uuid(114),
+            newProfileID: uuid(115)
+        )
+        for index in 220 ..< 225 {
+            _ = try await settleRun(
+                index: index,
+                repository: fixture.repository,
+                session: fixture.snapshot.session
+            )
+        }
+        let eligible = try await fixture.repository.snapshot()
+        let offerID = try XCTUnwrap(eligible.player.rewardedAdState.eligibleOfferID)
+        _ = try await fixture.coordinator.deliverVerifiedReward(
+            VerifiedRewardedAdDurableDeliveryRequest(
+                session: eligible.session,
+                offerID: offerID,
+                providerTransactionID: AdProviderTransactionID("stale-cycle-redemption"),
+                rewardedAt: baseDate.addingTimeInterval(50_000)
+            )
+        )
+        let delayed = try await settleRun(
+            index: 225,
+            repository: fixture.repository,
+            session: fixture.snapshot.session
+        )
+        let delayedEntryID = try XCTUnwrap(delayed.outcome.gameplayRewardEntryID)
+        let delayedRunID = delayed.outcome.record.run.runID
+        let staleRepository = RewardObservationOverrideRepository(
+            base: fixture.repository,
+            overrides: [
+                delayedRunID: RewardedRunObservation(
+                    observedCycle: 0,
+                    disposition: .candidate
+                ),
+            ]
+        )
+        let staleCoordinator = try makeCoordinator(
+            context: fixture.context,
+            authority: fixture.authority,
+            repository: staleRepository,
+            cloud: staleCloud
+        )
+
+        _ = try await staleCoordinator.confirmPendingCredits(
+            [delayedEntryID],
+            session: fixture.snapshot.session
+        )
+        let staleHistory = try decodeCloudHistory(
+            await staleCloud.allRecords(for: cloudAccountID)
+        )
+        let delayedMarker = try XCTUnwrap(
+            staleHistory.ledgerMarkers[delayedEntryID]
+        )
+        XCTAssertEqual(
+            delayedMarker.gameplayRewardResolution,
+            .ignoredStaleCycle(observedCycle: 0, currentCycle: 1)
+        )
+        XCTAssertEqual(staleHistory.head.rewardedAd.cycle, 1)
+        XCTAssertEqual(staleHistory.head.rewardedAd.validRunsSinceReward, 0)
+        XCTAssertNil(staleHistory.head.rewardedAd.eligibleOfferID)
+        let verifiedStaleHistory = try await staleCoordinator
+            .verifyCompleteCloudHistory(
+                head: staleHistory.head,
+                ledgerMarkers: staleHistory.ledgerMarkers,
+                rewardOfferMarkers: staleHistory.rewardOfferMarkers
+            )
+        XCTAssertEqual(
+            verifiedStaleHistory.rewardedAd,
+            staleHistory.head.rewardedAd
+        )
+
+        let futureDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(futureDirectory) }
+        let futureCloud = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let futureFixture = try await makeFixture(
+            directory: futureDirectory,
+            cloud: futureCloud,
+            sessionNonce: uuid(116),
+            newProfileID: uuid(117)
+        )
+        let futureSettlement = try await settleRun(
+            index: 226,
+            repository: futureFixture.repository,
+            session: futureFixture.snapshot.session
+        )
+        let futureEntryID = try XCTUnwrap(
+            futureSettlement.outcome.gameplayRewardEntryID
+        )
+        let futureRunID = futureSettlement.outcome.record.run.runID
+        let futureRepository = RewardObservationOverrideRepository(
+            base: futureFixture.repository,
+            overrides: [
+                futureRunID: RewardedRunObservation(
+                    observedCycle: 1,
+                    disposition: .candidate
+                ),
+            ]
+        )
+        let futureCoordinator = try makeCoordinator(
+            context: futureFixture.context,
+            authority: futureFixture.authority,
+            repository: futureRepository,
+            cloud: futureCloud
+        )
+        let pendingBefore = try await futureFixture.repository.snapshot()
+
+        do {
+            _ = try await futureCoordinator.confirmPendingCredits(
+                [futureEntryID],
+                session: futureFixture.snapshot.session
+            )
+            XCTFail("An observation from a future reward cycle must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? DurableEconomyCoordinatorError,
+                .rewardedRunObservationAhead(observed: 1, current: 0)
+            )
+        }
+        let futureRecords = await futureCloud.allRecords(for: cloudAccountID)
+        let pendingAfter = try await futureFixture.repository.snapshot()
+        XCTAssertTrue(futureRecords.isEmpty)
+        XCTAssertEqual(pendingAfter, pendingBefore)
+    }
+
+    func testLegacyV1ProfileMigratesProgressAndConfirmsCoinsWithoutAdProgress()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let cloud = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let profileID = uuid(114)
+        let original = try await makeFixture(
+            directory: directory,
+            cloud: cloud,
+            sessionNonce: uuid(115),
+            newProfileID: profileID
+        )
+        let pack = EconomyConfiguration.coinPacks[1]
+        _ = try await original.coordinator.deliver(
+            storeDeliveryRequest(
+                transactionID: 11_400,
+                context: original.context,
+                pack: pack
+            )
+        )
+        let alternate = alternateJerseyItem()
+        _ = try await original.coordinator.unlock(
+            itemID: alternate.id,
+            requestOperationID: OperationID("legacy-inventory-unlock"),
+            session: original.snapshot.session
+        )
+        _ = try await original.repository.updateSettings(
+            PlayerSettings(
+                musicVolume: 0.25,
+                sfxVolume: 0.75,
+                isMuted: true,
+                reducedMotion: true,
+                tutorialCompleted: true
+            ),
+            session: original.snapshot.session,
+            at: baseDate.addingTimeInterval(10)
+        )
+        let settlement = try await settleRun(
+            index: 239,
+            repository: original.repository,
+            session: original.snapshot.session
+        )
+        let beforeMigration = try await original.repository.snapshot()
+        XCTAssertEqual(beforeMigration.player.rewardedAdState.validRunsSinceReward, 1)
+        let signingID = try XCTUnwrap(settlement.outcome.signingBonusEntryID)
+        let gameplayID = try XCTUnwrap(settlement.outcome.gameplayRewardEntryID)
+        let legacySigningTimestamp = baseDate.addingTimeInterval(23_900)
+
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        var legacyDocument = try PlayerProfileMigrator().decode(
+            Data(contentsOf: locations.primaryURL)
+        )
+        let signingEntry = try XCTUnwrap(legacyDocument.player.ledger[signingID])
+        legacyDocument.player.ledger[signingID] = CoinLedgerEntry(
+            id: signingEntry.id,
+            delta: signingEntry.delta,
+            reason: signingEntry.reason,
+            createdAt: legacySigningTimestamp
+        )
+        legacyDocument.rewardedRunObservations = nil
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        encoder.outputFormatting = [.sortedKeys]
+        let legacyData = try encoder.encode(
+            PlayerProfileEnvelopeV1(
+                document: legacyDocument,
+                savedAt: baseDate.addingTimeInterval(24_000)
+            )
+        )
+        try legacyData.write(to: locations.primaryURL, options: .atomic)
+        try legacyData.write(to: locations.backupURL, options: .atomic)
+
+        let migrated = try await makeFixture(
+            directory: directory,
+            cloud: cloud,
+            sessionNonce: uuid(116),
+            newProfileID: uuid(999)
+        )
+        let loaded = migrated.snapshot
+        XCTAssertEqual(loaded.player.profileID, profileID)
+        XCTAssertTrue(loaded.player.settings.isMuted)
+        XCTAssertTrue(loaded.player.settings.reducedMotion)
+        XCTAssertTrue(
+            loaded.player.inventory.ownedJerseyIDs.contains(alternateJerseyID())
+        )
+        XCTAssertNotNil(loaded.completedRuns[settlement.outcome.record.run.runID])
+        XCTAssertEqual(loaded.pendingLedgerEntryIDs, [signingID, gameplayID])
+        XCTAssertEqual(
+            loaded.ledger[signingID]?.createdAt,
+            PersistedEconomyRulesV1.signingBonusLedgerCreatedAt
+        )
+        XCTAssertEqual(
+            loaded.rewardedRunObservations[settlement.outcome.record.run.runID],
+            RewardedRunObservation(
+                observedCycle: 0,
+                disposition: .legacyNonCounting
+            )
+        )
+        XCTAssertEqual(loaded.player.rewardedAdState.validRunsSinceReward, 0)
+        XCTAssertNil(loaded.player.rewardedAdState.eligibleOfferID)
+
+        let confirmationResult = try await migrated.coordinator
+            .confirmAllPendingCredits()
+        let confirmed = try XCTUnwrap(confirmationResult)
+        XCTAssertEqual(confirmed.snapshot.coinBalances.pending, 0)
+        XCTAssertEqual(
+            confirmed.snapshot.coinBalances.confirmed,
+            loaded.coinBalances.confirmed + loaded.coinBalances.pending
+        )
+        XCTAssertEqual(
+            confirmed.snapshot.player.rewardedAdState.validRunsSinceReward,
+            0
+        )
+        let history = try decodeCloudHistory(
+            await cloud.allRecords(for: cloudAccountID)
+        )
+        XCTAssertEqual(history.head.rewardedAd, .initial)
+        XCTAssertEqual(
+            history.ledgerMarkers[gameplayID]?.gameplayRewardResolution,
+            .ignoredLegacyNonCounting
+        )
+        let gameplayMarker = try XCTUnwrap(history.ledgerMarkers[gameplayID])
+        var invalidLegacyCycleMarkers = history.ledgerMarkers
+        invalidLegacyCycleMarkers[gameplayID] =
+            DurableEconomyCoordinator.CloudLedgerMarkerV2(
+                schemaVersion: gameplayMarker.schemaVersion,
+                headRecordID: gameplayMarker.headRecordID,
+                record: gameplayMarker.record,
+                eventPosition: gameplayMarker.eventPosition,
+                gameplayRewardObservation: RewardedRunObservation(
+                    observedCycle: 1,
+                    disposition: .legacyNonCounting
+                ),
+                gameplayRewardResolution: .ignoredLegacyNonCounting
+            )
+        do {
+            _ = try await migrated.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: invalidLegacyCycleMarkers,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+            XCTFail("Legacy non-counting observations must use canonical cycle zero")
+        } catch {}
+
+        let persistedData = try Data(contentsOf: locations.primaryURL)
+        let persistedObject = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: persistedData) as? [String: Any]
+        )
+        XCTAssertEqual(
+            (persistedObject["schemaVersion"] as? NSNumber)?.intValue,
+            PlayerProfileEnvelopeV2.schemaVersion
+        )
+        XCTAssertNotNil(
+            (persistedObject["document"] as? [String: Any])?["rewardedRunObservations"]
+        )
+    }
+
+    func testCompleteHistoryVerifierRejectsWrongHeadFutureOrphanTamperingAndAccumulator()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let cloud = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let fixture = try await makeFixture(
+            directory: directory,
+            cloud: cloud,
+            sessionNonce: uuid(116),
+            newProfileID: uuid(117)
+        )
+        let pack = EconomyConfiguration.coinPacks[1]
+        _ = try await fixture.coordinator.deliver(
+            storeDeliveryRequest(
+                transactionID: 11_600,
+                context: fixture.context,
+                pack: pack
+            )
+        )
+        _ = try await fixture.coordinator.unlock(
+            itemID: alternateJerseyItem().id,
+            requestOperationID: OperationID("history-verifier-unlock"),
+            session: fixture.snapshot.session
+        )
+        for index in 240 ..< 245 {
+            _ = try await settleRun(
+                index: index,
+                repository: fixture.repository,
+                session: fixture.snapshot.session
+            )
+        }
+        _ = try await fixture.coordinator.confirmAllPendingCredits()
+        let eligible = try await fixture.repository.snapshot()
+        let offerID = try XCTUnwrap(eligible.player.rewardedAdState.eligibleOfferID)
+        _ = try await fixture.coordinator.deliverVerifiedReward(
+            VerifiedRewardedAdDurableDeliveryRequest(
+                session: eligible.session,
+                offerID: offerID,
+                providerTransactionID: AdProviderTransactionID("verify-complete-history"),
+                rewardedAt: baseDate.addingTimeInterval(25_000)
+            )
+        )
+        let history = try decodeCloudHistory(
+            await cloud.allRecords(for: cloudAccountID)
+        )
+        _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+            head: history.head,
+            ledgerMarkers: history.ledgerMarkers,
+            rewardOfferMarkers: history.rewardOfferMarkers
+        )
+
+        let signingID = CoinLedgerID.signingBonus(
+            version: PersistedEconomyRulesV1.signingBonusVersion
+        )
+        let signingMarker = try XCTUnwrap(history.ledgerMarkers[signingID])
+        var wrongHeadMarkers = history.ledgerMarkers
+        wrongHeadMarkers[signingID] = DurableEconomyCoordinator.CloudLedgerMarkerV2(
+            schemaVersion: signingMarker.schemaVersion,
+            headRecordID: CloudRecordID("wrong-economy-head"),
+            record: signingMarker.record,
+            eventPosition: signingMarker.eventPosition,
+            gameplayRewardObservation: nil,
+            gameplayRewardResolution: nil
+        )
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: wrongHeadMarkers,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+            XCTFail("A marker bound to another head must be rejected")
+        } catch {}
+
+        var futureMarkers = history.ledgerMarkers
+        futureMarkers[signingID] = DurableEconomyCoordinator.CloudLedgerMarkerV2(
+            schemaVersion: signingMarker.schemaVersion,
+            headRecordID: signingMarker.headRecordID,
+            record: signingMarker.record,
+            eventPosition: DurableEconomyCoordinator.CloudEconomyEventPosition(
+                cloudHeadRevision: history.head.revision + 1,
+                batchIndex: signingMarker.eventPosition.batchIndex
+            ),
+            gameplayRewardObservation: nil,
+            gameplayRewardResolution: nil
+        )
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: futureMarkers,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+            XCTFail("A future event position must be rejected")
+        } catch {}
+
+        var noncontiguousMarkers = history.ledgerMarkers
+        noncontiguousMarkers[signingID] =
+            DurableEconomyCoordinator.CloudLedgerMarkerV2(
+                schemaVersion: signingMarker.schemaVersion,
+                headRecordID: signingMarker.headRecordID,
+                record: signingMarker.record,
+                eventPosition: DurableEconomyCoordinator.CloudEconomyEventPosition(
+                    cloudHeadRevision: signingMarker.eventPosition.cloudHeadRevision,
+                    batchIndex: 999
+                ),
+                gameplayRewardObservation: nil,
+                gameplayRewardResolution: nil
+            )
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: noncontiguousMarkers,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+            XCTFail("A noncontiguous batch index must be rejected")
+        } catch {}
+
+        let rewardMarker = try XCTUnwrap(history.rewardOfferMarkers[offerID])
+        let orphanOfferID = RewardOfferID("reward-cycle/orphan")
+        var orphanOffers = history.rewardOfferMarkers
+        orphanOffers[orphanOfferID] = DurableEconomyCoordinator.CloudRewardOfferMarkerV2(
+            schemaVersion: rewardMarker.schemaVersion,
+            headRecordID: rewardMarker.headRecordID,
+            redemption: DurableEconomyCoordinator.RewardRedemption(
+                offerID: orphanOfferID,
+                providerTransactionID: AdProviderTransactionID("orphan-provider"),
+                ledgerEntryID: LedgerEntryID("rewarded-ad/orphan-provider")
+            ),
+            binding: rewardMarker.binding,
+            eventPosition: DurableEconomyCoordinator.CloudEconomyEventPosition(
+                cloudHeadRevision: history.head.revision,
+                batchIndex: 999
+            )
+        )
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: history.ledgerMarkers,
+                rewardOfferMarkers: orphanOffers
+            )
+            XCTFail("An orphan reward-offer marker must be rejected")
+        } catch {}
+
+        let gameplay = try XCTUnwrap(history.ledgerMarkers.first(where: {
+            if case .gameplay = $0.value.record.entry.reason { return true }
+            return false
+        }))
+        var tamperedResolutionMarkers = history.ledgerMarkers
+        let firstTamperedResolution =
+            DurableEconomyCoordinator.GameplayRewardResolution.counted(
+                cycle: 0,
+                resultingCount: 1,
+                unlockedOfferID: nil
+            )
+        let tamperedResolution = gameplay.value.gameplayRewardResolution
+            == firstTamperedResolution
+            ? DurableEconomyCoordinator.GameplayRewardResolution.counted(
+                cycle: 0,
+                resultingCount: 2,
+                unlockedOfferID: nil
+            )
+            : firstTamperedResolution
+        tamperedResolutionMarkers[gameplay.key] =
+            DurableEconomyCoordinator.CloudLedgerMarkerV2(
+                schemaVersion: gameplay.value.schemaVersion,
+                headRecordID: gameplay.value.headRecordID,
+                record: gameplay.value.record,
+                eventPosition: gameplay.value.eventPosition,
+                gameplayRewardObservation: gameplay.value.gameplayRewardObservation,
+                gameplayRewardResolution: tamperedResolution
+            )
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: tamperedResolutionMarkers,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+            XCTFail("A tampered gameplay resolution must be rejected")
+        } catch {}
+
+        let batchGameplay = try XCTUnwrap(history.ledgerMarkers.first(where: {
+            guard case .gameplay = $0.value.record.entry.reason else { return false }
+            return $0.value.eventPosition.cloudHeadRevision
+                == signingMarker.eventPosition.cloudHeadRevision
+        }))
+        var reorderedBatch = history.ledgerMarkers
+        reorderedBatch[signingID] = DurableEconomyCoordinator.CloudLedgerMarkerV2(
+            schemaVersion: signingMarker.schemaVersion,
+            headRecordID: signingMarker.headRecordID,
+            record: signingMarker.record,
+            eventPosition: batchGameplay.value.eventPosition,
+            gameplayRewardObservation: nil,
+            gameplayRewardResolution: nil
+        )
+        reorderedBatch[batchGameplay.key] =
+            DurableEconomyCoordinator.CloudLedgerMarkerV2(
+                schemaVersion: batchGameplay.value.schemaVersion,
+                headRecordID: batchGameplay.value.headRecordID,
+                record: batchGameplay.value.record,
+                eventPosition: signingMarker.eventPosition,
+                gameplayRewardObservation:
+                    batchGameplay.value.gameplayRewardObservation,
+                gameplayRewardResolution:
+                    batchGameplay.value.gameplayRewardResolution
+            )
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: reorderedBatch,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+            XCTFail("A batch not ordered by ledger ID must be rejected")
+        } catch {}
+
+        let gameplayBinding = batchGameplay.value.record.binding
+        var splitBindingBatch = history.ledgerMarkers
+        splitBindingBatch[batchGameplay.key] =
+            DurableEconomyCoordinator.CloudLedgerMarkerV2(
+                schemaVersion: batchGameplay.value.schemaVersion,
+                headRecordID: batchGameplay.value.headRecordID,
+                record: DurableEconomyCoordinator.CloudLedgerRecord(
+                    entry: batchGameplay.value.record.entry,
+                    binding: DurableEconomyCoordinator.MutationBinding(
+                        cloudAccountID: gameplayBinding.cloudAccountID,
+                        accountBinding: gameplayBinding.accountBinding,
+                        profileAccountIdentity:
+                            gameplayBinding.profileAccountIdentity,
+                        profileSessionNonce: gameplayBinding.profileSessionNonce,
+                        sourceEconomyRevision:
+                            gameplayBinding.sourceEconomyRevision,
+                        operationID: OperationID("fabricated-split-batch"),
+                        kind: gameplayBinding.kind
+                    )
+                ),
+                eventPosition: batchGameplay.value.eventPosition,
+                gameplayRewardObservation:
+                    batchGameplay.value.gameplayRewardObservation,
+                gameplayRewardResolution:
+                    batchGameplay.value.gameplayRewardResolution
+            )
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: splitBindingBatch,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+            XCTFail("One atomic revision cannot contain multiple mutation bindings")
+        } catch {}
+
+        let storeMarker = try XCTUnwrap(history.ledgerMarkers.first(where: {
+            if case .storeKit = $0.value.record.entry.reason { return true }
+            return false
+        }))
+        let unlockMarker = try XCTUnwrap(history.ledgerMarkers.first(where: {
+            if case .catalogUnlock = $0.value.record.entry.reason { return true }
+            return false
+        }))
+        let unlockBinding = unlockMarker.value.record.binding
+        var reusedOperationID = history.ledgerMarkers
+        reusedOperationID[unlockMarker.key] =
+            DurableEconomyCoordinator.CloudLedgerMarkerV2(
+                schemaVersion: unlockMarker.value.schemaVersion,
+                headRecordID: unlockMarker.value.headRecordID,
+                record: DurableEconomyCoordinator.CloudLedgerRecord(
+                    entry: unlockMarker.value.record.entry,
+                    binding: DurableEconomyCoordinator.MutationBinding(
+                        cloudAccountID: unlockBinding.cloudAccountID,
+                        accountBinding: unlockBinding.accountBinding,
+                        profileAccountIdentity:
+                            unlockBinding.profileAccountIdentity,
+                        profileSessionNonce: unlockBinding.profileSessionNonce,
+                        sourceEconomyRevision:
+                            unlockBinding.sourceEconomyRevision,
+                        operationID:
+                            storeMarker.value.record.binding.operationID,
+                        kind: unlockBinding.kind
+                    )
+                ),
+                eventPosition: unlockMarker.value.eventPosition,
+                gameplayRewardObservation: nil,
+                gameplayRewardResolution: nil
+            )
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: reusedOperationID,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+            XCTFail("One operation ID cannot own two cloud-head revisions")
+        } catch {
+            XCTAssertEqual(
+                error as? DurableEconomyCoordinatorError,
+                .malformedCloudRecord
+            )
+        }
+
+        var debitBeforeCredit = history.ledgerMarkers
+        debitBeforeCredit[storeMarker.key] =
+            DurableEconomyCoordinator.CloudLedgerMarkerV2(
+                schemaVersion: storeMarker.value.schemaVersion,
+                headRecordID: storeMarker.value.headRecordID,
+                record: storeMarker.value.record,
+                eventPosition: unlockMarker.value.eventPosition,
+                gameplayRewardObservation: nil,
+                gameplayRewardResolution: nil
+            )
+        debitBeforeCredit[unlockMarker.key] =
+            DurableEconomyCoordinator.CloudLedgerMarkerV2(
+                schemaVersion: unlockMarker.value.schemaVersion,
+                headRecordID: unlockMarker.value.headRecordID,
+                record: unlockMarker.value.record,
+                eventPosition: storeMarker.value.eventPosition,
+                gameplayRewardObservation: nil,
+                gameplayRewardResolution: nil
+            )
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: history.head,
+                ledgerMarkers: debitBeforeCredit,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+            XCTFail("A debit replayed before its funding credit must be rejected")
+        } catch {}
+
+        var accumulatorHead = history.head
+        accumulatorHead.ledgerAccumulator.confirmedBalance += 1
+        do {
+            _ = try await fixture.coordinator.verifyCompleteCloudHistory(
+                head: accumulatorHead,
+                ledgerMarkers: history.ledgerMarkers,
+                rewardOfferMarkers: history.rewardOfferMarkers
+            )
+            XCTFail("A head accumulator mismatch must be rejected")
+        } catch {}
+    }
+
+    func testConcurrentSigningBonusCASLoserUploadsGameplayWithExactWinnerMarker()
+        async throws
+    {
+        let winnerDirectory = makeTemporaryDirectory()
+        let loserDirectory = makeTemporaryDirectory()
+        defer {
+            removeTemporaryDirectory(winnerDirectory)
+            removeTemporaryDirectory(loserDirectory)
+        }
+        let base = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let blockedLoserCloud = BlockingFirstCommitTransport(base: base)
+        let sharedProfileID = uuid(118)
+        let winner = try await makeFixture(
+            directory: winnerDirectory,
+            cloud: base,
+            sessionNonce: uuid(119),
+            newProfileID: sharedProfileID
+        )
+        let loser = try await makeFixture(
+            directory: loserDirectory,
+            cloud: blockedLoserCloud,
+            sessionNonce: uuid(120),
+            newProfileID: sharedProfileID
+        )
+        let winnerSettlement = try await settleRun(
+            index: 230,
+            repository: winner.repository,
+            session: winner.snapshot.session
+        )
+        let loserSettlement = try await settleRun(
+            index: 231,
+            repository: loser.repository,
+            session: loser.snapshot.session
+        )
+        let signingID = try XCTUnwrap(winnerSettlement.outcome.signingBonusEntryID)
+        XCTAssertEqual(loserSettlement.outcome.signingBonusEntryID, signingID)
+        let loserGameplayID = try XCTUnwrap(
+            loserSettlement.outcome.gameplayRewardEntryID
+        )
+        let winnerPending = try await winner.repository.snapshot()
+        let loserPending = try await loser.repository.snapshot()
+        let winnerEntry = try XCTUnwrap(winnerPending.ledger[signingID])
+        let loserEntry = try XCTUnwrap(loserPending.ledger[signingID])
+        XCTAssertEqual(winnerEntry, loserEntry)
+        XCTAssertEqual(
+            winnerEntry.createdAt,
+            PersistedEconomyRulesV1.signingBonusLedgerCreatedAt
+        )
+
+        let loserTask = Task {
+            try await loser.coordinator.confirmPendingCredits(
+                [signingID, loserGameplayID],
+                session: loser.snapshot.session
+            )
+        }
+        await blockedLoserCloud.waitUntilFirstCommitStarts()
+        _ = try await winner.coordinator.confirmPendingCredits(
+            [signingID],
+            session: winner.snapshot.session
+        )
+        await blockedLoserCloud.releaseFirstCommit()
+        let loserResult = try await loserTask.value
+        let loserCommitCount = await blockedLoserCloud.commitCallCount()
+
+        XCTAssertEqual(loserResult.cloudReceipt.status, .committed)
+        XCTAssertEqual(loserCommitCount, 2)
+        let history = try decodeCloudHistory(
+            await base.allRecords(for: cloudAccountID)
+        )
+        XCTAssertEqual(history.ledgerMarkers[signingID]?.record.entry, winnerEntry)
+        XCTAssertEqual(
+            history.ledgerMarkers[loserGameplayID]?.record.entry,
+            loserResult.snapshot.ledger[loserGameplayID]
+        )
+        XCTAssertEqual(
+            history.ledgerMarkers.values.filter {
+                if case .signingBonus = $0.record.entry.reason { return true }
+                return false
+            }.count,
+            1
+        )
+        XCTAssertEqual(history.head.ledgerAccumulator.entryCount, 2)
+        XCTAssertEqual(history.head.rewardedAd.validRunsSinceReward, 1)
+        XCTAssertEqual(loserResult.snapshot.coinBalances.pending, 0)
+    }
+
+    func testConcurrentSameStoreTransactionRefreshesExactOperationCollision()
+        async throws
+    {
+        let firstDirectory = makeTemporaryDirectory()
+        let secondDirectory = makeTemporaryDirectory()
+        defer {
+            removeTemporaryDirectory(firstDirectory)
+            removeTemporaryDirectory(secondDirectory)
+        }
+        let base = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let blockedFirstCloud = BlockingFirstCommitTransport(base: base)
+        let sharedProfileID = uuid(122)
+        let first = try await makeFixture(
+            directory: firstDirectory,
+            cloud: blockedFirstCloud,
+            sessionNonce: uuid(123),
+            newProfileID: sharedProfileID
+        )
+        let second = try await makeFixture(
+            directory: secondDirectory,
+            cloud: base,
+            sessionNonce: uuid(124),
+            newProfileID: sharedProfileID
+        )
+        let pack = EconomyConfiguration.coinPacks[0]
+        let firstRequest = storeDeliveryRequest(
+            transactionID: 12_200,
+            context: first.context,
+            pack: pack
+        )
+        let secondRequest = storeDeliveryRequest(
+            transactionID: 12_200,
+            context: second.context,
+            pack: pack
+        )
+        XCTAssertEqual(firstRequest.ledgerEntry, secondRequest.ledgerEntry)
+
+        let firstTask = Task {
+            try await first.coordinator.deliver(firstRequest)
+        }
+        await blockedFirstCloud.waitUntilFirstCommitStarts()
+        let winner = try await second.coordinator.deliver(secondRequest)
+        await blockedFirstCloud.releaseFirstCommit()
+        let refreshed = try await firstTask.value
+
+        XCTAssertEqual(winner.status, .committed)
+        XCTAssertEqual(refreshed.status, .alreadyCommitted)
+        let firstAfter = try await first.repository.snapshot()
+        let secondAfter = try await second.repository.snapshot()
+        XCTAssertEqual(
+            firstAfter.coinBalances.confirmed,
+            pack.coins
+        )
+        XCTAssertEqual(
+            secondAfter.coinBalances.confirmed,
+            pack.coins
+        )
+        let history = try decodeCloudHistory(
+            await base.allRecords(for: cloudAccountID)
+        )
+        XCTAssertEqual(history.head.ledgerAccumulator.entryCount, 1)
+        XCTAssertEqual(
+            history.ledgerMarkers[firstRequest.ledgerEntry.id]?.record.entry,
+            firstRequest.ledgerEntry
+        )
+    }
+
+    func testBothDevicesConfirmAllSignalsRebaseWithoutMutatingLoser()
+        async throws
+    {
+        let winnerDirectory = makeTemporaryDirectory()
+        let loserDirectory = makeTemporaryDirectory()
+        defer {
+            removeTemporaryDirectory(winnerDirectory)
+            removeTemporaryDirectory(loserDirectory)
+        }
+        let base = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let blockedLoserCloud = BlockingFirstCommitTransport(base: base)
+        let sharedProfileID = uuid(125)
+        let winner = try await makeFixture(
+            directory: winnerDirectory,
+            cloud: base,
+            sessionNonce: uuid(126),
+            newProfileID: sharedProfileID
+        )
+        let loser = try await makeFixture(
+            directory: loserDirectory,
+            cloud: blockedLoserCloud,
+            sessionNonce: uuid(127),
+            newProfileID: sharedProfileID
+        )
+        _ = try await settleRun(
+            index: 232,
+            repository: winner.repository,
+            session: winner.snapshot.session
+        )
+        _ = try await settleRun(
+            index: 233,
+            repository: loser.repository,
+            session: loser.snapshot.session
+        )
+        let loserBefore = try await loser.repository.snapshot()
+
+        let loserTask = Task {
+            try await loser.coordinator.confirmAllPendingCredits()
+        }
+        await blockedLoserCloud.waitUntilFirstCommitStarts()
+        let winnerResult = try await winner.coordinator.confirmAllPendingCredits()
+        await blockedLoserCloud.releaseFirstCommit()
+        do {
+            _ = try await loserTask.value
+            XCTFail("Unhydrated remote history must require an explicit rebase")
+        } catch {
+            XCTAssertEqual(
+                error as? DurableEconomyCoordinatorError,
+                .cloudRebaseRequired
+            )
+        }
+
+        let loserAfter = try await loser.repository.snapshot()
+        XCTAssertEqual(loserAfter, loserBefore)
+        XCTAssertEqual(loserAfter.pendingLedgerEntryIDs.count, 2)
+        XCTAssertEqual(winnerResult?.snapshot.pendingLedgerEntryIDs, Set())
+        let history = try decodeCloudHistory(
+            await base.allRecords(for: cloudAccountID)
+        )
+        XCTAssertEqual(history.head.ledgerAccumulator.entryCount, 2)
+        XCTAssertEqual(history.head.rewardedAd.validRunsSinceReward, 1)
     }
 
     func testSimultaneousDistinctTransactionsRunFIFOAcrossSuspensionPoints() async throws {
@@ -1031,7 +2167,9 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
             } catch {
                 XCTAssertEqual(
                     error as? DurableEconomyCoordinatorError,
-                    .cloudStateDiverged
+                    component == "entryCount"
+                        ? .cloudRebaseRequired
+                        : .cloudStateDiverged
                 )
             }
         }
@@ -1121,12 +2259,72 @@ private extension DurableEconomyCoordinatorTests {
         let coordinator: DurableEconomyCoordinator
     }
 
+    struct DecodedCloudHistory {
+        let head: DurableEconomyCoordinator.CloudAccountHeadV3
+        let ledgerMarkers: [
+            LedgerEntryID: DurableEconomyCoordinator.CloudLedgerMarkerV2
+        ]
+        let rewardOfferMarkers: [
+            RewardOfferID: DurableEconomyCoordinator.CloudRewardOfferMarkerV2
+        ]
+    }
+
     var cloudAccountID: CloudAccountID {
         CloudAccountID("test-private-cloud-account")
     }
 
     var economyRecordID: CloudRecordID {
         CloudRecordID("test-economy-head")
+    }
+
+    func decodeCloudHistory(
+        _ records: [CloudRecord]
+    ) throws -> DecodedCloudHistory {
+        let decoder = JSONDecoder()
+        let headRecord = try headRecord(in: records)
+        let head = try decoder.decode(
+            DurableEconomyCoordinator.CloudAccountHeadV3.self,
+            from: headPayload(from: headRecord)
+        )
+        var ledgerMarkers: [
+            LedgerEntryID: DurableEconomyCoordinator.CloudLedgerMarkerV2
+        ] = [:]
+        var rewardOfferMarkers: [
+            RewardOfferID: DurableEconomyCoordinator.CloudRewardOfferMarkerV2
+        ] = [:]
+        for record in records where record.id != economyRecordID {
+            let payload = try headPayload(from: record)
+            if let marker = try? decoder.decode(
+                DurableEconomyCoordinator.CloudLedgerMarkerV2.self,
+                from: payload
+            ) {
+                guard ledgerMarkers.updateValue(
+                    marker,
+                    forKey: marker.record.entry.id
+                ) == nil else {
+                    throw DurableEconomyTestFixtureError.malformedCloudPayload
+                }
+                continue
+            }
+            if let marker = try? decoder.decode(
+                DurableEconomyCoordinator.CloudRewardOfferMarkerV2.self,
+                from: payload
+            ) {
+                guard rewardOfferMarkers.updateValue(
+                    marker,
+                    forKey: marker.redemption.offerID
+                ) == nil else {
+                    throw DurableEconomyTestFixtureError.malformedCloudPayload
+                }
+                continue
+            }
+            throw DurableEconomyTestFixtureError.malformedCloudPayload
+        }
+        return DecodedCloudHistory(
+            head: head,
+            ledgerMarkers: ledgerMarkers,
+            rewardOfferMarkers: rewardOfferMarkers
+        )
     }
 
     func makeFixture(
@@ -1549,6 +2747,88 @@ private struct TamperingCatalogUnlockRepository: DurableEconomyLocalPersisting {
             session: session
         )
         return tampering.apply(to: request)
+    }
+
+    func durableApplyUnlock(
+        using receipt: DurableCatalogUnlockReceipt,
+        session: ProfileSessionToken,
+        at date: Date
+    ) async throws -> CatalogUnlockOutcome {
+        try await base.unlock(using: receipt, session: session, at: date)
+    }
+
+    func durableSettleRewardedAd(
+        using receipt: DurableRewardedAdReceipt,
+        session: ProfileSessionToken,
+        savedAt: Date
+    ) async throws -> RewardedAdSettlementOutcome {
+        try await base.settleRewardedAd(
+            using: receipt,
+            session: session,
+            savedAt: savedAt
+        )
+    }
+}
+
+private struct RewardObservationOverrideRepository: DurableEconomyLocalPersisting {
+    let base: LocalPlayerProfileRepository
+    let overrides: [RunID: RewardedRunObservation]
+
+    func durableEconomySnapshot() async throws -> LocalPlayerProfileSnapshot {
+        let snapshot = try await base.snapshot()
+        return LocalPlayerProfileSnapshot(
+            session: snapshot.session,
+            player: snapshot.player,
+            economyRevision: snapshot.economyRevision,
+            coinBalances: snapshot.coinBalances,
+            completedRuns: snapshot.completedRuns,
+            ledger: snapshot.ledger,
+            pendingLedgerEntryIDs: snapshot.pendingLedgerEntryIDs,
+            rewardedRunObservations: snapshot.rewardedRunObservations.merging(
+                overrides,
+                uniquingKeysWith: { _, override in override }
+            )
+        )
+    }
+
+    func durableConfirmPendingCredits(
+        _ entryIDs: Set<LedgerEntryID>,
+        session: ProfileSessionToken,
+        confirmation: DurableEconomyConfirmation,
+        savedAt: Date
+    ) async throws -> LocalPlayerProfileSnapshot {
+        try await base.confirmPendingCredits(
+            entryIDs,
+            session: session,
+            confirmation: confirmation,
+            savedAt: savedAt
+        )
+    }
+
+    func durableRecordConfirmedCredit(
+        _ entry: CoinLedgerEntry,
+        session: ProfileSessionToken,
+        confirmation: DurableEconomyConfirmation,
+        savedAt: Date
+    ) async throws -> LocalPlayerProfileSnapshot {
+        try await base.recordConfirmedCredit(
+            entry,
+            session: session,
+            confirmation: confirmation,
+            savedAt: savedAt
+        )
+    }
+
+    func durablePrepareUnlock(
+        itemID: CatalogItemID,
+        operationID: OperationID,
+        session: ProfileSessionToken
+    ) async throws -> DurableCatalogUnlockRequest {
+        try await base.prepareUnlock(
+            itemID: itemID,
+            operationID: operationID,
+            session: session
+        )
     }
 
     func durableApplyUnlock(

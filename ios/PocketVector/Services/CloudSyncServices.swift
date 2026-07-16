@@ -97,6 +97,109 @@ protocol CloudSyncTransport: Sendable {
     func commitAtomically(_ request: CloudAtomicWriteRequest) async throws -> CloudAtomicWriteReceipt
 }
 
+/// An opaque, provider-issued position in one private record zone's change
+/// history. Callers persist this only alongside the complete replica to which
+/// it applies; advancing a cursor independently can permanently skip records.
+struct CloudChangeCursor: RawRepresentable, Codable, Equatable, Sendable {
+    let rawValue: Data
+
+    init(rawValue: Data) {
+        precondition(!rawValue.isEmpty, "CloudChangeCursor cannot be empty")
+        self.rawValue = rawValue
+    }
+
+    init(_ rawValue: Data) {
+        self.init(rawValue: rawValue)
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let data = try container.decode(Data.self)
+        guard !data.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "CloudChangeCursor cannot be empty"
+            )
+        }
+        rawValue = data
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+/// The adapter's opaque locator for a provider record. It is retained only so
+/// a later tombstone can be matched to a previously discovered logical record.
+/// It must never be presented as a player-facing or analytics identifier.
+struct CloudProviderRecordLocator: RawRepresentable, Codable, Equatable, Hashable, Sendable {
+    let rawValue: String
+
+    init(rawValue: String) {
+        precondition(!rawValue.isEmpty, "CloudProviderRecordLocator cannot be empty")
+        self.rawValue = rawValue
+    }
+
+    init(_ rawValue: String) {
+        self.init(rawValue: rawValue)
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        guard !value.isEmpty else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "CloudProviderRecordLocator cannot be empty"
+            )
+        }
+        rawValue = value
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+}
+
+struct CloudDiscoveredRecord: Codable, Equatable, Sendable {
+    let locator: CloudProviderRecordLocator
+    let record: CloudRecord
+}
+
+struct CloudDeletedRecord: Codable, Equatable, Sendable {
+    let locator: CloudProviderRecordLocator
+    let recordType: String
+}
+
+struct CloudRecordChangePage: Codable, Equatable, Sendable {
+    let accountID: CloudAccountID
+    let modifications: [CloudDiscoveredRecord]
+    let deletions: [CloudDeletedRecord]
+    let nextCursor: CloudChangeCursor
+    let moreComing: Bool
+}
+
+/// Only a brand-new account replica may create its private custom zone. A
+/// caller holding any prior cloud state must require the zone to exist so a
+/// user purge or encrypted-data reset cannot silently resurrect stale data.
+enum CloudZonePreparationPolicy: Codable, Equatable, Sendable {
+    case createIfMissingForInitialBootstrap
+    case requireExisting
+}
+
+/// Discovery is intentionally separate from the known-ID/atomic-write
+/// transport. Production keeps its tested operation-marker transaction path
+/// while a bootstrap coordinator consumes these lossless, paged zone changes.
+protocol CloudSyncChangeFetching: Sendable {
+    func recordChanges(
+        accountID: CloudAccountID,
+        after cursor: CloudChangeCursor?,
+        zonePreparation: CloudZonePreparationPolicy
+    ) async throws -> CloudRecordChangePage
+}
+
 protocol CloudSyncStateStoring: Sendable {
     func state(for accountID: CloudAccountID) async throws -> Data?
     func saveState(_ state: Data, for accountID: CloudAccountID) async throws

@@ -291,6 +291,9 @@ enum DurableEconomyCoordinatorError: Error, Equatable, Sendable {
     case duplicateCloudRecord
     case cloudStateBindingMismatch
     case cloudStateDiverged
+    /// The cloud contains confirmed history absent from this local profile.
+    /// Mutation remains blocked until a complete replica hydrator rebases it.
+    case cloudRebaseRequired
     case cloudLedgerCollision(LedgerEntryID)
     case cloudUnlockCollision(CatalogItemID)
     case cloudRewardCollision(RewardOfferID)
@@ -301,6 +304,9 @@ enum DurableEconomyCoordinatorError: Error, Equatable, Sendable {
     case committedOperationRefreshMismatch
     case committedOperationMissingAfterRefresh(OperationID)
     case economyRevisionChanged(expected: UInt64, actual: UInt64)
+    case missingRewardedRunObservation(RunID)
+    case rewardedRunObservationAhead(observed: UInt64, current: UInt64)
+    case invalidRewardEventPosition
 }
 
 /// Serializes every economy mutation for one active account/profile session.
@@ -380,6 +386,10 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
             }
             entries[entryID] = entry
         }
+        let gameplayRewardObservations = try gameplayRewardObservations(
+            for: entries,
+            snapshot: snapshot
+        )
 
         let operationID = mutationOperationID(
             kind: "pending-credit",
@@ -389,7 +399,8 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
             entries: entries,
             kind: .pendingCredits,
             operationID: operationID,
-            sourceSnapshot: snapshot
+            sourceSnapshot: snapshot,
+            gameplayRewardObservations: gameplayRewardObservations
         )
         try await revalidateAfterCloudCommit(sourceSnapshot: snapshot)
 
@@ -458,7 +469,8 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
             entries: [request.ledgerEntry.id: request.ledgerEntry],
             kind: .storeKit,
             operationID: operationID,
-            sourceSnapshot: snapshot
+            sourceSnapshot: snapshot,
+            gameplayRewardObservations: [:]
         )
         try await revalidateAfterCloudCommit(sourceSnapshot: snapshot)
 
@@ -615,10 +627,40 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
         else {
             throw DurableEconomyCoordinatorError.invalidRewardedAdRequest
         }
-        let snapshot = try await validatedSnapshot(expectedSession: request.session)
         let ledgerID = CoinLedgerID.rewardedAd(
             providerTransactionID: request.providerTransactionID
         )
+        let redemption = RewardRedemption(
+            offerID: request.offerID,
+            providerTransactionID: request.providerTransactionID,
+            ledgerEntryID: ledgerID
+        )
+        // Preserve the immutable offer-level collision signal before a stale
+        // device attempts to publish its still-pending gameplay credits. The
+        // preflight is only diagnostic; the later CAS mutation repeats every
+        // binding check and remains authoritative if cloud state races.
+        let existingReward = try await loadCloudState(
+            rewardOfferIDs: [request.offerID]
+        ).rewardOfferMarkers[request.offerID]
+        if let existingReward,
+           existingReward.redemption != redemption {
+            throw DurableEconomyCoordinatorError.cloudRewardCollision(
+                request.offerID
+            )
+        }
+
+        var snapshot = try await validatedSnapshot(expectedSession: request.session)
+        // A verified ad callback can arrive immediately after the fifth local
+        // run. Resolve every pending gameplay observation into the canonical
+        // cloud head before attempting to consume its offer.
+        if snapshot.player.rewardedAdState.eligibleOfferID == request.offerID,
+           !snapshot.pendingLedgerEntryIDs.isEmpty {
+            _ = try await confirmPendingCreditsImpl(
+                snapshot.pendingLedgerEntryIDs,
+                session: request.session
+            )
+            snapshot = try await validatedSnapshot(expectedSession: request.session)
+        }
         let entry = CoinLedgerEntry(
             id: ledgerID,
             delta: PersistedEconomyRulesV1.rewardedAdCoins,
@@ -673,7 +715,10 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
     }
 }
 
-private extension DurableEconomyCoordinator {
+/// Internal history models are intentionally visible to the forthcoming full
+/// CloudKit hydrator. Mutations remain actor-serialized, while restoration can
+/// decode and replay the same fail-closed event schema without duplicating it.
+extension DurableEconomyCoordinator {
     enum MutationKind: String, Codable, Equatable, Sendable {
         case pendingCredits = "pending-credits"
         case storeKit = "storekit"
@@ -722,21 +767,124 @@ private extension DurableEconomyCoordinator {
         )
     }
 
-    struct CloudLedgerMarkerV1: Codable, Equatable, Sendable {
-        static let schemaVersion = 1
+    struct CloudEconomyEventPosition: Codable, Equatable, Hashable, Sendable,
+        Comparable
+    {
+        let cloudHeadRevision: UInt64
+        let batchIndex: UInt32
+
+        static func < (
+            lhs: CloudEconomyEventPosition,
+            rhs: CloudEconomyEventPosition
+        ) -> Bool {
+            if lhs.cloudHeadRevision != rhs.cloudHeadRevision {
+                return lhs.cloudHeadRevision < rhs.cloudHeadRevision
+            }
+            return lhs.batchIndex < rhs.batchIndex
+        }
+    }
+
+    enum GameplayRewardResolution: Codable, Equatable, Sendable {
+        case counted(
+            cycle: UInt64,
+            resultingCount: Int,
+            unlockedOfferID: RewardOfferID?
+        )
+        case ignoredActiveOffer(cycle: UInt64, offerID: RewardOfferID)
+        case ignoredStaleCycle(observedCycle: UInt64, currentCycle: UInt64)
+        case ignoredLegacyNonCounting
+    }
+
+    struct CloudLedgerMarkerV2: Codable, Equatable, Sendable {
+        static let schemaVersion = 2
 
         let schemaVersion: Int
         let headRecordID: CloudRecordID
         let record: CloudLedgerRecord
+        let eventPosition: CloudEconomyEventPosition
+        let gameplayRewardObservation: RewardedRunObservation?
+        let gameplayRewardResolution: GameplayRewardResolution?
     }
 
-    struct CloudRewardOfferMarkerV1: Codable, Equatable, Sendable {
-        static let schemaVersion = 1
+    struct CloudRewardOfferMarkerV2: Codable, Equatable, Sendable {
+        static let schemaVersion = 2
 
         let schemaVersion: Int
         let headRecordID: CloudRecordID
         let redemption: RewardRedemption
         let binding: MutationBinding
+        let eventPosition: CloudEconomyEventPosition
+    }
+
+    struct CloudRewardedAdHeadV1: Codable, Equatable, Sendable {
+        static let schemaVersion = 1
+
+        let schemaVersion: Int
+        private(set) var cycle: UInt64
+        private(set) var validRunsSinceReward: Int
+        private(set) var eligibleOfferID: RewardOfferID?
+
+        static let initial = CloudRewardedAdHeadV1(
+            schemaVersion: schemaVersion,
+            cycle: 0,
+            validRunsSinceReward: 0,
+            eligibleOfferID: nil
+        )
+
+        mutating func resolveGameplay(
+            observation: RewardedRunObservation
+        ) throws -> GameplayRewardResolution {
+            if observation.disposition == .legacyNonCounting {
+                guard observation.observedCycle == 0 else {
+                    throw DurableEconomyCoordinatorError.malformedCloudRecord
+                }
+                return .ignoredLegacyNonCounting
+            }
+            guard observation.observedCycle <= cycle else {
+                throw DurableEconomyCoordinatorError.rewardedRunObservationAhead(
+                    observed: observation.observedCycle,
+                    current: cycle
+                )
+            }
+            if observation.observedCycle < cycle {
+                return .ignoredStaleCycle(
+                    observedCycle: observation.observedCycle,
+                    currentCycle: cycle
+                )
+            }
+
+            let offerID = RewardedAdState.offerID(for: cycle)
+            if observation.disposition == .ignoredWhileOfferPending
+                || eligibleOfferID != nil
+            {
+                return .ignoredActiveOffer(cycle: cycle, offerID: offerID)
+            }
+
+            validRunsSinceReward += 1
+            if validRunsSinceReward == PersistedEconomyRulesV1.rewardedAdRunThreshold {
+                eligibleOfferID = offerID
+            }
+            return .counted(
+                cycle: cycle,
+                resultingCount: validRunsSinceReward,
+                unlockedOfferID: eligibleOfferID
+            )
+        }
+
+        mutating func redeem(_ offerID: RewardOfferID) throws {
+            guard eligibleOfferID == offerID,
+                  validRunsSinceReward == PersistedEconomyRulesV1.rewardedAdRunThreshold
+            else {
+                throw DurableEconomyCoordinatorError.cloudRewardCollision(offerID)
+            }
+            let nextCycle = cycle.addingReportingOverflow(1)
+            guard !nextCycle.overflow else {
+                throw DurableEconomyCoordinatorError.cloudRevisionOverflow
+            }
+            cycle = nextCycle.partialValue
+            validRunsSinceReward = 0
+            eligibleOfferID = nil
+        }
     }
 
     /// The mutable account head is deliberately constant-size with respect to
@@ -744,8 +892,8 @@ private extension DurableEconomyCoordinator {
     /// and that set is strictly bounded by the finite launch catalog. Full
     /// ledger entries and reward-offer dedupe keys live in deterministic,
     /// immutable records written atomically with this head.
-    struct CloudAccountHeadV2: Codable, Equatable, Sendable {
-        static let schemaVersion = 2
+    struct CloudAccountHeadV3: Codable, Equatable, Sendable {
+        static let schemaVersion = 3
 
         let schemaVersion: Int
         let cloudAccountID: CloudAccountID
@@ -754,6 +902,7 @@ private extension DurableEconomyCoordinator {
         var revision: UInt64
         var ledgerAccumulator: LedgerAccumulator
         var unlockedItemIDs: [CatalogItemID]
+        var rewardedAd: CloudRewardedAdHeadV1
 
         mutating func appendUnlockedItem(_ itemID: CatalogItemID) {
             unlockedItemIDs.append(itemID)
@@ -762,14 +911,14 @@ private extension DurableEconomyCoordinator {
     }
 
     struct LoadedCloudState: Sendable {
-        let state: CloudAccountHeadV2?
+        let state: CloudAccountHeadV3?
         let changeTag: CloudChangeTag?
-        let ledgerMarkers: [LedgerEntryID: CloudLedgerMarkerV1]
-        let rewardOfferMarkers: [RewardOfferID: CloudRewardOfferMarkerV1]
+        let ledgerMarkers: [LedgerEntryID: CloudLedgerMarkerV2]
+        let rewardOfferMarkers: [RewardOfferID: CloudRewardOfferMarkerV2]
     }
 
     struct CommittedMutation: Sendable {
-        let state: CloudAccountHeadV2
+        let state: CloudAccountHeadV3
         let receipt: DurableEconomyCloudCommitReceipt
         let entries: [LedgerEntryID: CoinLedgerEntry]
     }
@@ -781,6 +930,194 @@ private extension DurableEconomyCoordinator {
         let rewardRedemption: RewardRedemption?
         let requiredBalanceBefore: Int64?
         let recoversExistingCatalogUnlockTimestamp: Bool
+        let gameplayRewardObservations: [LedgerEntryID: RewardedRunObservation]
+    }
+
+    private enum CompleteHistoryEvent {
+        case gameplay(CloudLedgerMarkerV2)
+        case redemption(CloudRewardOfferMarkerV2)
+
+        var position: CloudEconomyEventPosition {
+            switch self {
+            case let .gameplay(marker): marker.eventPosition
+            case let .redemption(marker): marker.eventPosition
+            }
+        }
+    }
+
+    /// Validates one complete, already-discovered immutable economy replica.
+    /// Partial known-ID reads must never call this API or claim hydration proof.
+    @discardableResult
+    func verifyCompleteCloudHistory(
+        head: CloudAccountHeadV3,
+        ledgerMarkers: [LedgerEntryID: CloudLedgerMarkerV2],
+        rewardOfferMarkers: [RewardOfferID: CloudRewardOfferMarkerV2]
+    ) throws -> CloudAccountHeadV3 {
+        try validateCloudState(head)
+        if head.ledgerAccumulator.entryCount == 0 {
+            guard head.revision == 0 else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+        } else {
+            guard head.revision > 0,
+                  head.revision <= head.ledgerAccumulator.entryCount else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+        }
+
+        var unlockedItemIDs = Set<CatalogItemID>()
+        var events: [CompleteHistoryEvent] = []
+        var ledgerPositionOwners: [CloudEconomyEventPosition: LedgerEntryID] = [:]
+
+        for (entryID, marker) in ledgerMarkers.sorted(by: {
+            $0.key.rawValue < $1.key.rawValue
+        }) {
+            guard entryID == marker.record.entry.id,
+                  marker.schemaVersion == CloudLedgerMarkerV2.schemaVersion,
+                  marker.headRecordID == configuration.recordID,
+                  ledgerPositionOwners.updateValue(
+                      entryID,
+                      forKey: marker.eventPosition
+                  ) == nil
+            else {
+                throw DurableEconomyCoordinatorError.invalidRewardEventPosition
+            }
+            try validateCloudLedgerRecord(marker.record)
+            try validateCloudLedgerMarker(marker, headRevision: head.revision)
+            switch marker.record.entry.reason {
+            case .gameplay:
+                events.append(.gameplay(marker))
+
+            case let .rewardedAd(offerID, providerTransactionID):
+                guard let offerMarker = rewardOfferMarkers[offerID],
+                      offerMarker.redemption.offerID == offerID,
+                      offerMarker.redemption.providerTransactionID
+                        == providerTransactionID,
+                      offerMarker.redemption.ledgerEntryID == entryID,
+                      offerMarker.eventPosition == marker.eventPosition,
+                      offerMarker.binding == marker.record.binding
+                else {
+                    throw DurableEconomyCoordinatorError.malformedCloudRecord
+                }
+
+            case let .catalogUnlock(itemID):
+                guard unlockedItemIDs.insert(itemID).inserted else {
+                    throw DurableEconomyCoordinatorError.malformedCloudRecord
+                }
+
+            case .signingBonus, .storeKit:
+                break
+            }
+        }
+
+        var offerPositions = Set<CloudEconomyEventPosition>()
+        for (offerID, marker) in rewardOfferMarkers.sorted(by: {
+            $0.key.rawValue < $1.key.rawValue
+        }) {
+            guard offerID == marker.redemption.offerID,
+                  marker.schemaVersion == CloudRewardOfferMarkerV2.schemaVersion,
+                  marker.headRecordID == configuration.recordID,
+                  marker.binding.kind == .rewardedAd,
+                  offerPositions.insert(marker.eventPosition).inserted
+            else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+            try validateMutationBinding(marker.binding)
+            try validateEventPosition(
+                marker.eventPosition,
+                headRevision: head.revision
+            )
+            let redemption = marker.redemption
+            guard let ledgerMarker = ledgerMarkers[redemption.ledgerEntryID],
+                  ledgerPositionOwners[marker.eventPosition]
+                    == redemption.ledgerEntryID,
+                  ledgerMarker.eventPosition == marker.eventPosition,
+                  ledgerMarker.record.binding == marker.binding,
+                  case let .rewardedAd(ledgerOfferID, providerTransactionID)
+                    = ledgerMarker.record.entry.reason,
+                  ledgerOfferID == offerID,
+                  providerTransactionID == redemption.providerTransactionID
+            else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+            events.append(.redemption(marker))
+        }
+
+        let orderedLedgerMarkers = ledgerMarkers.values.sorted {
+            $0.eventPosition < $1.eventPosition
+        }
+        let markersByRevision = Dictionary(
+            grouping: orderedLedgerMarkers,
+            by: { $0.eventPosition.cloudHeadRevision }
+        )
+        guard UInt64(markersByRevision.count) == head.revision else {
+            throw DurableEconomyCoordinatorError.invalidRewardEventPosition
+        }
+        var revisionByOperationID: [OperationID: UInt64] = [:]
+        for (revision, markers) in markersByRevision {
+            let canonical = markers.sorted {
+                $0.eventPosition.batchIndex < $1.eventPosition.batchIndex
+            }
+            guard let binding = canonical.first?.record.binding,
+                  canonical.allSatisfy({ $0.record.binding == binding }) else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+            if let priorRevision = revisionByOperationID.updateValue(
+                revision,
+                forKey: binding.operationID
+            ), priorRevision != revision {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+            for (offset, marker) in canonical.enumerated() {
+                guard let expectedIndex = UInt32(exactly: offset),
+                      marker.eventPosition.batchIndex == expectedIndex else {
+                    throw DurableEconomyCoordinatorError.invalidRewardEventPosition
+                }
+            }
+            let positionedEntryIDs = canonical.map(\.record.entry.id.rawValue)
+            guard positionedEntryIDs == positionedEntryIDs.sorted() else {
+                throw DurableEconomyCoordinatorError.invalidRewardEventPosition
+            }
+        }
+
+        var accumulator = LedgerAccumulator.empty
+        for marker in orderedLedgerMarkers {
+            try add(marker.record.entry, to: &accumulator)
+        }
+
+        guard accumulator == head.ledgerAccumulator,
+              unlockedItemIDs == Set(head.unlockedItemIDs),
+              head.unlockedItemIDs
+                == head.unlockedItemIDs.sorted(by: { $0.rawValue < $1.rawValue })
+        else {
+            throw DurableEconomyCoordinatorError.cloudStateDiverged
+        }
+
+        events.sort { $0.position < $1.position }
+        guard Set(events.map(\.position)).count == events.count else {
+            throw DurableEconomyCoordinatorError.invalidRewardEventPosition
+        }
+
+        var replayed = CloudRewardedAdHeadV1.initial
+        for event in events {
+            switch event {
+            case let .gameplay(marker):
+                guard let observation = marker.gameplayRewardObservation,
+                      let resolution = marker.gameplayRewardResolution,
+                      try replayed.resolveGameplay(observation: observation)
+                        == resolution
+                else {
+                    throw DurableEconomyCoordinatorError.malformedCloudRecord
+                }
+
+            case let .redemption(marker):
+                try replayed.redeem(marker.redemption.offerID)
+            }
+        }
+        guard replayed == head.rewardedAd else {
+            throw DurableEconomyCoordinatorError.cloudStateDiverged
+        }
+        return head
     }
 
     func validatedSnapshot(
@@ -864,36 +1201,37 @@ private extension DurableEconomyCoordinator {
 
         let recordsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
         let headRecord = recordsByID[configuration.recordID]
-        let state: CloudAccountHeadV2?
+        let state: CloudAccountHeadV3?
         if let headRecord {
-            state = try decodeCloudPayload(CloudAccountHeadV2.self, from: headRecord)
+            state = try decodeCloudPayload(CloudAccountHeadV3.self, from: headRecord)
             try validateCloudState(state!)
         } else {
             state = nil
         }
 
-        var ledgerMarkers: [LedgerEntryID: CloudLedgerMarkerV1] = [:]
+        var ledgerMarkers: [LedgerEntryID: CloudLedgerMarkerV2] = [:]
         for (recordID, entryID) in ledgerIDsByRecordID {
             guard let record = recordsByID[recordID] else { continue }
-            let marker = try decodeCloudPayload(CloudLedgerMarkerV1.self, from: record)
-            guard marker.schemaVersion == CloudLedgerMarkerV1.schemaVersion,
+            let marker = try decodeCloudPayload(CloudLedgerMarkerV2.self, from: record)
+            guard marker.schemaVersion == CloudLedgerMarkerV2.schemaVersion,
                   marker.headRecordID == configuration.recordID,
                   marker.record.entry.id == entryID
             else {
                 throw DurableEconomyCoordinatorError.malformedCloudRecord
             }
             try validateCloudLedgerRecord(marker.record)
+            try validateCloudLedgerMarker(marker, headRevision: state?.revision)
             ledgerMarkers[entryID] = marker
         }
 
-        var rewardOfferMarkers: [RewardOfferID: CloudRewardOfferMarkerV1] = [:]
+        var rewardOfferMarkers: [RewardOfferID: CloudRewardOfferMarkerV2] = [:]
         for (recordID, offerID) in offersByRecordID {
             guard let record = recordsByID[recordID] else { continue }
             let marker = try decodeCloudPayload(
-                CloudRewardOfferMarkerV1.self,
+                CloudRewardOfferMarkerV2.self,
                 from: record
             )
-            guard marker.schemaVersion == CloudRewardOfferMarkerV1.schemaVersion,
+            guard marker.schemaVersion == CloudRewardOfferMarkerV2.schemaVersion,
                   marker.headRecordID == configuration.recordID,
                   marker.redemption.offerID == offerID,
                   marker.redemption.ledgerEntryID == CoinLedgerID.rewardedAd(
@@ -904,6 +1242,10 @@ private extension DurableEconomyCoordinator {
                 throw DurableEconomyCoordinatorError.malformedCloudRecord
             }
             try validateMutationBinding(marker.binding)
+            try validateEventPosition(
+                marker.eventPosition,
+                headRevision: state?.revision
+            )
             rewardOfferMarkers[offerID] = marker
         }
 
@@ -921,24 +1263,25 @@ private extension DurableEconomyCoordinator {
     func validatedState(
         from loaded: LoadedCloudState,
         allowCreation: Bool = true
-    ) throws -> CloudAccountHeadV2 {
+    ) throws -> CloudAccountHeadV3 {
         if let state = loaded.state { return state }
         guard allowCreation else {
             throw DurableEconomyCoordinatorError.cloudStateDiverged
         }
-        return CloudAccountHeadV2(
-            schemaVersion: CloudAccountHeadV2.schemaVersion,
+        return CloudAccountHeadV3(
+            schemaVersion: CloudAccountHeadV3.schemaVersion,
             cloudAccountID: context.cloudAccountID,
             accountBinding: context.accountBinding,
             profileAccountIdentity: context.profileSession.accountIdentity,
             revision: 0,
             ledgerAccumulator: .empty,
-            unlockedItemIDs: []
+            unlockedItemIDs: [],
+            rewardedAd: .initial
         )
     }
 
-    func validateCloudState(_ state: CloudAccountHeadV2) throws {
-        guard state.schemaVersion == CloudAccountHeadV2.schemaVersion,
+    func validateCloudState(_ state: CloudAccountHeadV3) throws {
+        guard state.schemaVersion == CloudAccountHeadV3.schemaVersion,
               state.cloudAccountID == context.cloudAccountID,
               state.accountBinding == context.accountBinding,
               state.profileAccountIdentity == context.profileSession.accountIdentity
@@ -952,7 +1295,10 @@ private extension DurableEconomyCoordinator {
               state.unlockedItemIDs.count <= catalog.unlockableItems.count,
               Set(state.unlockedItemIDs).isSubset(
                   of: Set(catalog.unlockableItems.map(\.id))
-              )
+              ),
+              state.rewardedAd.schemaVersion == CloudRewardedAdHeadV1.schemaVersion,
+              (0 ... PersistedEconomyRulesV1.rewardedAdRunThreshold)
+                .contains(state.rewardedAd.validRunsSinceReward)
         else {
             throw DurableEconomyCoordinatorError.malformedCloudRecord
         }
@@ -960,10 +1306,21 @@ private extension DurableEconomyCoordinator {
             guard state.ledgerAccumulator.confirmedBalance == 0,
                   state.ledgerAccumulator.digest
                     == LedgerAccumulator.empty.digest,
-                  state.unlockedItemIDs.isEmpty
+                  state.unlockedItemIDs.isEmpty,
+                  state.rewardedAd == .initial
             else {
                 throw DurableEconomyCoordinatorError.malformedCloudRecord
             }
+        }
+
+        let expectedOffer = state.rewardedAd.validRunsSinceReward
+            == PersistedEconomyRulesV1.rewardedAdRunThreshold
+            ? RewardedAdState.offerID(for: state.rewardedAd.cycle)
+            : nil
+        guard state.rewardedAd.eligibleOfferID == expectedOffer,
+              state.rewardedAd.cycle <= state.ledgerAccumulator.entryCount
+        else {
+            throw DurableEconomyCoordinatorError.malformedCloudRecord
         }
 
         try validateCloudUnlockPrerequisites(state)
@@ -989,6 +1346,8 @@ private extension DurableEconomyCoordinator {
                 && version == PersistedEconomyRulesV1.signingBonusVersion
                 && entry.id == CoinLedgerID.signingBonus(version: version)
                 && entry.delta == PersistedEconomyRulesV1.signingBonusCoins
+                && entry.createdAt
+                    == PersistedEconomyRulesV1.signingBonusLedgerCreatedAt
         case let .rewardedAd(_, providerTransactionID):
             valid = record.binding.kind == .rewardedAd
                 && entry.id == CoinLedgerID.rewardedAd(
@@ -1009,6 +1368,85 @@ private extension DurableEconomyCoordinator {
         }
         guard valid, entry.createdAt.timeIntervalSince1970.isFinite else {
             throw DurableEconomyCoordinatorError.malformedCloudRecord
+        }
+    }
+
+    func validateCloudLedgerMarker(
+        _ marker: CloudLedgerMarkerV2,
+        headRevision: UInt64?
+    ) throws {
+        try validateEventPosition(marker.eventPosition, headRevision: headRevision)
+
+        switch marker.record.entry.reason {
+        case .gameplay:
+            guard let observation = marker.gameplayRewardObservation,
+                  let resolution = marker.gameplayRewardResolution
+            else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+            try validateGameplayResolution(
+                resolution,
+                observation: observation
+            )
+        case .signingBonus, .rewardedAd, .storeKit, .catalogUnlock:
+            guard marker.gameplayRewardObservation == nil,
+                  marker.gameplayRewardResolution == nil
+            else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+        }
+    }
+
+    func validateEventPosition(
+        _ position: CloudEconomyEventPosition,
+        headRevision: UInt64?
+    ) throws {
+        guard position.cloudHeadRevision > 0,
+              headRevision.map({ position.cloudHeadRevision <= $0 }) ?? true
+        else {
+            throw DurableEconomyCoordinatorError.invalidRewardEventPosition
+        }
+    }
+
+    func validateGameplayResolution(
+        _ resolution: GameplayRewardResolution,
+        observation: RewardedRunObservation
+    ) throws {
+        let threshold = PersistedEconomyRulesV1.rewardedAdRunThreshold
+        switch resolution {
+        case let .counted(cycle, resultingCount, unlockedOfferID):
+            let expectedOffer = resultingCount == threshold
+                ? RewardedAdState.offerID(for: cycle)
+                : nil
+            guard observation.disposition == .candidate,
+                  cycle == observation.observedCycle,
+                  (1 ... threshold).contains(resultingCount),
+                  unlockedOfferID == expectedOffer
+            else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+
+        case let .ignoredActiveOffer(cycle, offerID):
+            guard cycle == observation.observedCycle,
+                  offerID == RewardedAdState.offerID(for: cycle),
+                  observation.disposition != .legacyNonCounting
+            else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+
+        case let .ignoredStaleCycle(observedCycle, currentCycle):
+            guard observedCycle == observation.observedCycle,
+                  observedCycle < currentCycle,
+                  observation.disposition != .legacyNonCounting
+            else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+
+        case .ignoredLegacyNonCounting:
+            guard observation.disposition == .legacyNonCounting,
+                  observation.observedCycle == 0 else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
         }
     }
 
@@ -1042,7 +1480,8 @@ private extension DurableEconomyCoordinator {
         entries: [LedgerEntryID: CoinLedgerEntry],
         kind: MutationKind,
         operationID: OperationID,
-        sourceSnapshot: LocalPlayerProfileSnapshot
+        sourceSnapshot: LocalPlayerProfileSnapshot,
+        gameplayRewardObservations: [LedgerEntryID: RewardedRunObservation]
     ) async throws -> CommittedMutation {
         try await commitMutation(
             operationID: operationID,
@@ -1053,7 +1492,8 @@ private extension DurableEconomyCoordinator {
                 unlockedItemID: nil,
                 rewardRedemption: nil,
                 requiredBalanceBefore: nil,
-                recoversExistingCatalogUnlockTimestamp: false
+                recoversExistingCatalogUnlockTimestamp: false,
+                gameplayRewardObservations: gameplayRewardObservations
             )
         )
     }
@@ -1073,7 +1513,8 @@ private extension DurableEconomyCoordinator {
                 unlockedItemID: itemID,
                 rewardRedemption: nil,
                 requiredBalanceBefore: nil,
-                recoversExistingCatalogUnlockTimestamp: false
+                recoversExistingCatalogUnlockTimestamp: false,
+                gameplayRewardObservations: [:]
             )
         )
     }
@@ -1086,6 +1527,21 @@ private extension DurableEconomyCoordinator {
                 throw DurableEconomyCoordinatorError.invalidCredit(entryID)
             }
         }
+    }
+
+    func gameplayRewardObservations(
+        for entries: [LedgerEntryID: CoinLedgerEntry],
+        snapshot: LocalPlayerProfileSnapshot
+    ) throws -> [LedgerEntryID: RewardedRunObservation] {
+        var observations: [LedgerEntryID: RewardedRunObservation] = [:]
+        for (entryID, entry) in entries {
+            guard case let .gameplay(runID, _) = entry.reason else { continue }
+            guard let observation = snapshot.rewardedRunObservations[runID] else {
+                throw DurableEconomyCoordinatorError.missingRewardedRunObservation(runID)
+            }
+            observations[entryID] = observation
+        }
+        return observations
     }
 
     func validateCatalogUnlockRequest(
@@ -1132,7 +1588,8 @@ private extension DurableEconomyCoordinator {
                 unlockedItemID: item.id,
                 rewardRedemption: nil,
                 requiredBalanceBefore: request.confirmedBalanceBefore,
-                recoversExistingCatalogUnlockTimestamp: true
+                recoversExistingCatalogUnlockTimestamp: true,
+                gameplayRewardObservations: [:]
             )
         )
     }
@@ -1157,7 +1614,8 @@ private extension DurableEconomyCoordinator {
                     ledgerEntryID: entry.id
                 ),
                 requiredBalanceBefore: nil,
-                recoversExistingCatalogUnlockTimestamp: false
+                recoversExistingCatalogUnlockTimestamp: false,
+                gameplayRewardObservations: [:]
             )
         )
     }
@@ -1174,6 +1632,13 @@ private extension DurableEconomyCoordinator {
         }
         if plan.kind == .pendingCredits || plan.kind == .storeKit {
             try validateCreditEntries(plan.entries)
+        }
+        let gameplayEntryIDs = Set(plan.entries.compactMap { entryID, entry in
+            if case .gameplay = entry.reason { return entryID }
+            return nil
+        })
+        guard Set(plan.gameplayRewardObservations.keys) == gameplayEntryIDs else {
+            throw DurableEconomyCoordinatorError.malformedCloudRecord
         }
 
         let entryIDs = Set(plan.entries.keys)
@@ -1222,20 +1687,48 @@ private extension DurableEconomyCoordinator {
                 }
             }
 
+            let increment = state.revision.addingReportingOverflow(1)
+            guard !increment.overflow else {
+                throw DurableEconomyCoordinatorError.cloudRevisionOverflow
+            }
+            let targetHeadRevision = increment.partialValue
             let binding = mutationBinding(
                 kind: plan.kind,
                 operationID: operationID,
                 sourceEconomyRevision: sourceSnapshot.economyRevision
             )
-            var newMarkers: [LedgerEntryID: CloudLedgerMarkerV1] = [:]
-            for (entryID, entry) in missingEntries {
+            let orderedMissingEntries = missingEntries.sorted {
+                $0.key.rawValue < $1.key.rawValue
+            }
+            var newMarkers: [LedgerEntryID: CloudLedgerMarkerV2] = [:]
+            for (offset, element) in orderedMissingEntries.enumerated() {
+                let (entryID, entry) = element
+                guard let batchIndex = UInt32(exactly: offset) else {
+                    throw DurableEconomyCoordinatorError.invalidRewardEventPosition
+                }
+                let eventPosition = CloudEconomyEventPosition(
+                    cloudHeadRevision: targetHeadRevision,
+                    batchIndex: batchIndex
+                )
                 let cloudRecord = CloudLedgerRecord(entry: entry, binding: binding)
                 try validateCloudLedgerRecord(cloudRecord)
-                newMarkers[entryID] = CloudLedgerMarkerV1(
-                    schemaVersion: CloudLedgerMarkerV1.schemaVersion,
+                let observation = plan.gameplayRewardObservations[entryID]
+                let resolution = try observation.map {
+                    try state.rewardedAd.resolveGameplay(observation: $0)
+                }
+                let marker = CloudLedgerMarkerV2(
+                    schemaVersion: CloudLedgerMarkerV2.schemaVersion,
                     headRecordID: configuration.recordID,
-                    record: cloudRecord
+                    record: cloudRecord,
+                    eventPosition: eventPosition,
+                    gameplayRewardObservation: observation,
+                    gameplayRewardResolution: resolution
                 )
+                try validateCloudLedgerMarker(
+                    marker,
+                    headRevision: targetHeadRevision
+                )
+                newMarkers[entryID] = marker
                 try add(entry, to: &state.ledgerAccumulator)
             }
 
@@ -1248,28 +1741,27 @@ private extension DurableEconomyCoordinator {
                 state.appendUnlockedItem(itemID)
             }
 
-            var newRewardMarker: CloudRewardOfferMarkerV1?
+            var newRewardMarker: CloudRewardOfferMarkerV2?
             if let redemption = plan.rewardRedemption {
                 guard missingEntries.count == 1,
-                      loaded.rewardOfferMarkers[redemption.offerID] == nil
+                      loaded.rewardOfferMarkers[redemption.offerID] == nil,
+                      let ledgerMarker = newMarkers[redemption.ledgerEntryID]
                 else {
                     throw DurableEconomyCoordinatorError.cloudRewardCollision(
                         redemption.offerID
                     )
                 }
-                newRewardMarker = CloudRewardOfferMarkerV1(
-                    schemaVersion: CloudRewardOfferMarkerV1.schemaVersion,
+                try state.rewardedAd.redeem(redemption.offerID)
+                newRewardMarker = CloudRewardOfferMarkerV2(
+                    schemaVersion: CloudRewardOfferMarkerV2.schemaVersion,
                     headRecordID: configuration.recordID,
                     redemption: redemption,
-                    binding: binding
+                    binding: binding,
+                    eventPosition: ledgerMarker.eventPosition
                 )
             }
 
-            let increment = state.revision.addingReportingOverflow(1)
-            guard !increment.overflow else {
-                throw DurableEconomyCoordinatorError.cloudRevisionOverflow
-            }
-            state.revision = increment.partialValue
+            state.revision = targetHeadRevision
             try validateCloudState(state)
 
             var writes = [try makeHeadWrite(state: state, loaded: loaded)]
@@ -1306,12 +1798,36 @@ private extension DurableEconomyCoordinator {
                     entries: plan.entries
                 )
             } catch let error as CloudSyncTransportError {
-                guard case .conflict = error else { throw error }
-                guard conflictCount < configuration.conflictRetryLimit else {
-                    throw DurableEconomyCoordinatorError.conflictRetryLimitReached
+                switch error {
+                case .conflict:
+                    guard conflictCount < configuration.conflictRetryLimit else {
+                        throw DurableEconomyCoordinatorError.conflictRetryLimitReached
+                    }
+                    conflictCount += 1
+                    continue
+
+                case let .operationIDCollision(collisionID):
+                    guard collisionID == operationID else { throw error }
+                    do {
+                        return try await exactCollisionRefresh(
+                            operationID: operationID,
+                            sourceSnapshot: sourceSnapshot,
+                            plan: plan,
+                            entryIDs: entryIDs,
+                            offerIDs: offerIDs,
+                            expectedMarkers: newMarkers,
+                            expectedRewardMarker: newRewardMarker
+                        )
+                    } catch {
+                        // An operation marker with the same deterministic ID is
+                        // not proof unless one exact read establishes the full
+                        // immutable target attempted by this coordinator.
+                        throw CloudSyncTransportError.operationIDCollision(collisionID)
+                    }
+
+                case .accountUnavailable, .accountMismatch:
+                    throw error
                 }
-                conflictCount += 1
-                continue
             } catch {
                 guard let classified = error as? any CloudCommittedOperationRefreshClassifying,
                       let refresh = classified.committedOperationRefresh
@@ -1371,6 +1887,114 @@ private extension DurableEconomyCoordinator {
         }
     }
 
+    func exactCollisionRefresh(
+        operationID: OperationID,
+        sourceSnapshot: LocalPlayerProfileSnapshot,
+        plan: MutationPlan,
+        entryIDs: Set<LedgerEntryID>,
+        offerIDs: Set<RewardOfferID>,
+        expectedMarkers: [LedgerEntryID: CloudLedgerMarkerV2],
+        expectedRewardMarker: CloudRewardOfferMarkerV2?
+    ) async throws -> CommittedMutation {
+        // Partial overlap cannot prove which prior request owned the shared
+        // operation marker without complete history. Keep that case failed
+        // closed for the hydrator instead of treating a partial read as proof.
+        guard Set(expectedMarkers.keys) == entryIDs else {
+            throw DurableEconomyCoordinatorError.malformedCloudRecord
+        }
+
+        let refreshed = try await loadCloudState(
+            entryIDs: entryIDs,
+            rewardOfferIDs: offerIDs
+        )
+        let refreshedState = try validatedState(
+            from: refreshed,
+            allowCreation: false
+        )
+        try validateMutationMarkers(
+            plan: plan,
+            operationID: operationID,
+            loaded: refreshed,
+            state: refreshedState
+        )
+        try validateLocalCloudBase(
+            sourceSnapshot: sourceSnapshot,
+            cloudState: refreshedState,
+            targetEntries: plan.entries,
+            targetMarkers: refreshed.ledgerMarkers
+        )
+
+        for (entryID, expected) in expectedMarkers {
+            guard let actual = refreshed.ledgerMarkers[entryID],
+                  actual.schemaVersion == expected.schemaVersion,
+                  actual.headRecordID == expected.headRecordID,
+                  (actual.record.entry == expected.record.entry
+                    || (plan.recoversExistingCatalogUnlockTimestamp
+                        && catalogUnlockEntryMatchesIgnoringTimestamp(
+                            actual.record.entry,
+                            expected.record.entry
+                        ))),
+                  collisionEquivalentBinding(
+                      actual.record.binding,
+                      expected.record.binding
+                  ),
+                  actual.eventPosition == expected.eventPosition,
+                  actual.gameplayRewardObservation
+                    == expected.gameplayRewardObservation,
+                  actual.gameplayRewardResolution
+                    == expected.gameplayRewardResolution
+            else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+        }
+
+        switch (expectedRewardMarker, plan.rewardRedemption) {
+        case (nil, nil):
+            guard refreshed.rewardOfferMarkers.isEmpty else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+
+        case let (expected?, redemption?):
+            guard let actual = refreshed.rewardOfferMarkers[redemption.offerID],
+                  actual.schemaVersion == expected.schemaVersion,
+                  actual.headRecordID == expected.headRecordID,
+                  actual.redemption == expected.redemption,
+                  actual.eventPosition == expected.eventPosition,
+                  collisionEquivalentBinding(actual.binding, expected.binding),
+                  let ledger = refreshed.ledgerMarkers[redemption.ledgerEntryID],
+                  ledger.eventPosition == actual.eventPosition,
+                  ledger.record.binding == actual.binding
+            else {
+                throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+
+        case (nil, _?), (_?, nil):
+            throw DurableEconomyCoordinatorError.malformedCloudRecord
+        }
+
+        return CommittedMutation(
+            state: refreshedState,
+            receipt: try cloudReceipt(
+                operationID: operationID,
+                loaded: refreshed,
+                state: refreshedState,
+                status: .committedThenRefreshed
+            ),
+            entries: try committedEntries(for: plan, loaded: refreshed)
+        )
+    }
+
+    func collisionEquivalentBinding(
+        _ actual: MutationBinding,
+        _ expected: MutationBinding
+    ) -> Bool {
+        actual.cloudAccountID == expected.cloudAccountID
+            && actual.accountBinding == expected.accountBinding
+            && actual.profileAccountIdentity == expected.profileAccountIdentity
+            && actual.operationID == expected.operationID
+            && actual.kind == expected.kind
+    }
+
     func revalidateBeforeCloudMutation(
         sourceSnapshot: LocalPlayerProfileSnapshot
     ) async throws {
@@ -1387,9 +2011,9 @@ private extension DurableEconomyCoordinator {
 
     func validateLocalCloudBase(
         sourceSnapshot: LocalPlayerProfileSnapshot,
-        cloudState: CloudAccountHeadV2,
+        cloudState: CloudAccountHeadV3,
         targetEntries: [LedgerEntryID: CoinLedgerEntry],
-        targetMarkers: [LedgerEntryID: CloudLedgerMarkerV1]
+        targetMarkers: [LedgerEntryID: CloudLedgerMarkerV2]
     ) throws {
         var local = confirmedLocalLedger(sourceSnapshot)
         var cloudBase = cloudState.ledgerAccumulator
@@ -1426,6 +2050,9 @@ private extension DurableEconomyCoordinator {
             return itemID
         })
         guard localBase == cloudBase, localUnlocked == cloudUnlocked else {
+            if cloudBase.entryCount > localBase.entryCount {
+                throw DurableEconomyCoordinatorError.cloudRebaseRequired
+            }
             throw DurableEconomyCoordinatorError.cloudStateDiverged
         }
     }
@@ -1434,7 +2061,7 @@ private extension DurableEconomyCoordinator {
         plan: MutationPlan,
         operationID: OperationID,
         loaded: LoadedCloudState,
-        state: CloudAccountHeadV2
+        state: CloudAccountHeadV3
     ) throws {
         guard (plan.unlockedItemID != nil) == (plan.kind == .catalogUnlock),
               (plan.rewardRedemption != nil) == (plan.kind == .rewardedAd)
@@ -1458,6 +2085,11 @@ private extension DurableEconomyCoordinator {
             }
             guard marker.record.binding.kind == plan.kind else {
                 throw DurableEconomyCoordinatorError.malformedCloudRecord
+            }
+            guard marker.gameplayRewardObservation
+                == plan.gameplayRewardObservations[entryID]
+            else {
+                throw DurableEconomyCoordinatorError.cloudLedgerCollision(entryID)
             }
             // Catalog unlocks always have one deterministic ledger ID, so the
             // account-scoped operation ID is stable even when a caller mints a
@@ -1492,7 +2124,8 @@ private extension DurableEconomyCoordinator {
                 throw DurableEconomyCoordinatorError.malformedCloudRecord
             }
             if let entryMarker, let offerMarker {
-                guard entryMarker.record.binding == offerMarker.binding else {
+                guard entryMarker.record.binding == offerMarker.binding,
+                      entryMarker.eventPosition == offerMarker.eventPosition else {
                     throw DurableEconomyCoordinatorError.malformedCloudRecord
                 }
             }
@@ -1536,7 +2169,7 @@ private extension DurableEconomyCoordinator {
     }
 
     func makeHeadWrite(
-        state: CloudAccountHeadV2,
+        state: CloudAccountHeadV3,
         loaded: LoadedCloudState
     ) throws -> CloudRecordWrite {
         let precondition: CloudRecordPrecondition
@@ -1554,7 +2187,7 @@ private extension DurableEconomyCoordinator {
     }
 
     func makeLedgerMarkerWrite(
-        _ marker: CloudLedgerMarkerV1
+        _ marker: CloudLedgerMarkerV2
     ) throws -> CloudRecordWrite {
         CloudRecordWrite(
             id: ledgerMarkerRecordID(for: marker.record.entry.id),
@@ -1565,7 +2198,7 @@ private extension DurableEconomyCoordinator {
     }
 
     func makeRewardOfferMarkerWrite(
-        _ marker: CloudRewardOfferMarkerV1
+        _ marker: CloudRewardOfferMarkerV2
     ) throws -> CloudRecordWrite {
         CloudRecordWrite(
             id: rewardOfferMarkerRecordID(for: marker.redemption.offerID),
@@ -1596,7 +2229,7 @@ private extension DurableEconomyCoordinator {
     func cloudReceipt(
         operationID: OperationID,
         loaded: LoadedCloudState,
-        state: CloudAccountHeadV2,
+        state: CloudAccountHeadV3,
         status: DurableEconomyCloudCommitStatus
     ) throws -> DurableEconomyCloudCommitReceipt {
         // Existing durable state always came from a fetched CloudRecord.
@@ -1615,7 +2248,7 @@ private extension DurableEconomyCoordinator {
         )
     }
 
-    func cloudBalance(_ state: CloudAccountHeadV2) throws -> Int64 {
+    func cloudBalance(_ state: CloudAccountHeadV3) throws -> Int64 {
         guard state.ledgerAccumulator.confirmedBalance >= 0 else {
             throw DurableEconomyCoordinatorError.cloudBalanceInvalid
         }
@@ -1833,7 +2466,7 @@ private extension DurableEconomyCoordinator {
     /// Cloud ownership contains only paid catalog items, so initially-owned
     /// teams are implicit. An alternate for any other team must be accompanied
     /// by that team's paid unlock in the bounded authoritative head.
-    func validateCloudUnlockPrerequisites(_ state: CloudAccountHeadV2) throws {
+    func validateCloudUnlockPrerequisites(_ state: CloudAccountHeadV3) throws {
         for itemID in state.unlockedItemIDs {
             guard let item = catalog.item(id: itemID) else {
                 throw DurableEconomyCoordinatorError.malformedCloudRecord

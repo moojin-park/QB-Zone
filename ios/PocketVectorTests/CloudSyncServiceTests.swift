@@ -143,6 +143,60 @@ final class CloudSyncServiceTests: XCTestCase {
         }
     }
 
+    func testChangeFeedValueContractsRoundTripOpaqueCursorAndReplicaEvents() throws {
+        let page = CloudRecordChangePage(
+            accountID: CloudAccountID("icloud-a"),
+            modifications: [
+                CloudDiscoveredRecord(
+                    locator: CloudProviderRecordLocator("opaque-provider-record"),
+                    record: CloudRecord(
+                        id: CloudRecordID("profile"),
+                        recordType: "Profile",
+                        fields: ["value": Data("state".utf8)],
+                        changeTag: CloudChangeTag("opaque-change-tag")
+                    )
+                ),
+            ],
+            deletions: [
+                CloudDeletedRecord(
+                    locator: CloudProviderRecordLocator("opaque-deleted-record"),
+                    recordType: "Run"
+                ),
+            ],
+            nextCursor: CloudChangeCursor(Data([0, 1, 2, 255])),
+            moreComing: true
+        )
+
+        let encoded = try JSONEncoder().encode(page)
+        let decoded = try JSONDecoder().decode(CloudRecordChangePage.self, from: encoded)
+
+        XCTAssertEqual(decoded, page)
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                CloudZonePreparationPolicy.self,
+                from: JSONEncoder().encode(
+                    CloudZonePreparationPolicy.createIfMissingForInitialBootstrap
+                )
+            ),
+            .createIfMissingForInitialBootstrap
+        )
+    }
+
+    func testChangeFeedCodableRejectsEmptyProviderCursorAndLocator() throws {
+        let emptyCursorData = try JSONEncoder().encode(Data())
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(CloudChangeCursor.self, from: emptyCursorData)
+        )
+
+        let emptyLocatorData = try JSONEncoder().encode("")
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                CloudProviderRecordLocator.self,
+                from: emptyLocatorData
+            )
+        )
+    }
+
     private func operation(id: String, recordID: String) -> QueuedCloudOperation {
         QueuedCloudOperation(
             id: OperationID(id),

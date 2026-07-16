@@ -122,7 +122,8 @@ final class AppCoordinator {
             return .rejected(.sessionMismatch)
         }
         guard update.playerRevision >= accepted.playerRevision,
-              update.economyRevision >= accepted.economyRevision else {
+              update.economyRevision >= accepted.economyRevision,
+              update.syncRevision >= accepted.syncRevision else {
             return .rejected(.staleRevision)
         }
 
@@ -136,9 +137,15 @@ final class AppCoordinator {
             != accepted.state.authoritativeEconomyPartition {
             return .rejected(.revisionCollision)
         }
+        if update.syncRevision == accepted.syncRevision,
+           update.state.authoritativeSyncPartition
+            != accepted.state.authoritativeSyncPartition {
+            return .rejected(.revisionCollision)
+        }
 
         if update.playerRevision == accepted.playerRevision,
-           update.economyRevision == accepted.economyRevision {
+           update.economyRevision == accepted.economyRevision,
+           update.syncRevision == accepted.syncRevision {
             guard update.state == accepted.state else {
                 return .rejected(.revisionCollision)
             }

@@ -59,6 +59,115 @@ final class AuthoritativeAppStateStreamTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func testSyncOnlyRevisionTransitionAppliesWithoutPersistedRevisionChange() async {
+        let initial = snapshot(playerRevision: 5, economyRevision: 7, syncRevision: 2)
+        let coordinator = makeCoordinator(initial: initial)
+        await coordinator.bootstrap()
+
+        var syncingState = initial.state
+        syncingState.syncStatus = .syncing
+        let syncing = snapshot(
+            state: syncingState,
+            playerRevision: 5,
+            economyRevision: 7,
+            syncRevision: 3
+        )
+
+        XCTAssertEqual(coordinator.applyAuthoritativeUpdate(syncing), .applied)
+        XCTAssertEqual(coordinator.authoritativeSnapshot, syncing)
+        XCTAssertEqual(coordinator.state.syncStatus, .syncing)
+    }
+
+    @MainActor
+    func testStaleSyncRevisionIsRejectedWithoutRegression() async {
+        var initialState = AppCoordinatorState.launchDefault()
+        initialState.syncStatus = .current
+        let initial = snapshot(
+            state: initialState,
+            playerRevision: 5,
+            economyRevision: 7,
+            syncRevision: 4
+        )
+        let coordinator = makeCoordinator(initial: initial)
+        await coordinator.bootstrap()
+
+        var staleState = initial.state
+        staleState.syncStatus = .syncing
+        let stale = snapshot(
+            state: staleState,
+            playerRevision: 5,
+            economyRevision: 7,
+            syncRevision: 3
+        )
+
+        XCTAssertEqual(
+            coordinator.applyAuthoritativeUpdate(stale),
+            .rejected(.staleRevision)
+        )
+        XCTAssertEqual(coordinator.authoritativeSnapshot, initial)
+        XCTAssertEqual(coordinator.state.syncStatus, .current)
+    }
+
+    @MainActor
+    func testSameSyncRevisionCannotCarryDivergentSyncStatus() async {
+        let initial = snapshot(playerRevision: 5, economyRevision: 7, syncRevision: 4)
+        let coordinator = makeCoordinator(initial: initial)
+        await coordinator.bootstrap()
+
+        var collisionState = initial.state
+        collisionState.syncStatus = .current
+        let collision = snapshot(
+            state: collisionState,
+            playerRevision: 5,
+            economyRevision: 7,
+            syncRevision: 4
+        )
+
+        XCTAssertEqual(
+            coordinator.applyAuthoritativeUpdate(collision),
+            .rejected(.revisionCollision)
+        )
+        XCTAssertEqual(coordinator.authoritativeSnapshot, initial)
+        XCTAssertEqual(coordinator.state.syncStatus, .localOnly)
+    }
+
+    @MainActor
+    func testPlayerAndEconomyTransitionsRetainAcceptedSyncRevision() async {
+        var initialState = AppCoordinatorState.launchDefault()
+        initialState.syncStatus = .current
+        let initial = snapshot(
+            state: initialState,
+            playerRevision: 2,
+            economyRevision: 3,
+            syncRevision: 8
+        )
+        let coordinator = makeCoordinator(initial: initial)
+        await coordinator.bootstrap()
+
+        var playerState = initial.state
+        playerState.settings = PlayerSettings(isMuted: true)
+        let playerUpdate = snapshot(
+            state: playerState,
+            playerRevision: 3,
+            economyRevision: 3,
+            syncRevision: 8
+        )
+        XCTAssertEqual(coordinator.applyAuthoritativeUpdate(playerUpdate), .applied)
+
+        var economyState = playerState
+        economyState.confirmedCoins = 500
+        let economyUpdate = snapshot(
+            state: economyState,
+            playerRevision: 3,
+            economyRevision: 4,
+            syncRevision: 8
+        )
+        XCTAssertEqual(coordinator.applyAuthoritativeUpdate(economyUpdate), .applied)
+        XCTAssertEqual(coordinator.authoritativeSnapshot?.syncRevision, 8)
+        XCTAssertEqual(coordinator.state.syncStatus, .current)
+    }
+
+    @MainActor
     func testEqualRevisionDivergentStateIsRejectedAsCollision() async {
         let initial = snapshot(playerRevision: 7, economyRevision: 8)
         let coordinator = makeCoordinator(initial: initial)
@@ -567,7 +676,8 @@ final class AuthoritativeAppStateStreamTests: XCTestCase, @unchecked Sendable {
     private func snapshot(
         state: AppCoordinatorState = .launchDefault(),
         playerRevision: UInt64 = 0,
-        economyRevision: UInt64 = 0
+        economyRevision: UInt64 = 0,
+        syncRevision: UInt64 = 0
     ) -> AuthoritativeAppStateSnapshot {
         AuthoritativeAppStateSnapshot(
             session: ProfileSessionToken(
@@ -577,6 +687,7 @@ final class AuthoritativeAppStateStreamTests: XCTestCase, @unchecked Sendable {
             ),
             playerRevision: playerRevision,
             economyRevision: economyRevision,
+            syncRevision: syncRevision,
             state: state
         )
     }

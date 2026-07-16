@@ -81,9 +81,8 @@ struct StableInstallationDeviceIdentifierStore {
 final class ProductionAppComposition {
     /// Persisted fields controlled by `PlayerSnapshot.revision`. The derived
     /// coin balance is intentionally excluded and guarded with the economy
-    /// fields below. Sync status is revision-bound here for the local runtime;
-    /// an independently changing CloudKit status needs its own future revision
-    /// domain instead of hitchhiking on player or economy changes.
+    /// fields below. Runtime sync status is deliberately excluded and owned by
+    /// the composition's independent sync revision.
     private struct PlayerRevisionPartition: Equatable {
         let profileID: UUID
         let settings: PlayerSettings
@@ -92,7 +91,6 @@ final class ProductionAppComposition {
         let career: CareerStatistics
         let achievementProgress: [AchievementID: AchievementProgress]
         let rewardedAdState: RewardedAdState
-        let syncStatus: ProfileSyncStatus
         let completedRuns: [RunID: CompletedRunRecord]
 
         init(snapshot: LocalPlayerProfileSnapshot) {
@@ -103,7 +101,6 @@ final class ProductionAppComposition {
             career = snapshot.player.career
             achievementProgress = snapshot.player.achievementProgress
             rewardedAdState = snapshot.player.rewardedAdState
-            syncStatus = snapshot.player.syncStatus
             completedRuns = snapshot.completedRuns
         }
     }
@@ -118,6 +115,7 @@ final class ProductionAppComposition {
         let coinBalances: CoinBalanceSummary
         let ledger: [LedgerEntryID: CoinLedgerEntry]
         let pendingLedgerEntryIDs: Set<LedgerEntryID>
+        let rewardedRunObservations: [RunID: RewardedRunObservation]
 
         init(snapshot: LocalPlayerProfileSnapshot) {
             // Catalog ownership and rewarded-ad progress are stored on the
@@ -130,6 +128,7 @@ final class ProductionAppComposition {
             coinBalances = snapshot.coinBalances
             ledger = snapshot.ledger
             pendingLedgerEntryIDs = snapshot.pendingLedgerEntryIDs
+            rewardedRunObservations = snapshot.rewardedRunObservations
         }
     }
 
@@ -161,6 +160,8 @@ final class ProductionAppComposition {
     private let authoritativeStateChannel: ProductionAuthoritativeStateChannel
     private let diagnosticsSink: AppleDiagnosticsSink?
     private var currentSnapshot: LocalPlayerProfileSnapshot?
+    private var syncStatus: ProfileSyncStatus
+    private var syncRevision: UInt64
 
     init(
         dependencies: ProductionAppDependencies,
@@ -170,6 +171,8 @@ final class ProductionAppComposition {
         self.dependencies = dependencies
         self.authoritativeStateChannel = authoritativeStateChannel
         self.diagnosticsSink = diagnosticsSink
+        syncStatus = .localOnly
+        syncRevision = 0
         repository = LocalPlayerProfileRepository(
             directoryURL: Self.profileDirectoryURL(
                 applicationSupportDirectoryURL: dependencies.applicationSupportDirectoryURL,
@@ -222,7 +225,7 @@ final class ProductionAppComposition {
 
     private func loadInitialState() async -> AppBootstrapLoadResult {
         if let currentSnapshot {
-            return .loaded(Self.authoritativeSnapshot(from: currentSnapshot))
+            return .loaded(authoritativeSnapshot(from: currentSnapshot))
         }
 
         do {
@@ -235,7 +238,7 @@ final class ProductionAppComposition {
             if let report = await repository.lastLoadReport {
                 reportPersistenceRecovery(report, at: loadedAt)
             }
-            return .loaded(Self.authoritativeSnapshot(from: accepted))
+            return .loaded(authoritativeSnapshot(from: accepted))
         } catch {
             return .failed(message: Message.loadFailed)
         }
@@ -252,6 +255,27 @@ final class ProductionAppComposition {
             // authoritative and foreground mutations continue to surface their
             // own specific failures.
         }
+    }
+
+    /// Publishes a runtime-only sync transition without manufacturing a player
+    /// or economy revision. Repository snapshots cannot select this status, and
+    /// repeating the current status is an idempotent no-op.
+    @discardableResult
+    func publishSyncStatusTransition(
+        _ status: ProfileSyncStatus
+    ) throws -> AuthoritativeAppStateSnapshot? {
+        guard status != syncStatus else { return nil }
+        let nextRevision = syncRevision.addingReportingOverflow(1)
+        guard !nextRevision.overflow else {
+            throw ProductionAppCompositionError.syncRevisionOverflow
+        }
+
+        syncStatus = status
+        syncRevision = nextRevision.partialValue
+        guard let currentSnapshot else { return nil }
+        let update = authoritativeSnapshot(from: currentSnapshot)
+        authoritativeStateChannel.publish(update)
+        return update
     }
 
     private func perform(_ request: AppExternalRequest) async -> AppExternalRequestResult {
@@ -314,7 +338,7 @@ final class ProductionAppComposition {
             return .failed(message: Message.selectionTooBroad)
         }
         guard changeCount == 1 else {
-            return .applied(Self.authoritativeSnapshot(from: currentSnapshot))
+            return .applied(authoritativeSnapshot(from: currentSnapshot))
         }
 
         do {
@@ -363,7 +387,7 @@ final class ProductionAppComposition {
             )
             let snapshot = try await repository.snapshot()
             let accepted = try accept(snapshot, publishUpdate: true)
-            let authoritativeSnapshot = Self.authoritativeSnapshot(from: accepted)
+            let authoritativeSnapshot = authoritativeSnapshot(from: accepted)
 
             guard run.finishReason == .timerExpired else {
                 return .settled(
@@ -390,7 +414,7 @@ final class ProductionAppComposition {
         _ snapshot: LocalPlayerProfileSnapshot
     ) throws -> AppExternalRequestResult {
         let accepted = try accept(snapshot, publishUpdate: true)
-        return .applied(Self.authoritativeSnapshot(from: accepted))
+        return .applied(authoritativeSnapshot(from: accepted))
     }
 
     /// Accepts only monotonic repository projections. If an older async call
@@ -404,7 +428,7 @@ final class ProductionAppComposition {
             self.currentSnapshot = candidate
             if publishUpdate {
                 authoritativeStateChannel.publish(
-                    Self.authoritativeSnapshot(from: candidate)
+                    authoritativeSnapshot(from: candidate)
                 )
             }
             return candidate
@@ -431,16 +455,17 @@ final class ProductionAppComposition {
 
         if candidate.player.revision == currentSnapshot.player.revision,
            candidate.economyRevision == currentSnapshot.economyRevision {
-            guard candidate == currentSnapshot else {
-                throw ProductionAppCompositionError.authoritativeRevisionCollision
-            }
+            // The two explicit persisted partitions cover every repository
+            // field except the legacy projection-only sync status. That status
+            // is ignored here and can change only through the sync transition
+            // method above.
             return currentSnapshot
         }
 
         self.currentSnapshot = candidate
         if publishUpdate {
             authoritativeStateChannel.publish(
-                Self.authoritativeSnapshot(from: candidate)
+                authoritativeSnapshot(from: candidate)
             )
         }
         return candidate
@@ -478,19 +503,21 @@ final class ProductionAppComposition {
         }
     }
 
-    private static func authoritativeSnapshot(
+    private func authoritativeSnapshot(
         from snapshot: LocalPlayerProfileSnapshot
     ) -> AuthoritativeAppStateSnapshot {
         AuthoritativeAppStateSnapshot(
             session: snapshot.session,
             playerRevision: snapshot.player.revision,
             economyRevision: snapshot.economyRevision,
-            state: project(snapshot)
+            syncRevision: syncRevision,
+            state: Self.project(snapshot, syncStatus: syncStatus)
         )
     }
 
     private static func project(
-        _ snapshot: LocalPlayerProfileSnapshot
+        _ snapshot: LocalPlayerProfileSnapshot,
+        syncStatus: ProfileSyncStatus
     ) -> AppCoordinatorState {
         AppCoordinatorState(
             inventory: snapshot.player.inventory,
@@ -501,7 +528,7 @@ final class ProductionAppComposition {
             personalBest: snapshot.personalBest,
             achievementProgress: snapshot.player.achievementProgress,
             rewardedAdState: snapshot.player.rewardedAdState,
-            syncStatus: snapshot.player.syncStatus
+            syncStatus: syncStatus
         )
     }
 
@@ -568,6 +595,7 @@ enum ProductionAppCompositionError: Error, Equatable {
     case authoritativeLedgerOverflow
     case authoritativeSessionMismatch
     case authoritativeRevisionCollision
+    case syncRevisionOverflow
 }
 
 extension AppCoordinatorEnvironment {

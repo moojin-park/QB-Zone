@@ -75,7 +75,6 @@ struct AuthoritativePlayerStatePartition: Equatable, Sendable {
     let personalBest: Int
     let achievementProgress: [AchievementID: AchievementProgress]
     let rewardedAdState: RewardedAdState
-    let syncStatus: ProfileSyncStatus
 
     init(state: AppCoordinatorState) {
         inventory = state.inventory
@@ -84,10 +83,6 @@ struct AuthoritativePlayerStatePartition: Equatable, Sendable {
         personalBest = state.personalBest
         achievementProgress = state.achievementProgress
         rewardedAdState = state.rewardedAdState
-        // Sync status is revision-bound to the player projection today. A
-        // future cloud adapter that changes it independently must introduce a
-        // dedicated sync revision/partition rather than bypass this guard.
-        syncStatus = state.syncStatus
     }
 }
 
@@ -109,6 +104,18 @@ struct AuthoritativeEconomyStatePartition: Equatable, Sendable {
     }
 }
 
+/// Runtime synchronization state changes independently from both persisted
+/// player data and the durable economy. Its dedicated revision prevents a
+/// provider callback from smuggling a status change through either persistence
+/// revision domain.
+struct AuthoritativeSyncStatePartition: Equatable, Sendable {
+    let syncStatus: ProfileSyncStatus
+
+    init(state: AppCoordinatorState) {
+        syncStatus = state.syncStatus
+    }
+}
+
 extension AppCoordinatorState {
     var authoritativePlayerPartition: AuthoritativePlayerStatePartition {
         AuthoritativePlayerStatePartition(state: self)
@@ -117,17 +124,39 @@ extension AppCoordinatorState {
     var authoritativeEconomyPartition: AuthoritativeEconomyStatePartition {
         AuthoritativeEconomyStatePartition(state: self)
     }
+
+    var authoritativeSyncPartition: AuthoritativeSyncStatePartition {
+        AuthoritativeSyncStatePartition(state: self)
+    }
 }
 
-/// A complete UI projection bound to one immutable profile session and both
-/// persistence revision domains. This is the only value permitted on the
-/// authoritative UI-state lane; deltas, transactions, and receipts require
-/// separate lossless channels.
+/// A complete UI projection bound to one immutable profile session, both
+/// persistence revision domains, and an ephemeral runtime-sync revision. This
+/// is the only value permitted on the authoritative UI-state lane; deltas,
+/// transactions, and receipts require separate lossless channels.
 struct AuthoritativeAppStateSnapshot: Equatable, Sendable {
     let session: ProfileSessionToken
     let playerRevision: UInt64
     let economyRevision: UInt64
+    let syncRevision: UInt64
     let state: AppCoordinatorState
+
+    /// `syncRevision` defaults to zero so existing account-independent callers
+    /// remain source compatible while Cloud composition adopts the third
+    /// revision domain explicitly.
+    init(
+        session: ProfileSessionToken,
+        playerRevision: UInt64,
+        economyRevision: UInt64,
+        syncRevision: UInt64 = 0,
+        state: AppCoordinatorState
+    ) {
+        self.session = session
+        self.playerRevision = playerRevision
+        self.economyRevision = economyRevision
+        self.syncRevision = syncRevision
+        self.state = state
+    }
 }
 
 enum AuthoritativeStateRejection: Equatable, Sendable {

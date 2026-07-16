@@ -56,6 +56,10 @@ enum PersistedEconomyRulesV1 {
 
     static let signingBonusVersion = 1
     static let signingBonusCoins: Int64 = 250
+    /// The signing bonus is an account-wide singleton whose full ledger entry
+    /// must compare identically on every device. This fixed value is an
+    /// identity field, not the wall-clock time at which a player earned it.
+    static let signingBonusLedgerCreatedAt = Date(timeIntervalSince1970: 0)
     static let rewardedAdCoins: Int64 = 100
     static let rewardedAdRunThreshold = 5
     static let lockedTeamPrice: Int64 = 1_500
