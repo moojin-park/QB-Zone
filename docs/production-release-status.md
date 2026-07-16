@@ -12,9 +12,10 @@ tracks execution, evidence, dependencies, and owner decisions.
 The native foundation, launch rules, durable local repository, production app
 shell, first-run tutorial, fail-closed release information, eight-team shipping
 visuals, durable cloud-first economy coordinator, and Apple diagnostics adapters
-are now versioned through commit `a38c3f8` (`Complete Wave 5 production
-hardening`). That revision passed all 231 simulator tests and produced an
-unsigned generic-iOS Release archive.
+are versioned through commit `a38c3f8` (`Complete Wave 5 production hardening`).
+The iOS-only repository cleanup is versioned at `24cd2c7` (`Remove legacy
+browser project from iOS repository`). The cleanup tree passed all 231 simulator
+tests and produced an unsigned generic-iOS Release archive.
 
 The final Wave 5 simulator pass traversed the main menu, all eight offense
 choices, the locker and both cosmetic types, the four-step tutorial, gameplay,
@@ -44,7 +45,7 @@ engineering gate, not a release-readiness claim.
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Eight-team presentation system                  | Complete            | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, HUD palettes, raster recoloring, and preload readiness ship     |
 | Live Apple and advertising services             | In progress         | Runtime orchestration and CloudKit hydration are next; permanent IDs, capabilities, products, Game Center records, and ads need owner setup |
-| iOS-only repository cleanup                     | Next                | Move the remaining native source assets/tools, remove unused native binaries, then delete the separate browser runtime and tooling    |
+| iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
 | TestFlight release candidate                    | Queued              | Device, accessibility, sandbox, sync, replay, crash, and economy gates pass                                                           |
 | App Store submission                            | Queued              | Signed archive, privacy report, metadata, review notes, screenshots, and owner approval complete                                      |
 
@@ -80,6 +81,9 @@ or runtime ownership boundaries.
 | 2026-07-15 | `a38c3f8` | Frozen full native simulator suite                | 231 passed, 0 failed, 0 skipped                                |
 | 2026-07-15 | `a38c3f8` | iPhone 17 Pro landscape accessibility/visual pass | Menus, eight teams, locker, tutorial, gameplay, results, achievements, settings, and release blockers reviewed |
 | 2026-07-15 | `a38c3f8` | Unsigned generic-iOS Release archive              | Passed; iPhone/iPad, landscape-only, iOS 17+, privacy manifest, encryption declaration, and resource package verified |
+| 2026-07-15 | `24cd2c7` | Exact native-resource inventory                   | 1 focused test passed; 58 declared assets exactly match 58 physical resources, 6,168,312 bytes |
+| 2026-07-15 | `24cd2c7` | iOS-only cleanup full simulator suite             | 231 passed, 0 failed, 0 skipped                                |
+| 2026-07-15 | `24cd2c7` | iOS-only cleanup unsigned Release archive         | Passed; 58 runtime assets plus manifest; no browser, source-art, or asset-tool content bundled |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -87,19 +91,18 @@ Release behavior. A wave is not complete merely because its files exist.
 
 ## Next engineering dependency order
 
-1. Complete the iOS-only repository cleanup in its own verified commit.
-2. Add a retained production runtime, typed fail-closed service configuration,
+1. Add a retained production runtime, typed fail-closed service configuration,
    lifecycle cancellation, UIKit presentation handoff, and an authoritative
    state stream. Compose Apple-only diagnostics in this layer.
-3. Add CloudKit account/profile bootstrap, remote record discovery, cursor
+2. Add CloudKit account/profile bootstrap, remote record discovery, cursor
    persistence, complete profile hydration, and deterministic two-device merge.
    A device must verify the full ledger accumulator before sync becomes current.
-4. Compose the durable economy and confirm pending gameplay credits only after
+3. Compose the durable economy and confirm pending gameplay credits only after
    hydration. Account changes must invalidate the old authority before any new
    profile is published.
-5. Add persistent Game Center delivery and presentation, then StoreKit product
+4. Add persistent Game Center delivery and presentation, then StoreKit product
    state, localized prices, unfinished-transaction recovery, and purchases.
-6. Add persisted rewarded-ad orchestration and a verified-receipt client. No
+5. Add persisted rewarded-ad orchestration and a verified-receipt client. No
    client ad callback may grant coins without a unique server-verified provider
    transaction.
 
@@ -142,8 +145,8 @@ workflow reaches that gate.
 | Crash-free sessions                  | 99.5%+ | Instrumentation decision open                   |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local, cloud-head, purchase, unlock, and verified-ad coordinator tests pass; live hydration/composition pending |
-| Clean-checkout archive               |   Pass | Passing through `a38c3f8`; recheck after browser cleanup |
-| Browser runtime in active repository |   None | Cleanup deferred until final native asset audit |
+| Clean-checkout archive               |   Pass | Passing through iOS-only cleanup revision `24cd2c7` |
+| Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
 approves representative iPhone and iPad visuals, and App Store review materials
