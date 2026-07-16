@@ -51,6 +51,26 @@ struct ValidatedCloudProfileReplicaV1: Equatable, Sendable {
     let inventory: PlayerInventory
     let confirmedGameplayRunIDs: Set<RunID>
     let pendingGameplayRunIDs: Set<RunID>
+
+    fileprivate init(
+        root: CloudProfileRootV1,
+        settings: CloudProfileSettingsV1,
+        selection: CloudProfileSelectionV1,
+        completedRunsByID: [RunID: CloudProfileCompletedRunV1],
+        economy: CloudProfileEconomyHistoryV1,
+        inventory: PlayerInventory,
+        confirmedGameplayRunIDs: Set<RunID>,
+        pendingGameplayRunIDs: Set<RunID>
+    ) {
+        self.root = root
+        self.settings = settings
+        self.selection = selection
+        self.completedRunsByID = completedRunsByID
+        self.economy = economy
+        self.inventory = inventory
+        self.confirmedGameplayRunIDs = confirmedGameplayRunIDs
+        self.pendingGameplayRunIDs = pendingGameplayRunIDs
+    }
 }
 
 enum CloudProfileReplicaStateV1: Equatable, Sendable {
