@@ -1,6 +1,6 @@
 # Pocket Vector production release status
 
-Status date: 2026-07-15
+Status date: 2026-07-16
 
 This is the living delivery board for the first iOS release. Product scope and
 rules remain authoritative in
@@ -12,8 +12,10 @@ tracks execution, evidence, dependencies, and owner decisions.
 The native foundation, launch rules, durable local repository, production app
 shell, first-run tutorial, fail-closed release information, eight-team shipping
 visuals, retained production runtime, and Apple-only diagnostics composition
-are complete. The latest exact repository-adoption boundary is versioned at
-`8188cfc` (`Add exact cloud hydration repository adoption`).
+are complete. The latest account-freshness boundary is versioned at `afe5bc0`
+(`Add account generation freshness authority`); the exact repository-adoption
+boundary immediately beneath it is `8188cfc` (`Add exact cloud hydration
+repository adoption`).
 The iOS-only repository cleanup is versioned at `24cd2c7` (`Remove legacy
 browser project from iOS repository`).
 
@@ -25,7 +27,7 @@ uniform and football presentation, randomized opponent presentation, visible
 texture readiness, and an explicit release-blocking state when support or
 privacy destinations are missing.
 
-The current foundation passed 588 simulator tests and produced an unsigned
+The current foundation passed 602 simulator tests and produced an unsigned
 generic-iOS Release archive from an exact detached worktree. It includes
 account-, scope-, and epoch-bound CloudKit record-change transport,
 crash-recoverable two-phase replica checkpoints, sealed checkpoint
@@ -33,12 +35,14 @@ observations, cache-loss reconstruction rules, durable transactional-hydration
 journals, and complete-history verification for version 3 durable economy
 heads, ledger markers, and reward markers. Exact installed hydration candidates
 can now be adopted into an active repository only after complete disk and source
-revalidation, without rotating the session or publishing UI state. Cloud
-capabilities still fail closed in the Release composition: observation
-freshness, typed `requireExisting` reconstruction enforcement, local-to-cloud
-bootstrap, and account/runtime coordination remain unfinished. Game Center,
-StoreKit 2, and rewarded advertisements also remain unavailable. The archive is
-therefore an engineering gate, not a release-readiness claim.
+revalidation, without rotating the session or publishing UI state. An opaque
+process-local generation now binds each account, derived service ownership,
+scope, and replica epoch behind a cancellation-safe commit gate. Cloud
+capabilities still fail closed in the Release composition: the checkpoint
+freshness lease, typed `requireExisting` reconstruction enforcement,
+local-to-cloud bootstrap, and account/runtime coordination remain unfinished.
+Game Center, StoreKit 2, and rewarded advertisements also remain unavailable.
+The archive is therefore an engineering gate, not a release-readiness claim.
 
 ## Delivery board
 
@@ -48,7 +52,7 @@ therefore an engineering gate, not a release-readiness claim.
 | Reproducible native foundation                  | Complete            | Clean-checkout tests and unsigned Release archive pass at `49d8a6b`                                                                   |
 | Domain, catalog, economy, and achievement rules | Complete            | Eight teams, inventory, matchup, clash, reward, coin-pack, and eight-achievement rules pass exhaustive tests                          |
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
-| Account-independent service seams               | In progress         | Cloud transport/checkpoint, hydration recovery, exact repository adoption, and durable economy foundations pass; freshness authority, account composition, Game Center, StoreKit, and ads remain |
+| Account-independent service seams               | In progress         | Cloud transport/checkpoint, hydration recovery, exact repository adoption, account-generation authority, and durable economy foundations pass; checkpoint lease, account composition, Game Center, StoreKit, and ads remain |
 | Production app shell and menus                  | Complete            | Home, teams, locker, store, leaderboard, achievements, settings, tutorial, privacy/support, gameplay, and results all ship             |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
@@ -105,6 +109,9 @@ or runtime ownership boundaries.
 | 2026-07-16 | `8188cfc` | Repository-adoption focused detached suite        | 75 passed, 0 failed, 0 skipped; three independent latest-diff audits found no P0/P1/P2 defects |
 | 2026-07-16 | `8188cfc` | Repository-adoption detached full suite           | 588 passed, 0 failed, 0 skipped                                |
 | 2026-07-16 | `8188cfc` | Detached unsigned generic-iOS Release archive     | Passed at `/tmp/PocketVectorAdoptionCommitGateArchive-20260716-01.xcarchive` |
+| 2026-07-16 | `afe5bc0` | Account-generation focused detached suite         | 21 passed, 0 failed, 0 skipped; exact patch `4391e19c…` independently audited three times with no P0/P1/P2 defects |
+| 2026-07-16 | `afe5bc0` | Account-generation detached full suite            | 602 passed, 0 failed, 0 skipped                               |
+| 2026-07-16 | `afe5bc0` | Detached unsigned generic-iOS Release archive     | Passed at `/tmp/PocketVectorAccountGenerationDetachedArchive-20260716-01.xcarchive` |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -119,8 +126,8 @@ Release behavior. A wave is not complete merely because its files exist.
    into one versioned scope fingerprint; add epoch revocation, two-phase
    checkpoint recovery, sealed observations, cache-loss reconstruction, and
    durable hydration journals without enabling the live capability.
-3. **Repository adoption complete; freshness in progress:** add an
-   account-generation commit gate and scoped checkpoint freshness lease, then a
+3. **Repository adoption and account-generation authority complete; checkpoint
+   freshness in progress:** add a scoped checkpoint freshness lease, then a
    sealed reconstruction/fetch context that makes `requireExisting` enforceable
    by type. Prove that a previously valid observation cannot install after a
    later accepted checkpoint, account switch, or authority revocation.
@@ -176,7 +183,7 @@ workflow reaches that gate.
 | Crash-free sessions                  | 99.5%+ | Instrumentation decision open                   |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local and version 3 cloud-history foundations pass; live transactional hydration/composition pending |
-| Clean-checkout archive               |   Pass | Detached unsigned Release archive passes at `8188cfc`; final signed RC proof remains |
+| Clean-checkout archive               |   Pass | Detached unsigned Release archive passes at `afe5bc0`; final signed RC proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner

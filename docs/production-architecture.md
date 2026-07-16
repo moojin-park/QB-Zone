@@ -243,10 +243,24 @@ The exact repository-adoption seam is implemented but dormant. It validates the
 journal before file-system I/O, requires no journal or quarantine barrier,
 requires both profile copies to equal the exact candidate, and then swaps only
 the actor's document and canonical persisted artifact without rotating the
-profile session or publishing UI state. Live composition still requires an
-account-generation commit gate and a checkpoint freshness lease spanning
-cleanup, adoption, generation revalidation, and publication; a previously
-minted checkpoint observation is not itself freshness authority.
+profile session or publishing UI state.
+
+The process-local account-generation authority is also implemented but dormant.
+It binds one opaque, nonpersistable token to the exact cloud account, all
+account-derived service ownership, schema scope, and replica epoch. Exact
+duplicate activation preserves the token; every account, scope, epoch,
+invalidation/reactivation, or authority-instance transition mints a distinct
+generation. Compare-and-swap invalidation cannot retire a newer generation. A
+cancellation-safe FIFO gate keeps account transitions outside bounded local
+commit, adoption, and publication work while preserving the exact outcome of
+an admitted commit. Network work is forbidden inside that gate.
+
+Live composition still requires a checkpoint freshness lease. The outer
+account-generation gate must span checkpoint commit, leased profile-file
+mutation, repository adoption, generation revalidation, and publication. The
+checkpoint lease itself must remain synchronous and span only install, abort,
+or journal cleanup while the checkpoint account lock is held; a previously
+minted checkpoint observation is not mutation authority.
 
 Material hydration advances local player and economy revisions exactly once
 without copying a remote root revision. A no-op merge does not advance either
