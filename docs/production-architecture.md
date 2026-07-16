@@ -17,7 +17,8 @@ ProductionAppRuntime (one retained process graph)
        -> ProductionAppComposition
             -> LocalPlayerProfileRepository actor
                  -> atomic local profile store
-                 -> future CloudKit hydration and durable economy composition
+                 -> durable local profile and economy operations
+                 -> future transactional CloudKit hydration composition
        -> GameplaySessionController
             -> one GameScene for one RunConfiguration
             <- one CompletedRun callback
@@ -188,6 +189,58 @@ Game Center player.
 Private CloudKit protects normal synchronization and two-device conflicts. It
 is not a trusted anti-cheat server; version 1 accepts that limitation while
 keeping all scoring and cosmetic purchases free of gameplay advantage.
+
+## Cloud replica and economy authority
+
+The implemented cloud foundation discovers private-zone record changes,
+validates provider record names, filters internal operation markers, and binds
+every replica to the current iCloud account, zone, schema scope, and authority
+epoch. The replica checkpoint uses redundant primary and backup documents, a
+durable watermark, accepted/pending two-phase authority metadata, an advisory
+file lock, and bounded quarantine. A stale process, revoked epoch, corrupt
+watermark, interrupted promotion, or mismatched account fails closed before it
+can replace accepted state.
+
+Durable economy history uses version 3 heads plus immutable ledger and reward
+markers. Validation replays the complete ordered history and verifies canonical
+revisions, batch positions, operation-ID uniqueness, per-revision bindings,
+nonnegative balances, unlocks, rewarded-ad pairings, and the final accumulator.
+Only the narrow, explicitly tested version 1 to version 2 legacy path is
+accepted; incomplete or ambiguous histories never become spend authority.
+
+The next schema scope is a deliberate pre-release break. Its fingerprint must
+bind transport, profile, and economy record contracts, including provider
+address domains and immutable-marker algorithms. Existing development version
+1/version 2 records and checkpoints are not migrated in place: their authority
+epoch is explicitly revoked, a fresh epoch starts with a nil cursor, and the
+development CloudKit zone is reset or moved to versioned record identifiers.
+
+## Transactional cloud hydration
+
+A validated cloud replica is installed as one recoverable transaction. Fetch
+and validation do not block gameplay. Immediately before installation, the
+repository compares the exact profile session, profile ID, player/economy
+revisions, and source digest; only then does it enter a narrow mutation gate.
+A redundant immutable journal binds source and candidate profile envelopes,
+the cloud account-derived profile and player identities, scope and epoch,
+predecessor checkpoint, exact target checkpoint, transaction ID, and merge
+policy version.
+
+Installation writes and verifies the candidate profile backup and primary,
+commits and reloads the exact target checkpoint, removes both journal copies,
+and only then publishes the new in-memory profile. Startup recovery runs before
+ordinary `loadOrCreate`, accepts only the exact predecessor or target
+checkpoint, and deterministically completes or cleans up the interrupted
+transaction. A wrong account, profile binding, schema scope, or authority epoch
+can never install. The local repository uses deterministic account-derived
+identities for cloud profiles; switching iCloud accounts opens a separate
+profile and never silently merges identities.
+
+Material hydration advances local player and economy revisions exactly once
+without copying a remote root revision. A no-op merge does not advance either
+revision. Validated cloud state must be installable without erasing valid
+source-only runs, rewards, settings, or ownership; otherwise hydration rejects
+the replica and retains the local source.
 
 ## Platform service contracts
 
