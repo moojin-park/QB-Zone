@@ -29,7 +29,7 @@ struct LocalPlayerDocumentV1: Codable, Equatable, Sendable {
     var settlementReceipts: [RunID: RunSettlementOutcome]
     /// Optional only at the Codable boundary for legacy V1 envelopes. The V1
     /// migrator immediately supplies explicit non-counting observations, and
-    /// every V2 document persists a complete map.
+    /// every V2-or-later document persists a complete map.
     var rewardedRunObservations: [RunID: RewardedRunObservation]?
 }
 
@@ -53,6 +53,23 @@ struct PlayerProfileEnvelopeV1: Codable, Equatable, Sendable {
 struct PlayerProfileEnvelopeV2: Codable, Equatable, Sendable {
     static let formatIdentifier = PlayerProfileEnvelopeV1.formatIdentifier
     static let schemaVersion = 2
+
+    let format: String
+    let schemaVersion: Int
+    let savedAt: Date
+    let document: LocalPlayerDocumentV1
+
+    init(document: LocalPlayerDocumentV1, savedAt: Date) {
+        format = Self.formatIdentifier
+        schemaVersion = Self.schemaVersion
+        self.savedAt = savedAt
+        self.document = document
+    }
+}
+
+struct PlayerProfileEnvelopeV3: Codable, Equatable, Sendable {
+    static let formatIdentifier = PlayerProfileEnvelopeV1.formatIdentifier
+    static let schemaVersion = 3
 
     let format: String
     let schemaVersion: Int
@@ -302,7 +319,9 @@ enum ProfileValidationError: Error, Equatable {
     case jerseyOwnedWithoutTeam(JerseyID)
     case invalidRememberedJersey(teamID: TeamID, jerseyID: JerseyID)
     case invalidSelection(InventoryRuleError)
+    case invalidSelectionStamp
     case invalidSettings
+    case invalidSettingsStamp
     case invalidAchievementProgress(AchievementID)
     case invalidRewardedAdState
     case invalidRewardedRunObservation(RunID)

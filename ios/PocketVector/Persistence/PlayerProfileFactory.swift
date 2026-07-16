@@ -31,12 +31,14 @@ enum PlayerProfileFactory {
                 settings: Stamped(
                     value: settings,
                     modifiedAt: createdAt,
-                    deviceID: deviceID
+                    deviceID: deviceID,
+                    logicalCounter: 0
                 ),
                 selection: Stamped(
                     value: selection,
                     modifiedAt: createdAt,
-                    deviceID: deviceID
+                    deviceID: deviceID,
+                    logicalCounter: 0
                 ),
                 inventory: InventoryRules.initialInventory(catalog: catalog),
                 completedRuns: [:],
@@ -119,6 +121,7 @@ enum PlayerProfileValidator {
         guard !document.accountIdentity.rawValue.isEmpty else {
             throw ProfileValidationError.invalidAccountIdentity
         }
+        try validateFieldStamps(document.player)
         try validateKeys(document)
         try validateInventory(document.player, catalog: catalog)
         try validateSettingsAndProgress(document.player)
@@ -127,6 +130,17 @@ enum PlayerProfileValidator {
         try validateRewardedAdState(document.player)
         try validateRewardedRunObservations(document)
         try validateCareer(document.player)
+    }
+
+    private static func validateFieldStamps(_ player: PlayerDocumentV1) throws {
+        guard player.settings.modifiedAt.timeIntervalSince1970.isFinite,
+              ProfileStampDeviceIDRuleV1.isValid(player.settings.deviceID) else {
+            throw ProfileValidationError.invalidSettingsStamp
+        }
+        guard player.selection.modifiedAt.timeIntervalSince1970.isFinite,
+              ProfileStampDeviceIDRuleV1.isValid(player.selection.deviceID) else {
+            throw ProfileValidationError.invalidSelectionStamp
+        }
     }
 
     private static func validateKeys(_ document: LocalPlayerDocumentV1) throws {

@@ -243,7 +243,7 @@ struct CloudProfileMergeStampV1: Codable, Equatable, Comparable, Sendable {
     let modifiedAt: Date
 
     init(logicalCounter: UInt64, deviceID: String, modifiedAt: Date) throws {
-        guard Self.isValidDeviceID(deviceID) else {
+        guard ProfileStampDeviceIDRuleV1.isValid(deviceID) else {
             throw CloudProfileMergeStampError.invalidDeviceID(deviceID)
         }
         guard modifiedAt.timeIntervalSinceReferenceDate.isFinite else {
@@ -283,23 +283,6 @@ struct CloudProfileMergeStampV1: Codable, Equatable, Comparable, Sendable {
         return lhs.deviceID.utf8.lexicographicallyPrecedes(rhs.deviceID.utf8)
     }
 
-    private static func isValidDeviceID(_ value: String) -> Bool {
-        let bytes = Array(value.utf8)
-        guard (1 ... 64).contains(bytes.count),
-              isASCIIAlphaNumeric(bytes[0])
-        else {
-            return false
-        }
-        return bytes.dropFirst().allSatisfy { byte in
-            isASCIIAlphaNumeric(byte) || byte == 45 || byte == 46 || byte == 95
-        }
-    }
-
-    private static func isASCIIAlphaNumeric(_ byte: UInt8) -> Bool {
-        (byte >= 65 && byte <= 90)
-            || (byte >= 97 && byte <= 122)
-            || (byte >= 48 && byte <= 57)
-    }
 }
 
 enum CloudProfileStampedMergeError: Error, Equatable, Sendable {

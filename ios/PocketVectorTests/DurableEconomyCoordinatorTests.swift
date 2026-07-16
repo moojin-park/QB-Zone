@@ -1443,7 +1443,7 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         )
         XCTAssertEqual(
             (persistedObject["schemaVersion"] as? NSNumber)?.intValue,
-            PlayerProfileEnvelopeV2.schemaVersion
+            PlayerProfileEnvelopeV3.schemaVersion
         )
         XCTAssertNotNil(
             (persistedObject["document"] as? [String: Any])?["rewardedRunObservations"]

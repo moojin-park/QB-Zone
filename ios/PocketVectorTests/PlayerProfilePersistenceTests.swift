@@ -6,6 +6,347 @@ import XCTest
 final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
     private let baseDate = Date(timeIntervalSince1970: 1_750_000_000)
 
+    func testProfileStampDeviceIDRuleIsVersionedAndSharedWithCloudStamps() throws {
+        XCTAssertEqual(
+            ProfileStampDeviceIDRuleV1.fingerprintMaterial,
+            [
+                "pocket-vector-profile-stamp-device-id-rule-v1",
+                "lengthUnit", "utf8-byte",
+                "minimumByteCount", "1",
+                "maximumByteCount", "64",
+                "firstByteClass", "ascii-alphanumeric",
+                "remainingByteClass", "ascii-alphanumeric-or-bytes-45-46-95",
+            ]
+        )
+
+        let valid = [
+            "a",
+            "9",
+            "device-A_9.z",
+            String(repeating: "a", count: 64),
+        ]
+        for deviceID in valid {
+            XCTAssertTrue(ProfileStampDeviceIDRuleV1.isValid(deviceID))
+            XCTAssertNoThrow(
+                try CloudProfileMergeStampV1(
+                    logicalCounter: 0,
+                    deviceID: deviceID,
+                    modifiedAt: baseDate
+                )
+            )
+        }
+
+        let invalid = [
+            "",
+            "-device",
+            "device id",
+            "device/id",
+            "dévice",
+            String(repeating: "a", count: 65),
+        ]
+        for deviceID in invalid {
+            XCTAssertFalse(ProfileStampDeviceIDRuleV1.isValid(deviceID))
+            XCTAssertThrowsError(
+                try CloudProfileMergeStampV1(
+                    logicalCounter: 0,
+                    deviceID: deviceID,
+                    modifiedAt: baseDate
+                )
+            ) {
+                XCTAssertEqual(
+                    $0 as? CloudProfileMergeStampError,
+                    .invalidDeviceID(deviceID)
+                )
+            }
+        }
+    }
+
+    func testValidatorRejectsInvalidLocalStampDeviceIDs() throws {
+        var invalidSettings = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "valid-device",
+            createdAt: baseDate
+        )
+        invalidSettings.player.settings.deviceID = "invalid device"
+        XCTAssertThrowsError(try PlayerProfileValidator.validate(invalidSettings)) {
+            XCTAssertEqual($0 as? ProfileValidationError, .invalidSettingsStamp)
+        }
+
+        var invalidSelection = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "valid-device",
+            createdAt: baseDate
+        )
+        invalidSelection.player.selection.deviceID = "-invalid-device"
+        XCTAssertThrowsError(try PlayerProfileValidator.validate(invalidSelection)) {
+            XCTAssertEqual($0 as? ProfileValidationError, .invalidSelectionStamp)
+        }
+    }
+
+    func testFreshProfileStoreRejectsInvalidDeviceIDWithoutWriting() throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        var invalid = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "valid-device",
+            createdAt: baseDate
+        )
+        invalid.player.settings.deviceID = "invalid fresh device"
+        invalid.player.selection.deviceID = "invalid fresh device"
+        let store = AtomicProfileFileStore(directoryURL: directory)
+
+        XCTAssertThrowsError(
+            try store.loadOrCreate(
+                defaultDocument: invalid,
+                at: baseDate,
+                catalog: .approved
+            )
+        ) {
+            XCTAssertEqual($0 as? ProfileValidationError, .invalidSettingsStamp)
+        }
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: store.locations.primaryURL.path)
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: store.locations.backupURL.path)
+        )
+    }
+
+    func testInvalidV3AndLegacyStampDeviceIDsDecodeWithoutTrapThenFailValidation()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        let document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "valid-device",
+            createdAt: baseDate
+        )
+        let current = try migrator.encode(document, savedAt: baseDate)
+
+        let invalidV3 = try envelopeData(
+            from: current,
+            schemaVersion: PlayerProfileEnvelopeV3.schemaVersion,
+            deviceIDOverrides: ["settings": "invalid v3 device"]
+        )
+        let decodedV3 = try migrator.decode(invalidV3)
+        XCTAssertThrowsError(try PlayerProfileValidator.validate(decodedV3)) {
+            XCTAssertEqual($0 as? ProfileValidationError, .invalidSettingsStamp)
+        }
+
+        for schemaVersion in [
+            PlayerProfileEnvelopeV1.schemaVersion,
+            PlayerProfileEnvelopeV2.schemaVersion,
+        ] {
+            let legacy = try envelopeData(
+                from: current,
+                schemaVersion: schemaVersion,
+                removingLogicalCounterFrom: ["settings", "selection"],
+                deviceIDOverrides: ["selection": "invalid legacy device"],
+                removeRewardedRunObservations: schemaVersion
+                    == PlayerProfileEnvelopeV1.schemaVersion
+            )
+            let migrated = try migrator.decode(legacy)
+            XCTAssertThrowsError(try PlayerProfileValidator.validate(migrated)) {
+                XCTAssertEqual($0 as? ProfileValidationError, .invalidSelectionStamp)
+            }
+        }
+    }
+
+    func testV3CanonicalFixtureIsExactAndIndependentOfCollectionInsertionOrder() throws {
+        let migrator = PlayerProfileMigrator()
+        let fixture = makeCanonicalFixtureDocument(reverseCollections: false)
+        let reordered = makeCanonicalFixtureDocument(reverseCollections: true)
+
+        XCTAssertEqual(fixture, reordered)
+        let encoded = try migrator.encode(fixture, savedAt: baseDate.addingTimeInterval(3))
+        let reorderedEncoded = try migrator.encode(
+            reordered,
+            savedAt: baseDate.addingTimeInterval(3)
+        )
+
+        XCTAssertEqual(encoded, reorderedEncoded)
+        XCTAssertEqual(
+            encoded,
+            try PlayerProfileCanonicalEnvelopeEncoderV1.encode(
+                PlayerProfileEnvelopeV3(
+                    document: fixture,
+                    savedAt: baseDate.addingTimeInterval(3)
+                )
+            )
+        )
+        XCTAssertEqual(try migrator.decode(encoded), fixture)
+        XCTAssertEqual(
+            try migrator.encode(try migrator.decode(encoded), savedAt: baseDate.addingTimeInterval(3)),
+            encoded
+        )
+
+        let actual = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        let expected = [
+            #"{"document":{"accountIdentity":"fixture-account","economyRevision":4,"pendingLedgerEntryIDs":[],"player":{"achievementProgress":["fixture-achievement-a",{"id":"fixture-achievement-a","percentComplete":25},"fixture-achievement-b",{"id":"fixture-achievement-b","percentComplete":75}],"career":{"attempts":0,"bonusTouchdowns":0,"completedRuns":0,"completions":0,"highestScore":0,"incompletions":0,"#,
+            #""interceptions":0,"rewardEligibleRuns":0,"totalScore":0,"touchdowns":0},"completedRuns":[],"createdAt":1750000000000,"inventory":{"ownedFootballIDs":["fixture-football-a","fixture-football-b"],"ownedJerseyIDs":["fixture-jersey-a","fixture-jersey-b"],"ownedTeamIDs":["fixture-team-a","fixture-team-b"]},"ledger":[],"#,
+            #""pendingGameCenter":{"pendingAchievementPercents":["fixture-achievement-a",10,"fixture-achievement-b",20],"pendingHighScore":12345},"profileID":"12345678-1234-5678-9ABC-DEF012345678","revision":7,"rewardedAdState":{"accountedRunIDs":[{"rawValue":"00000000-0000-0000-0000-000000000990"},{"rawValue":"00000000-0000-0000-0000-000000000991"}],"cycle":2,"validRunsSinceReward":2},"#,
+            #""selection":{"deviceID":"fixture-selection-device","logicalCounter":11,"modifiedAt":1750000002000,"value":{"selectedFootballID":"fixture-football-a","selectedJerseyByTeam":["fixture-team-a","fixture-jersey-a","fixture-team-b","fixture-jersey-b"],"selectedTeamID":"fixture-team-a"}},"settings":{"deviceID":"fixture-settings-device","logicalCounter":9,"modifiedAt":1750000001000,"value":{"isMuted":true,"musicVolume":0.25,"reducedMotion":false,"sfxVolume":0.75,"tutorialCompleted":true}}},"#,
+            #""rewardedRunObservations":[{"rawValue":"00000000-0000-0000-0000-000000000990"},{"disposition":"candidate","observedCycle":2},{"rawValue":"00000000-0000-0000-0000-000000000991"},{"disposition":"ignoredWhileOfferPending","observedCycle":3}],"settlementReceipts":[]},"format":"com.pocketvector.player-profile","savedAt":1750000003000,"schemaVersion":3}"#,
+        ].joined()
+        XCTAssertEqual(actual, expected)
+    }
+
+    func testV3CanonicalBytesNormalizeEveryNonemptyTypedCollection() throws {
+        let migrator = PlayerProfileMigrator()
+        let forward = try makeCanonicalCollectionFixtureDocument(
+            reverseCollections: false
+        )
+        let reversed = try makeCanonicalCollectionFixtureDocument(
+            reverseCollections: true
+        )
+
+        XCTAssertEqual(forward, reversed)
+        XCTAssertNoThrow(try PlayerProfileValidator.validate(forward))
+        XCTAssertGreaterThan(forward.player.completedRuns.count, 1)
+        XCTAssertGreaterThan(forward.player.ledger.count, 1)
+        XCTAssertGreaterThan(forward.settlementReceipts.count, 1)
+        XCTAssertGreaterThan(forward.pendingLedgerEntryIDs.count, 1)
+        XCTAssertTrue(
+            forward.player.completedRuns.values.allSatisfy {
+                !$0.run.completedLaneIDs.isEmpty
+            }
+        )
+
+        let savedAt = baseDate.addingTimeInterval(100)
+        let forwardBytes = try migrator.encode(forward, savedAt: savedAt)
+        let reversedBytes = try migrator.encode(reversed, savedAt: savedAt)
+        XCTAssertEqual(forwardBytes, reversedBytes)
+        XCTAssertEqual(try migrator.decode(forwardBytes), forward)
+        XCTAssertEqual(
+            try migrator.encode(
+                try migrator.decode(forwardBytes),
+                savedAt: savedAt
+            ),
+            forwardBytes
+        )
+
+        let encodedText = try XCTUnwrap(String(data: forwardBytes, encoding: .utf8))
+        for key in [
+            "completedRuns",
+            "ledger",
+            "settlementReceipts",
+            "completedLaneIDs",
+            "pendingLedgerEntryIDs",
+        ] {
+            XCTAssertFalse(encodedText.contains("\"\(key)\":[]"))
+        }
+    }
+
+    func testLegacyV1AndV2MigrateMissingFieldCountersToPlayerRevisionExactlyOnce() throws {
+        let migrator = PlayerProfileMigrator()
+        var original = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "legacy-counter-device",
+            createdAt: baseDate
+        )
+        original.player.revision = 7
+        original.player.settings.logicalCounter = 2
+        original.player.selection.logicalCounter = 4
+        let current = try migrator.encode(original, savedAt: baseDate)
+
+        for schemaVersion in [
+            PlayerProfileEnvelopeV1.schemaVersion,
+            PlayerProfileEnvelopeV2.schemaVersion,
+        ] {
+            let legacy = try envelopeData(
+                from: current,
+                schemaVersion: schemaVersion,
+                removingLogicalCounterFrom: ["settings", "selection"],
+                removeRewardedRunObservations: schemaVersion
+                    == PlayerProfileEnvelopeV1.schemaVersion
+            )
+            let migrated = try migrator.decode(legacy)
+
+            XCTAssertEqual(migrated.player.settings.logicalCounter, 7)
+            XCTAssertEqual(migrated.player.selection.logicalCounter, 7)
+            XCTAssertEqual(migrated.player.settings.deviceID, "legacy-counter-device")
+            XCTAssertEqual(migrated.player.selection.deviceID, "legacy-counter-device")
+            XCTAssertNoThrow(try PlayerProfileValidator.validate(migrated))
+
+            let v3 = try migrator.encode(migrated, savedAt: baseDate)
+            let decodedAgain = try migrator.decode(v3)
+            XCTAssertEqual(decodedAgain.player.settings.logicalCounter, 7)
+            XCTAssertEqual(decodedAgain.player.selection.logicalCounter, 7)
+        }
+    }
+
+    func testDeclaredV3RequiresValidLogicalCounters() throws {
+        let migrator = PlayerProfileMigrator()
+        let document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "strict-v3-device",
+            createdAt: baseDate
+        )
+        let encoded = try migrator.encode(document, savedAt: baseDate)
+
+        for field in ["settings", "selection"] {
+            let missing = try envelopeData(
+                from: encoded,
+                schemaVersion: PlayerProfileEnvelopeV3.schemaVersion,
+                removingLogicalCounterFrom: [field]
+            )
+            XCTAssertThrowsError(try migrator.decode(missing)) {
+                XCTAssertEqual($0 as? ProfileMigrationError, .malformedEnvelope)
+            }
+        }
+
+        let negative = try envelopeData(
+            from: encoded,
+            schemaVersion: PlayerProfileEnvelopeV3.schemaVersion,
+            logicalCounterOverrides: ["settings": -1]
+        )
+        XCTAssertThrowsError(try migrator.decode(negative)) {
+            XCTAssertEqual($0 as? ProfileMigrationError, .malformedEnvelope)
+        }
+
+        let encodedString = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        let overflowString = encodedString.replacingOccurrences(
+            of: #""logicalCounter":0"#,
+            with: #""logicalCounter":18446744073709551616"#
+        )
+        XCTAssertNotEqual(overflowString, encodedString)
+        XCTAssertThrowsError(try migrator.decode(Data(overflowString.utf8))) {
+            XCTAssertEqual($0 as? ProfileMigrationError, .malformedEnvelope)
+        }
+    }
+
+    func testValidatorRejectsNonFiniteStampDatesAndAllowsIndependentFieldClocks() throws {
+        var invalidSettings = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "stamp-validation-device",
+            createdAt: baseDate
+        )
+        invalidSettings.player.settings.modifiedAt = Date(timeIntervalSince1970: .nan)
+        XCTAssertThrowsError(try PlayerProfileValidator.validate(invalidSettings)) {
+            XCTAssertEqual($0 as? ProfileValidationError, .invalidSettingsStamp)
+        }
+
+        var invalidSelection = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "stamp-validation-device",
+            createdAt: baseDate
+        )
+        invalidSelection.player.selection.modifiedAt = Date(timeIntervalSince1970: .infinity)
+        XCTAssertThrowsError(try PlayerProfileValidator.validate(invalidSelection)) {
+            XCTAssertEqual($0 as? ProfileValidationError, .invalidSelectionStamp)
+        }
+
+        var remoteClock = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "remote-stamp-device",
+            createdAt: baseDate
+        )
+        remoteClock.player.settings.logicalCounter = 100
+        remoteClock.player.selection.logicalCounter = 200
+        XCTAssertNoThrow(try PlayerProfileValidator.validate(remoteClock))
+    }
+
     func testFirstLaunchCreatesConservativeProfileWithoutSpendableOrPendingCoins() async throws {
         let directory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(directory) }
@@ -40,6 +381,17 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let document = try decodePrimary(in: directory)
         XCTAssertTrue(document.player.ledger.isEmpty)
         XCTAssertEqual(document.rewardedRunObservations, [:])
+        XCTAssertEqual(document.player.settings.logicalCounter, 0)
+        XCTAssertEqual(document.player.selection.logicalCounter, 0)
+        let persistedObject = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: Data(contentsOf: locations.primaryURL)
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(
+            (persistedObject["schemaVersion"] as? NSNumber)?.intValue,
+            PlayerProfileEnvelopeV3.schemaVersion
+        )
         XCTAssertNil(
             document.player.ledger[
                 CoinLedgerID.signingBonus(version: PersistedEconomyRulesV1.signingBonusVersion)
@@ -83,6 +435,303 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(restored.player.settings.isMuted)
         XCTAssertTrue(restored.player.settings.reducedMotion)
         XCTAssertEqual(restored.player.selection.selectedTeamID, LaunchTeamID.highMesaHelions)
+        let persisted = try decodePrimary(in: directory)
+        XCTAssertEqual(persisted.player.settings.logicalCounter, 1)
+        XCTAssertEqual(persisted.player.settings.deviceID, "test-device")
+        XCTAssertEqual(
+            persisted.player.settings.modifiedAt,
+            baseDate.addingTimeInterval(1)
+        )
+        XCTAssertEqual(persisted.player.selection.logicalCounter, 1)
+        XCTAssertEqual(persisted.player.selection.deviceID, "test-device")
+        XCTAssertEqual(
+            persisted.player.selection.modifiedAt,
+            baseDate.addingTimeInterval(2)
+        )
+    }
+
+    func testNoOpsAndUnrelatedRunSettlementLeaveBothFieldStampsUnchanged() async throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let repository = makeRepository(directory: directory)
+        let initial = try await repository.load(at: baseDate)
+
+        _ = try await repository.settle(
+            makeRun(id: fixedRunID(900), score: 12_000),
+            session: initial.session,
+            recordedAt: baseDate.addingTimeInterval(1)
+        )
+        let afterRun = try decodePrimary(in: directory)
+        XCTAssertEqual(afterRun.player.revision, 1)
+        XCTAssertEqual(afterRun.player.settings.logicalCounter, 0)
+        XCTAssertEqual(afterRun.player.selection.logicalCounter, 0)
+        XCTAssertEqual(afterRun.player.settings.modifiedAt, baseDate)
+        XCTAssertEqual(afterRun.player.selection.modifiedAt, baseDate)
+
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let beforeNoOps = try Data(contentsOf: locations.primaryURL)
+        let snapshot = try await repository.snapshot()
+        _ = try await repository.updateSettings(
+            snapshot.player.settings,
+            session: initial.session,
+            at: baseDate.addingTimeInterval(2)
+        )
+        _ = try await repository.selectTeam(
+            snapshot.player.selection.selectedTeamID,
+            session: initial.session,
+            at: baseDate.addingTimeInterval(3)
+        )
+        _ = try await repository.equipJersey(
+            try XCTUnwrap(snapshot.player.selection.selectedJerseyID),
+            for: snapshot.player.selection.selectedTeamID,
+            session: initial.session,
+            at: baseDate.addingTimeInterval(4)
+        )
+        _ = try await repository.equipFootball(
+            snapshot.player.selection.selectedFootballID,
+            session: initial.session,
+            at: baseDate.addingTimeInterval(5)
+        )
+
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), beforeNoOps)
+        XCTAssertEqual(try decodePrimary(in: directory), afterRun)
+    }
+
+    func testEachSettingsAndSelectionMutationAdvancesOnlyItsFieldCounterOnce() async throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let repository = makeRepository(directory: directory)
+        let initial = try await repository.load(at: baseDate)
+        _ = try await addConfirmedCoins(
+            3_600,
+            transactionID: 9_100,
+            to: repository,
+            at: baseDate
+        )
+
+        let novaAlternate = alternateJerseyItem(for: LaunchTeamID.novaCityComets)
+        let jerseyRequest = try await repository.prepareUnlock(
+            itemID: novaAlternate.id,
+            operationID: OperationID("counter-jersey-unlock"),
+            session: initial.session
+        )
+        _ = try await repository.unlock(
+            using: makeUnlockReceipt(
+                for: jerseyRequest,
+                at: baseDate.addingTimeInterval(1)
+            ),
+            session: initial.session,
+            at: baseDate.addingTimeInterval(1)
+        )
+
+        let footballItem = try XCTUnwrap(
+            LaunchCatalog.approved.unlockableItems.first { item in
+                guard case let .football(footballID) = item.kind else { return false }
+                return footballID == LaunchFootballID.alternate
+            }
+        )
+        let footballRequest = try await repository.prepareUnlock(
+            itemID: footballItem.id,
+            operationID: OperationID("counter-football-unlock"),
+            session: initial.session
+        )
+        _ = try await repository.unlock(
+            using: makeUnlockReceipt(
+                for: footballRequest,
+                at: baseDate.addingTimeInterval(2)
+            ),
+            session: initial.session,
+            at: baseDate.addingTimeInterval(2)
+        )
+
+        var persisted = try decodePrimary(in: directory)
+        XCTAssertEqual(persisted.player.settings.logicalCounter, 0)
+        XCTAssertEqual(persisted.player.selection.logicalCounter, 0)
+
+        _ = try await repository.updateSettings(
+            PlayerSettings(isMuted: true, reducedMotion: true),
+            session: initial.session,
+            at: baseDate.addingTimeInterval(3)
+        )
+        persisted = try decodePrimary(in: directory)
+        XCTAssertEqual(persisted.player.settings.logicalCounter, 1)
+        XCTAssertEqual(persisted.player.settings.modifiedAt, baseDate.addingTimeInterval(3))
+        XCTAssertEqual(persisted.player.settings.deviceID, "test-device")
+        XCTAssertEqual(persisted.player.selection.logicalCounter, 0)
+
+        _ = try await repository.selectTeam(
+            LaunchTeamID.highMesaHelions,
+            session: initial.session,
+            at: baseDate.addingTimeInterval(4)
+        )
+        persisted = try decodePrimary(in: directory)
+        XCTAssertEqual(persisted.player.settings.logicalCounter, 1)
+        XCTAssertEqual(persisted.player.selection.logicalCounter, 1)
+        XCTAssertEqual(persisted.player.selection.modifiedAt, baseDate.addingTimeInterval(4))
+
+        let nova = try XCTUnwrap(
+            LaunchCatalog.approved.team(id: LaunchTeamID.novaCityComets)
+        )
+        _ = try await repository.equipJersey(
+            nova.alternateJersey.id,
+            for: nova.id,
+            session: initial.session,
+            at: baseDate.addingTimeInterval(5)
+        )
+        persisted = try decodePrimary(in: directory)
+        XCTAssertEqual(persisted.player.settings.logicalCounter, 1)
+        XCTAssertEqual(persisted.player.selection.logicalCounter, 2)
+        XCTAssertEqual(persisted.player.selection.modifiedAt, baseDate.addingTimeInterval(5))
+
+        _ = try await repository.equipFootball(
+            LaunchFootballID.alternate,
+            session: initial.session,
+            at: baseDate.addingTimeInterval(6)
+        )
+        persisted = try decodePrimary(in: directory)
+        XCTAssertEqual(persisted.player.settings.logicalCounter, 1)
+        XCTAssertEqual(persisted.player.selection.logicalCounter, 3)
+        XCTAssertEqual(persisted.player.selection.modifiedAt, baseDate.addingTimeInterval(6))
+        XCTAssertEqual(persisted.player.selection.deviceID, "test-device")
+        XCTAssertEqual(persisted.player.revision, 7)
+        XCTAssertEqual(persisted.economyRevision, 3)
+    }
+
+    func testTeamUnlockAutomaticallyStampsRememberedJerseyExactlyOnce() async throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let teamID = LaunchTeamID.lumaCoastPrisms
+        var seed = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "test-device",
+            createdAt: baseDate
+        )
+        seed.player.selection.value.selectedJerseyByTeam.removeValue(forKey: teamID)
+        try writeProfile(seed, to: directory, savedAt: baseDate)
+        let repository = makeRepository(directory: directory)
+        let initial = try await repository.load(at: baseDate)
+        _ = try await addConfirmedCoins(
+            1_650,
+            transactionID: 9_101,
+            to: repository,
+            at: baseDate
+        )
+        let team = try XCTUnwrap(LaunchCatalog.approved.team(id: teamID))
+        let teamItem = try XCTUnwrap(
+            LaunchCatalog.approved.unlockableItems.first { item in
+                guard case let .team(candidate) = item.kind else { return false }
+                return candidate == teamID
+            }
+        )
+        let request = try await repository.prepareUnlock(
+            itemID: teamItem.id,
+            operationID: OperationID("counter-team-unlock"),
+            session: initial.session
+        )
+        let receipt = makeUnlockReceipt(
+            for: request,
+            at: baseDate.addingTimeInterval(1)
+        )
+
+        _ = try await repository.unlock(
+            using: receipt,
+            session: initial.session,
+            at: baseDate.addingTimeInterval(1)
+        )
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let afterFirstBytes = try Data(contentsOf: locations.primaryURL)
+        let afterFirst = try decodePrimary(in: directory)
+        XCTAssertEqual(afterFirst.player.selection.logicalCounter, 1)
+        XCTAssertEqual(afterFirst.player.selection.modifiedAt, baseDate.addingTimeInterval(1))
+        XCTAssertEqual(afterFirst.player.selection.deviceID, "test-device")
+        XCTAssertEqual(afterFirst.player.revision, 2)
+        XCTAssertEqual(afterFirst.economyRevision, 2)
+        XCTAssertEqual(
+            afterFirst.player.selection.value.selectedJerseyByTeam[teamID],
+            team.primaryJersey.id
+        )
+
+        let duplicate = try await repository.unlock(
+            using: receipt,
+            session: initial.session,
+            at: baseDate.addingTimeInterval(2)
+        )
+        XCTAssertTrue(duplicate.wasAlreadyUnlocked)
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), afterFirstBytes)
+    }
+
+    func testFieldCounterOverflowLeavesCurrentProfileAndDiskUnchanged() async throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        var document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "overflow-device",
+            createdAt: baseDate
+        )
+        document.player.settings.logicalCounter = .max
+        try writeProfile(document, to: directory, savedAt: baseDate)
+
+        let repository = makeRepository(directory: directory, deviceID: "overflow-device")
+        let initial = try await repository.load(at: baseDate)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let primaryBefore = try Data(contentsOf: locations.primaryURL)
+        let backupBefore = try Data(contentsOf: locations.backupURL)
+        let snapshotBefore = try await repository.snapshot()
+
+        do {
+            _ = try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: initial.session,
+                at: baseDate.addingTimeInterval(1)
+            )
+            XCTFail("A maximum field counter must fail before any mutation")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .validation(.arithmeticOverflow))
+        }
+
+        let snapshotAfter = try await repository.snapshot()
+        XCTAssertEqual(snapshotAfter, snapshotBefore)
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), primaryBefore)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), backupBefore)
+        XCTAssertEqual(try decodePrimary(in: directory), document)
+    }
+
+    func testPlayerRevisionOverflowLeavesFieldStampAndDiskUnchanged() async throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        var document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "revision-overflow-device",
+            createdAt: baseDate
+        )
+        document.player.revision = .max
+        document.player.settings.logicalCounter = 12
+        try writeProfile(document, to: directory, savedAt: baseDate)
+
+        let repository = makeRepository(
+            directory: directory,
+            deviceID: "revision-overflow-device"
+        )
+        let initial = try await repository.load(at: baseDate)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let primaryBefore = try Data(contentsOf: locations.primaryURL)
+        let snapshotBefore = try await repository.snapshot()
+
+        do {
+            _ = try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: initial.session,
+                at: baseDate.addingTimeInterval(1)
+            )
+            XCTFail("A maximum player revision must fail before stamping the field")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .validation(.arithmeticOverflow))
+        }
+
+        let snapshotAfter = try await repository.snapshot()
+        XCTAssertEqual(snapshotAfter, snapshotBefore)
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), primaryBefore)
+        XCTAssertEqual(try decodePrimary(in: directory), document)
     }
 
     func testSigningBonusAppearsOnceOnFirstRewardEligibleSettlementAndRemainsPending() async throws {
@@ -931,7 +1580,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             as? [String: Any],
             var document = envelope["document"] as? [String: Any]
         else {
-            return XCTFail("Expected a V2 profile envelope")
+            return XCTFail("Expected a V3 profile envelope")
         }
         document.removeValue(forKey: "rewardedRunObservations")
         envelope["document"] = document
@@ -1285,6 +1934,316 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
                 .unsupportedSchemaVersion(99)
             )
         }
+    }
+
+    private func makeCanonicalFixtureDocument(
+        reverseCollections: Bool
+    ) -> LocalPlayerDocumentV1 {
+        let teams = [TeamID("fixture-team-a"), TeamID("fixture-team-b")]
+        let jerseys = [JerseyID("fixture-jersey-a"), JerseyID("fixture-jersey-b")]
+        let footballs = [FootballID("fixture-football-a"), FootballID("fixture-football-b")]
+        let achievements = [AchievementID("fixture-achievement-a"), AchievementID("fixture-achievement-b")]
+        let runs = [fixedRunID(990), fixedRunID(991)]
+        let order = reverseCollections ? [1, 0] : [0, 1]
+
+        let selectedJerseys = Dictionary(
+            uniqueKeysWithValues: order.map { (teams[$0], jerseys[$0]) }
+        )
+        let achievementProgress = Dictionary(
+            uniqueKeysWithValues: order.map { index in
+                (
+                    achievements[index],
+                    AchievementProgress(
+                        id: achievements[index],
+                        percentComplete: index == 0 ? 25 : 75
+                    )
+                )
+            }
+        )
+        let pendingAchievements = Dictionary(
+            uniqueKeysWithValues: order.map { (achievements[$0], ($0 + 1) * 10) }
+        )
+        let rewardedObservations = Dictionary(
+            uniqueKeysWithValues: order.map { index in
+                (
+                    runs[index],
+                    RewardedRunObservation(
+                        observedCycle: UInt64(index + 2),
+                        disposition: index == 0 ? .candidate : .ignoredWhileOfferPending
+                    )
+                )
+            }
+        )
+
+        return LocalPlayerDocumentV1(
+            accountIdentity: PlayerAccountIdentity("fixture-account"),
+            player: PlayerDocumentV1(
+                profileID: UUID(uuidString: "12345678-1234-5678-9ABC-DEF012345678")!,
+                revision: 7,
+                createdAt: baseDate,
+                settings: Stamped(
+                    value: PlayerSettings(
+                        musicVolume: 0.25,
+                        sfxVolume: 0.75,
+                        isMuted: true,
+                        reducedMotion: false,
+                        tutorialCompleted: true
+                    ),
+                    modifiedAt: baseDate.addingTimeInterval(1),
+                    deviceID: "fixture-settings-device",
+                    logicalCounter: 9
+                ),
+                selection: Stamped(
+                    value: PlayerSelection(
+                        selectedTeamID: teams[0],
+                        selectedJerseyByTeam: selectedJerseys,
+                        selectedFootballID: footballs[0]
+                    ),
+                    modifiedAt: baseDate.addingTimeInterval(2),
+                    deviceID: "fixture-selection-device",
+                    logicalCounter: 11
+                ),
+                inventory: PlayerInventory(
+                    ownedTeamIDs: Set(order.map { teams[$0] }),
+                    ownedJerseyIDs: Set(order.map { jerseys[$0] }),
+                    ownedFootballIDs: Set(order.map { footballs[$0] })
+                ),
+                completedRuns: [:],
+                ledger: [:],
+                career: CareerStatistics(),
+                achievementProgress: achievementProgress,
+                rewardedAdState: RewardedAdState(
+                    cycle: 2,
+                    validRunsSinceReward: 2,
+                    accountedRunIDs: Set(order.map { runs[$0] })
+                ),
+                pendingGameCenter: GameCenterSubmissionQueue(
+                    pendingHighScore: 12_345,
+                    pendingAchievementPercents: pendingAchievements
+                )
+            ),
+            economyRevision: 4,
+            pendingLedgerEntryIDs: [],
+            settlementReceipts: [:],
+            rewardedRunObservations: rewardedObservations
+        )
+    }
+
+    private func makeCanonicalCollectionFixtureDocument(
+        reverseCollections: Bool
+    ) throws -> LocalPlayerDocumentV1 {
+        let offense = try XCTUnwrap(
+            LaunchCatalog.approved.team(id: LaunchTeamID.novaCityComets)
+        )
+        let defense = try XCTUnwrap(
+            LaunchCatalog.approved.team(id: LaunchTeamID.highMesaHelions)
+        )
+        let runIDs = [fixedRunID(992), fixedRunID(993)]
+        let runOrder = reverseCollections ? [1, 0] : [0, 1]
+        let laneValues = Array(LaneID.allCases.prefix(4))
+        let runs = runIDs.enumerated().map { index, runID in
+            let startedAt = baseDate.addingTimeInterval(TimeInterval(index * 2))
+            return CompletedRun(
+                configuration: RunConfiguration(
+                    runID: runID,
+                    randomSeed: UInt32(9_920 + index),
+                    offenseTeamID: offense.id,
+                    offenseJerseyID: offense.primaryJersey.id,
+                    defenseTeamID: defense.id,
+                    defenseJerseyID: defense.primaryJersey.id,
+                    footballID: LaunchFootballID.standard,
+                    economyVersion: PersistedEconomyRulesV1.run.economyVersion,
+                    startedAt: startedAt
+                ),
+                endedAt: startedAt.addingTimeInterval(60),
+                elapsedGameplayMilliseconds: 60_000,
+                finishReason: .timerExpired,
+                score: 5_000 + (index * 2_000),
+                statistics: RunStatisticsSnapshot(
+                    attempts: 10,
+                    completions: 4,
+                    touchdowns: 3,
+                    incompletions: 3,
+                    interceptions: 0,
+                    longestTouchdownStreak: 3
+                ),
+                completedLaneIDs: insertionOrderedSet(
+                    laneValues,
+                    reversed: reverseCollections
+                ),
+                bonusTouchdownCount: 1
+            )
+        }
+        let records = try runs.map { run in
+            CompletedRunRecord(
+                run: run,
+                recordedAt: run.endedAt.addingTimeInterval(1),
+                rewardCoins: try CompletedRunValidator.rewardCoins(for: run)
+            )
+        }
+        let gameplayEntries = records.map { record in
+            let entryID = CoinLedgerID.gameplay(runID: record.run.runID)
+            return CoinLedgerEntry(
+                id: entryID,
+                delta: record.rewardCoins,
+                reason: .gameplay(
+                    runID: record.run.runID,
+                    economyVersion: record.run.configuration.economyVersion
+                ),
+                createdAt: record.recordedAt
+            )
+        }
+        let signingEntry = CoinLedgerEntry(
+            id: CoinLedgerID.signingBonus(
+                version: PersistedEconomyRulesV1.signingBonusVersion
+            ),
+            delta: PersistedEconomyRulesV1.signingBonusCoins,
+            reason: .signingBonus(
+                version: PersistedEconomyRulesV1.signingBonusVersion
+            ),
+            createdAt: PersistedEconomyRulesV1.signingBonusLedgerCreatedAt
+        )
+        let ledgerEntries = gameplayEntries + [signingEntry]
+        let ledgerOrder = reverseCollections
+            ? Array(ledgerEntries.indices.reversed())
+            : Array(ledgerEntries.indices)
+
+        var career = CareerStatistics()
+        var personalBestByRunID: [RunID: Int] = [:]
+        for run in runs {
+            career = try PersistedCareerAccumulatorV1.applying(run, to: career)
+            personalBestByRunID[run.runID] = career.highestScore
+        }
+        let receipts = records.enumerated().map { index, record in
+            let outcome = RunSettlementOutcome(
+                record: record,
+                gameplayRewardEntryID: gameplayEntries[index].id,
+                signingBonusEntryID: index == 0 ? signingEntry.id : nil,
+                achievementUpdates: [],
+                rewardedOfferUnlocked: nil,
+                resultingPersonalBest: personalBestByRunID[record.run.runID] ?? 0
+            )
+            return (record.run.runID, outcome)
+        }
+        let observations = records.map { record in
+            (
+                record.run.runID,
+                RewardedRunObservation(
+                    observedCycle: 0,
+                    disposition: .candidate
+                )
+            )
+        }
+
+        var document = PlayerProfileFactory.makeDefault(
+            profileID: UUID(
+                uuidString: "22345678-1234-5678-9ABC-DEF012345678"
+            )!,
+            accountIdentity: .local,
+            deviceID: "canonical-collection-device",
+            createdAt: baseDate
+        )
+        document.player.revision = 2
+        document.player.completedRuns = Dictionary(
+            uniqueKeysWithValues: runOrder.map {
+                (records[$0].run.runID, records[$0])
+            }
+        )
+        document.player.ledger = Dictionary(
+            uniqueKeysWithValues: ledgerOrder.map {
+                (ledgerEntries[$0].id, ledgerEntries[$0])
+            }
+        )
+        document.player.career = career
+        document.player.rewardedAdState = RewardedAdState(
+            cycle: 0,
+            validRunsSinceReward: records.count,
+            accountedRunIDs: insertionOrderedSet(
+                runOrder.map { records[$0].run.runID },
+                reversed: false
+            )
+        )
+        document.economyRevision = 2
+        document.pendingLedgerEntryIDs = insertionOrderedSet(
+            ledgerOrder.map { ledgerEntries[$0].id },
+            reversed: false
+        )
+        document.settlementReceipts = Dictionary(
+            uniqueKeysWithValues: runOrder.map { receipts[$0] }
+        )
+        document.rewardedRunObservations = Dictionary(
+            uniqueKeysWithValues: runOrder.map { observations[$0] }
+        )
+        return document
+    }
+
+    private func insertionOrderedSet<Element: Hashable>(
+        _ values: [Element],
+        reversed: Bool
+    ) -> Set<Element> {
+        let ordered = reversed ? Array(values.reversed()) : values
+        var result: Set<Element> = []
+        for value in ordered {
+            result.insert(value)
+        }
+        return result
+    }
+
+    private func envelopeData(
+        from source: Data,
+        schemaVersion: Int,
+        removingLogicalCounterFrom fields: [String] = [],
+        logicalCounterOverrides: [String: Int] = [:],
+        deviceIDOverrides: [String: String] = [:],
+        removeRewardedRunObservations: Bool = false
+    ) throws -> Data {
+        var envelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: source) as? [String: Any]
+        )
+        var document = try XCTUnwrap(envelope["document"] as? [String: Any])
+        var player = try XCTUnwrap(document["player"] as? [String: Any])
+
+        for field in fields {
+            var stamp = try XCTUnwrap(player[field] as? [String: Any])
+            XCTAssertNotNil(stamp.removeValue(forKey: "logicalCounter"))
+            player[field] = stamp
+        }
+        for (field, counter) in logicalCounterOverrides {
+            var stamp = try XCTUnwrap(player[field] as? [String: Any])
+            stamp["logicalCounter"] = counter
+            player[field] = stamp
+        }
+        for (field, deviceID) in deviceIDOverrides {
+            var stamp = try XCTUnwrap(player[field] as? [String: Any])
+            stamp["deviceID"] = deviceID
+            player[field] = stamp
+        }
+
+        document["player"] = player
+        if removeRewardedRunObservations {
+            XCTAssertNotNil(document.removeValue(forKey: "rewardedRunObservations"))
+        }
+        envelope["document"] = document
+        envelope["schemaVersion"] = schemaVersion
+        return try JSONSerialization.data(
+            withJSONObject: envelope,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+    }
+
+    private func writeProfile(
+        _ document: LocalPlayerDocumentV1,
+        to directory: URL,
+        savedAt: Date
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let data = try PlayerProfileMigrator().encode(document, savedAt: savedAt)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        try data.write(to: locations.primaryURL, options: .atomic)
+        try data.write(to: locations.backupURL, options: .atomic)
     }
 
     private func makeRepository(

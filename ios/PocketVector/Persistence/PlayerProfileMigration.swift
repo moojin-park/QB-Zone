@@ -1,5 +1,91 @@
 import Foundation
 
+/// Canonical bytes for local profile envelopes. Typed-key dictionaries and
+/// Sets become JSON arrays under Swift Codable, so JSON sorted keys alone do
+/// not make their element order deterministic.
+enum PlayerProfileCanonicalEnvelopeEncoderV1 {
+    static func encode(_ envelope: PlayerProfileEnvelopeV3) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+
+        let encoded = try encoder.encode(envelope)
+        let object = try JSONSerialization.jsonObject(with: encoded)
+        let normalized = try normalize(object, key: nil)
+        return try JSONSerialization.data(
+            withJSONObject: normalized,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+    }
+
+    private static let dictionaryArrayKeys: Set<String> = [
+        "achievementProgress",
+        "completedRuns",
+        "ledger",
+        "pendingAchievementPercents",
+        "rewardedRunObservations",
+        "selectedJerseyByTeam",
+        "settlementReceipts",
+    ]
+
+    private static let setArrayKeys: Set<String> = [
+        "accountedRunIDs",
+        "completedLaneIDs",
+        "ownedFootballIDs",
+        "ownedJerseyIDs",
+        "ownedTeamIDs",
+        "pendingLedgerEntryIDs",
+    ]
+
+    private static func normalize(_ value: Any, key: String?) throws -> Any {
+        if let dictionary = value as? [String: Any] {
+            var normalized: [String: Any] = [:]
+            for (childKey, childValue) in dictionary {
+                normalized[childKey] = try normalize(childValue, key: childKey)
+            }
+            return normalized
+        }
+
+        if let array = value as? [Any] {
+            if let key, dictionaryArrayKeys.contains(key) {
+                guard array.count.isMultiple(of: 2) else {
+                    throw ProfileMigrationError.malformedEnvelope
+                }
+                var pairs: [(key: Any, value: Any, ordering: Data)] = []
+                for index in stride(from: 0, to: array.count, by: 2) {
+                    let normalizedKey = try normalize(array[index], key: nil)
+                    let normalizedValue = try normalize(array[index + 1], key: nil)
+                    let ordering = try orderingBytes(for: normalizedKey)
+                    pairs.append((normalizedKey, normalizedValue, ordering))
+                }
+                pairs.sort {
+                    $0.ordering.lexicographicallyPrecedes($1.ordering)
+                }
+                return pairs.flatMap { [$0.key, $0.value] }
+            }
+
+            let normalized = try array.map { try normalize($0, key: nil) }
+            if let key, setArrayKeys.contains(key) {
+                return try normalized.sorted {
+                    try orderingBytes(for: $0).lexicographicallyPrecedes(
+                        orderingBytes(for: $1)
+                    )
+                }
+            }
+            return normalized
+        }
+
+        return value
+    }
+
+    private static func orderingBytes(for value: Any) throws -> Data {
+        try JSONSerialization.data(
+            withJSONObject: value,
+            options: [.sortedKeys, .fragmentsAllowed, .withoutEscapingSlashes]
+        )
+    }
+}
+
 protocol PlayerProfileMigrating: Sendable {
     func decode(_ data: Data) throws -> LocalPlayerDocumentV1
     func encode(_ document: LocalPlayerDocumentV1, savedAt: Date) throws -> Data
@@ -11,6 +97,84 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
         let schemaVersion: Int
     }
 
+    /// V1 and V2 predate persisted field counters. Keeping their decoding
+    /// shape private prevents a declared V3 document from receiving a default
+    /// counter when either required field is absent.
+    private struct LegacyStamped<Value: Decodable>: Decodable {
+        let value: Value
+        let modifiedAt: Date
+        let deviceID: String
+    }
+
+    private struct LegacyPlayerDocumentV1: Decodable {
+        let profileID: UUID
+        let revision: UInt64
+        let createdAt: Date
+        let settings: LegacyStamped<PlayerSettings>
+        let selection: LegacyStamped<PlayerSelection>
+        let inventory: PlayerInventory
+        let completedRuns: [RunID: CompletedRunRecord]
+        let ledger: [LedgerEntryID: CoinLedgerEntry]
+        let career: CareerStatistics
+        let achievementProgress: [AchievementID: AchievementProgress]
+        let rewardedAdState: RewardedAdState
+        let pendingGameCenter: GameCenterSubmissionQueue
+
+        func migratingFieldCounters() -> PlayerDocumentV1 {
+            PlayerDocumentV1(
+                profileID: profileID,
+                revision: revision,
+                createdAt: createdAt,
+                settings: Stamped(
+                    value: settings.value,
+                    modifiedAt: settings.modifiedAt,
+                    deviceID: settings.deviceID,
+                    logicalCounter: revision
+                ),
+                selection: Stamped(
+                    value: selection.value,
+                    modifiedAt: selection.modifiedAt,
+                    deviceID: selection.deviceID,
+                    logicalCounter: revision
+                ),
+                inventory: inventory,
+                completedRuns: completedRuns,
+                ledger: ledger,
+                career: career,
+                achievementProgress: achievementProgress,
+                rewardedAdState: rewardedAdState,
+                pendingGameCenter: pendingGameCenter
+            )
+        }
+    }
+
+    private struct LegacyLocalPlayerDocumentV1: Decodable {
+        let accountIdentity: PlayerAccountIdentity
+        let player: LegacyPlayerDocumentV1
+        let economyRevision: UInt64
+        let pendingLedgerEntryIDs: Set<LedgerEntryID>
+        let settlementReceipts: [RunID: RunSettlementOutcome]
+        let rewardedRunObservations: [RunID: RewardedRunObservation]?
+
+        func migratingFieldCounters() -> LocalPlayerDocumentV1 {
+            LocalPlayerDocumentV1(
+                accountIdentity: accountIdentity,
+                player: player.migratingFieldCounters(),
+                economyRevision: economyRevision,
+                pendingLedgerEntryIDs: pendingLedgerEntryIDs,
+                settlementReceipts: settlementReceipts,
+                rewardedRunObservations: rewardedRunObservations
+            )
+        }
+    }
+
+    private struct LegacyEnvelope: Decodable {
+        let format: String
+        let schemaVersion: Int
+        let savedAt: Date
+        let document: LegacyLocalPlayerDocumentV1
+    }
+
     func decode(_ data: Data) throws -> LocalPlayerDocumentV1 {
         let header: EnvelopeHeader
         do {
@@ -19,16 +183,19 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
             throw ProfileMigrationError.malformedEnvelope
         }
 
-        guard header.format == PlayerProfileEnvelopeV2.formatIdentifier else {
+        guard header.format == PlayerProfileEnvelopeV3.formatIdentifier else {
             throw ProfileMigrationError.unexpectedFormat(header.format)
         }
 
         switch header.schemaVersion {
         case PlayerProfileEnvelopeV1.schemaVersion:
             do {
-                let document = try Self.makeDecoder()
-                    .decode(PlayerProfileEnvelopeV1.self, from: data)
-                    .document
+                let envelope = try Self.makeDecoder().decode(LegacyEnvelope.self, from: data)
+                guard envelope.format == PlayerProfileEnvelopeV1.formatIdentifier,
+                      envelope.schemaVersion == PlayerProfileEnvelopeV1.schemaVersion else {
+                    throw ProfileMigrationError.malformedEnvelope
+                }
+                let document = envelope.document.migratingFieldCounters()
                 return Self.migrateLegacyV1(document)
             } catch let error as ProfileMigrationError {
                 throw error
@@ -37,8 +204,21 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
             }
         case PlayerProfileEnvelopeV2.schemaVersion:
             do {
+                let envelope = try Self.makeDecoder().decode(LegacyEnvelope.self, from: data)
+                guard envelope.format == PlayerProfileEnvelopeV2.formatIdentifier,
+                      envelope.schemaVersion == PlayerProfileEnvelopeV2.schemaVersion else {
+                    throw ProfileMigrationError.malformedEnvelope
+                }
+                return envelope.document.migratingFieldCounters()
+            } catch let error as ProfileMigrationError {
+                throw error
+            } catch {
+                throw ProfileMigrationError.malformedEnvelope
+            }
+        case PlayerProfileEnvelopeV3.schemaVersion:
+            do {
                 return try Self.makeDecoder()
-                    .decode(PlayerProfileEnvelopeV2.self, from: data)
+                    .decode(PlayerProfileEnvelopeV3.self, from: data)
                     .document
             } catch {
                 throw ProfileMigrationError.malformedEnvelope
@@ -52,11 +232,11 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
         guard document.rewardedRunObservations != nil else {
             throw ProfileMigrationError.malformedEnvelope
         }
-        let envelope = PlayerProfileEnvelopeV2(
+        let envelope = PlayerProfileEnvelopeV3(
             document: document,
             savedAt: savedAt
         )
-        return try Self.makeEncoder().encode(envelope)
+        return try PlayerProfileCanonicalEnvelopeEncoderV1.encode(envelope)
     }
 
     private static func migrateLegacyV1(
@@ -114,13 +294,6 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
             accountedRunIDs: prior.accountedRunIDs
         )
         return document
-    }
-
-    private static func makeEncoder() -> JSONEncoder {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .millisecondsSince1970
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        return encoder
     }
 
     private static func makeDecoder() -> JSONDecoder {

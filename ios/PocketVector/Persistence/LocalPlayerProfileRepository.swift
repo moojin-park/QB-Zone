@@ -21,7 +21,10 @@ actor LocalPlayerProfileRepository {
         economyMutationPolicy: EconomyMutationPolicy = .requireDurablePrivateCloud,
         migrator: any PlayerProfileMigrating = PlayerProfileMigrator()
     ) {
-        precondition(!deviceID.isEmpty, "A stable device ID is required")
+        precondition(
+            ProfileStampDeviceIDRuleV1.isValid(deviceID),
+            "A valid stable profile-stamp device ID is required"
+        )
         fileStore = AtomicProfileFileStore(
             directoryURL: directoryURL,
             migrator: migrator
@@ -429,15 +432,29 @@ actor LocalPlayerProfileRepository {
             throw LocalPlayerRepositoryError.inventory(error)
         }
 
+        let rememberedJerseyInsertion: (teamID: TeamID, jerseyID: JerseyID)?
         if case let .team(teamID) = item.kind,
            next.player.selection.value.selectedJerseyByTeam[teamID] == nil,
            let team = catalog.team(id: teamID) {
-            next.player.selection.value.selectedJerseyByTeam[teamID] = team.primaryJersey.id
+            rememberedJerseyInsertion = (teamID, team.primaryJersey.id)
+        } else {
+            rememberedJerseyInsertion = nil
         }
 
         next.player.ledger[ledgerID] = expectedEntry
 
-        try incrementRevisions(of: &next, economyChanged: true)
+        if let rememberedJerseyInsertion {
+            try applySelectionMutation(
+                to: &next,
+                economyChanged: true,
+                at: date
+            ) { selection in
+                selection.selectedJerseyByTeam[rememberedJerseyInsertion.teamID]
+                    = rememberedJerseyInsertion.jerseyID
+            }
+        } else {
+            try incrementRevisions(of: &next, economyChanged: true)
+        }
         try persist(next, at: date)
         let balanceAfter = try PlayerProfileProjection.coinBalances(for: next).confirmed
         return CatalogUnlockOutcome(
@@ -555,15 +572,14 @@ actor LocalPlayerProfileRepository {
             return try makeSnapshot(for: next)
         }
 
-        let rememberedJersey = next.player.selection.value.selectedJerseyByTeam[teamID]
-        if rememberedJersey == nil
-            || !next.player.inventory.ownedJerseyIDs.contains(rememberedJersey!) {
-            next.player.selection.value.selectedJerseyByTeam[teamID] = team.primaryJersey.id
+        let ownedJerseyIDs = next.player.inventory.ownedJerseyIDs
+        try applySelectionMutation(to: &next, economyChanged: false, at: date) { selection in
+            let rememberedJersey = selection.selectedJerseyByTeam[teamID]
+            if rememberedJersey.map(ownedJerseyIDs.contains) != true {
+                selection.selectedJerseyByTeam[teamID] = team.primaryJersey.id
+            }
+            selection.selectedTeamID = teamID
         }
-        next.player.selection.value.selectedTeamID = teamID
-        next.player.selection.modifiedAt = date
-        next.player.selection.deviceID = deviceID
-        try incrementRevisions(of: &next, economyChanged: false)
         try persist(next, at: date)
         return try makeSnapshot(for: next)
     }
@@ -595,10 +611,9 @@ actor LocalPlayerProfileRepository {
             return try makeSnapshot(for: next)
         }
 
-        next.player.selection.value.selectedJerseyByTeam[teamID] = jerseyID
-        next.player.selection.modifiedAt = date
-        next.player.selection.deviceID = deviceID
-        try incrementRevisions(of: &next, economyChanged: false)
+        try applySelectionMutation(to: &next, economyChanged: false, at: date) {
+            $0.selectedJerseyByTeam[teamID] = jerseyID
+        }
         try persist(next, at: date)
         return try makeSnapshot(for: next)
     }
@@ -621,10 +636,9 @@ actor LocalPlayerProfileRepository {
             return try makeSnapshot(for: next)
         }
 
-        next.player.selection.value.selectedFootballID = footballID
-        next.player.selection.modifiedAt = date
-        next.player.selection.deviceID = deviceID
-        try incrementRevisions(of: &next, economyChanged: false)
+        try applySelectionMutation(to: &next, economyChanged: false, at: date) {
+            $0.selectedFootballID = footballID
+        }
         try persist(next, at: date)
         return try makeSnapshot(for: next)
     }
@@ -648,12 +662,7 @@ actor LocalPlayerProfileRepository {
             return try makeSnapshot(for: next)
         }
 
-        next.player.settings = Stamped(
-            value: sanitized,
-            modifiedAt: date,
-            deviceID: deviceID
-        )
-        try incrementRevisions(of: &next, economyChanged: false)
+        try applySettingsMutation(sanitized, to: &next, at: date)
         try persist(next, at: date)
         return try makeSnapshot(for: next)
     }
@@ -720,19 +729,114 @@ actor LocalPlayerProfileRepository {
         of document: inout LocalPlayerDocumentV1,
         economyChanged: Bool
     ) throws {
-        let playerRevision = document.player.revision.addingReportingOverflow(1)
-        guard !playerRevision.overflow else {
+        let advance = try makeRevisionAdvance(
+            for: document,
+            economyChanged: economyChanged,
+            logicalCounter: nil
+        )
+        apply(advance, to: &document)
+    }
+
+    private struct RevisionAdvance {
+        let playerRevision: UInt64
+        let economyRevision: UInt64?
+        let logicalCounter: UInt64?
+    }
+
+    private func makeRevisionAdvance(
+        for document: LocalPlayerDocumentV1,
+        economyChanged: Bool,
+        logicalCounter: UInt64?
+    ) throws -> RevisionAdvance {
+        let nextPlayerRevision = document.player.revision.addingReportingOverflow(1)
+        guard !nextPlayerRevision.overflow else {
             throw LocalPlayerRepositoryError.validation(.arithmeticOverflow)
         }
-        document.player.revision = playerRevision.partialValue
 
+        let nextEconomyRevision: UInt64?
         if economyChanged {
-            let economyRevision = document.economyRevision.addingReportingOverflow(1)
-            guard !economyRevision.overflow else {
+            let result = document.economyRevision.addingReportingOverflow(1)
+            guard !result.overflow else {
                 throw LocalPlayerRepositoryError.validation(.arithmeticOverflow)
             }
-            document.economyRevision = economyRevision.partialValue
+            nextEconomyRevision = result.partialValue
+        } else {
+            nextEconomyRevision = nil
         }
+
+        let nextLogicalCounter: UInt64?
+        if let logicalCounter {
+            let result = logicalCounter.addingReportingOverflow(1)
+            guard !result.overflow else {
+                throw LocalPlayerRepositoryError.validation(.arithmeticOverflow)
+            }
+            nextLogicalCounter = result.partialValue
+        } else {
+            nextLogicalCounter = nil
+        }
+
+        return RevisionAdvance(
+            playerRevision: nextPlayerRevision.partialValue,
+            economyRevision: nextEconomyRevision,
+            logicalCounter: nextLogicalCounter
+        )
+    }
+
+    private func apply(
+        _ advance: RevisionAdvance,
+        to document: inout LocalPlayerDocumentV1
+    ) {
+        document.player.revision = advance.playerRevision
+        if let economyRevision = advance.economyRevision {
+            document.economyRevision = economyRevision
+        }
+    }
+
+    private func applySettingsMutation(
+        _ settings: PlayerSettings,
+        to document: inout LocalPlayerDocumentV1,
+        at date: Date
+    ) throws {
+        let advance = try makeRevisionAdvance(
+            for: document,
+            economyChanged: false,
+            logicalCounter: document.player.settings.logicalCounter
+        )
+        guard let logicalCounter = advance.logicalCounter else {
+            throw LocalPlayerRepositoryError.validation(.arithmeticOverflow)
+        }
+        document.player.settings = Stamped(
+            value: settings,
+            modifiedAt: date,
+            deviceID: deviceID,
+            logicalCounter: logicalCounter
+        )
+        apply(advance, to: &document)
+    }
+
+    private func applySelectionMutation(
+        to document: inout LocalPlayerDocumentV1,
+        economyChanged: Bool,
+        at date: Date,
+        mutation: (inout PlayerSelection) -> Void
+    ) throws {
+        let advance = try makeRevisionAdvance(
+            for: document,
+            economyChanged: economyChanged,
+            logicalCounter: document.player.selection.logicalCounter
+        )
+        guard let logicalCounter = advance.logicalCounter else {
+            throw LocalPlayerRepositoryError.validation(.arithmeticOverflow)
+        }
+        var selection = document.player.selection.value
+        mutation(&selection)
+        document.player.selection = Stamped(
+            value: selection,
+            modifiedAt: date,
+            deviceID: deviceID,
+            logicalCounter: logicalCounter
+        )
+        apply(advance, to: &document)
     }
 
     private func validateAuthority(_ authority: EconomyStateAuthority) throws {
