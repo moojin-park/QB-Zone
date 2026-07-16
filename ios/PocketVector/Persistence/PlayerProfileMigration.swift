@@ -87,8 +87,21 @@ enum PlayerProfileCanonicalEnvelopeEncoderV1 {
 }
 
 protocol PlayerProfileMigrating: Sendable {
-    func decode(_ data: Data) throws -> LocalPlayerDocumentV1
-    func encode(_ document: LocalPlayerDocumentV1, savedAt: Date) throws -> Data
+    func decodeArtifact(_ data: Data) throws -> DecodedProfileEnvelopeArtifactV1
+    func canonicalArtifact(
+        for document: LocalPlayerDocumentV1,
+        savedAt: Date
+    ) throws -> CanonicalProfileEnvelopeArtifactV1
+}
+
+extension PlayerProfileMigrating {
+    func decode(_ data: Data) throws -> LocalPlayerDocumentV1 {
+        try decodeArtifact(data).document
+    }
+
+    func encode(_ document: LocalPlayerDocumentV1, savedAt: Date) throws -> Data {
+        try canonicalArtifact(for: document, savedAt: savedAt).exactBytes
+    }
 }
 
 struct PlayerProfileMigrator: PlayerProfileMigrating {
@@ -175,7 +188,7 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
         let document: LegacyLocalPlayerDocumentV1
     }
 
-    func decode(_ data: Data) throws -> LocalPlayerDocumentV1 {
+    func decodeArtifact(_ data: Data) throws -> DecodedProfileEnvelopeArtifactV1 {
         let header: EnvelopeHeader
         do {
             header = try Self.makeDecoder().decode(EnvelopeHeader.self, from: data)
@@ -192,11 +205,16 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
             do {
                 let envelope = try Self.makeDecoder().decode(LegacyEnvelope.self, from: data)
                 guard envelope.format == PlayerProfileEnvelopeV1.formatIdentifier,
-                      envelope.schemaVersion == PlayerProfileEnvelopeV1.schemaVersion else {
+                      envelope.schemaVersion == PlayerProfileEnvelopeV1.schemaVersion,
+                      envelope.savedAt.timeIntervalSince1970.isFinite else {
                     throw ProfileMigrationError.malformedEnvelope
                 }
                 let document = envelope.document.migratingFieldCounters()
-                return Self.migrateLegacyV1(document)
+                return DecodedProfileEnvelopeArtifactV1(
+                    sourceSchemaVersion: envelope.schemaVersion,
+                    savedAt: envelope.savedAt,
+                    document: Self.migrateLegacyV1(document)
+                )
             } catch let error as ProfileMigrationError {
                 throw error
             } catch {
@@ -206,10 +224,15 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
             do {
                 let envelope = try Self.makeDecoder().decode(LegacyEnvelope.self, from: data)
                 guard envelope.format == PlayerProfileEnvelopeV2.formatIdentifier,
-                      envelope.schemaVersion == PlayerProfileEnvelopeV2.schemaVersion else {
+                      envelope.schemaVersion == PlayerProfileEnvelopeV2.schemaVersion,
+                      envelope.savedAt.timeIntervalSince1970.isFinite else {
                     throw ProfileMigrationError.malformedEnvelope
                 }
-                return envelope.document.migratingFieldCounters()
+                return DecodedProfileEnvelopeArtifactV1(
+                    sourceSchemaVersion: envelope.schemaVersion,
+                    savedAt: envelope.savedAt,
+                    document: envelope.document.migratingFieldCounters()
+                )
             } catch let error as ProfileMigrationError {
                 throw error
             } catch {
@@ -217,9 +240,20 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
             }
         case PlayerProfileEnvelopeV3.schemaVersion:
             do {
-                return try Self.makeDecoder()
+                let envelope = try Self.makeDecoder()
                     .decode(PlayerProfileEnvelopeV3.self, from: data)
-                    .document
+                guard envelope.format == PlayerProfileEnvelopeV3.formatIdentifier,
+                      envelope.schemaVersion == PlayerProfileEnvelopeV3.schemaVersion,
+                      envelope.savedAt.timeIntervalSince1970.isFinite else {
+                    throw ProfileMigrationError.malformedEnvelope
+                }
+                return DecodedProfileEnvelopeArtifactV1(
+                    sourceSchemaVersion: envelope.schemaVersion,
+                    savedAt: envelope.savedAt,
+                    document: envelope.document
+                )
+            } catch let error as ProfileMigrationError {
+                throw error
             } catch {
                 throw ProfileMigrationError.malformedEnvelope
             }
@@ -228,15 +262,24 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
         }
     }
 
-    func encode(_ document: LocalPlayerDocumentV1, savedAt: Date) throws -> Data {
-        guard document.rewardedRunObservations != nil else {
+    func canonicalArtifact(
+        for document: LocalPlayerDocumentV1,
+        savedAt: Date
+    ) throws -> CanonicalProfileEnvelopeArtifactV1 {
+        guard document.rewardedRunObservations != nil,
+              savedAt.timeIntervalSince1970.isFinite else {
             throw ProfileMigrationError.malformedEnvelope
         }
         let envelope = PlayerProfileEnvelopeV3(
             document: document,
             savedAt: savedAt
         )
-        return try PlayerProfileCanonicalEnvelopeEncoderV1.encode(envelope)
+        let exactBytes = try PlayerProfileCanonicalEnvelopeEncoderV1.encode(envelope)
+        return CanonicalProfileEnvelopeArtifactV1(
+            envelope: envelope,
+            exactBytes: exactBytes,
+            digest: .envelopeBytes(exactBytes)
+        )
     }
 
     private static func migrateLegacyV1(

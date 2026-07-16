@@ -4,11 +4,19 @@ import Foundation
 enum ProfileHydrationFileSystemError: Error, Equatable, Sendable {
     case lockContended
     case ioFailure
+    /// The atomic rename completed, but a later parent-directory sync failed.
+    /// The caller must treat the destination bytes as outcome-unknown.
+    case atomicWriteOutcomeUnknown
+}
+
+enum ProfileHydrationFileItemStatus: Equatable, Sendable {
+    case missing
+    case present
 }
 
 protocol ProfileHydrationFileSystem: Sendable {
     func createDirectory(at url: URL) throws
-    func fileExists(at url: URL) -> Bool
+    func itemStatus(at url: URL) throws -> ProfileHydrationFileItemStatus
     func fileSize(at url: URL) throws -> Int
     func read(from url: URL) throws -> Data
     func writeAtomicallyDurably(_ data: Data, to url: URL) throws
@@ -21,7 +29,7 @@ protocol ProfileHydrationFileSystem: Sendable {
 /// synchronization, atomic rename, and parent-directory synchronization.
 struct FoundationProfileHydrationFileSystem: ProfileHydrationFileSystem {
     func createDirectory(at url: URL) throws {
-        let alreadyExisted = FileManager.default.fileExists(atPath: url.path)
+        let alreadyExisted = try itemStatus(at: url) == .present
         do {
             try FileManager.default.createDirectory(
                 at: url,
@@ -36,8 +44,16 @@ struct FoundationProfileHydrationFileSystem: ProfileHydrationFileSystem {
         }
     }
 
-    func fileExists(at url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path)
+    func itemStatus(at url: URL) throws -> ProfileHydrationFileItemStatus {
+        var metadata = stat()
+        let result = url.path.withCString { Darwin.lstat($0, &metadata) }
+        if result == 0 {
+            return .present
+        }
+        if errno == ENOENT {
+            return .missing
+        }
+        throw ProfileHydrationFileSystemError.ioFailure
     }
 
     func fileSize(at url: URL) throws -> Int {
@@ -72,6 +88,7 @@ struct FoundationProfileHydrationFileSystem: ProfileHydrationFileSystem {
             isDirectory: false
         )
         var temporaryExists = false
+        var destinationWasRenamed = false
         defer {
             if temporaryExists {
                 _ = temporaryURL.path.withCString { Darwin.unlink($0) }
@@ -108,10 +125,17 @@ struct FoundationProfileHydrationFileSystem: ProfileHydrationFileSystem {
                 throw ProfileHydrationFileSystemError.ioFailure
             }
             temporaryExists = false
+            destinationWasRenamed = true
             try synchronizeDirectory(directory)
         } catch let error as ProfileHydrationFileSystemError {
+            if destinationWasRenamed {
+                throw ProfileHydrationFileSystemError.atomicWriteOutcomeUnknown
+            }
             throw error
         } catch {
+            if destinationWasRenamed {
+                throw ProfileHydrationFileSystemError.atomicWriteOutcomeUnknown
+            }
             throw ProfileHydrationFileSystemError.ioFailure
         }
     }
@@ -120,7 +144,7 @@ struct FoundationProfileHydrationFileSystem: ProfileHydrationFileSystem {
         let sourceDirectory = sourceURL.deletingLastPathComponent()
         let destinationDirectory = destinationURL.deletingLastPathComponent()
         try createDirectory(at: destinationDirectory)
-        guard !fileExists(at: destinationURL) else {
+        guard try itemStatus(at: destinationURL) == .missing else {
             throw ProfileHydrationFileSystemError.ioFailure
         }
         do {
@@ -137,7 +161,7 @@ struct FoundationProfileHydrationFileSystem: ProfileHydrationFileSystem {
     }
 
     func removeItemDurably(at url: URL) throws {
-        guard fileExists(at: url) else { return }
+        guard try itemStatus(at: url) == .present else { return }
         do {
             try FileManager.default.removeItem(at: url)
             try synchronizeDirectory(url.deletingLastPathComponent())
@@ -520,11 +544,13 @@ struct ProfileHydrationFileTransactionStore: Sendable {
             // at least one live journal copy describing the installed profile.
             try removeAllQuarantineEvidence()
             try fileSystem.removeItemDurably(at: locations.journalBackupURL)
-            guard !fileSystem.fileExists(at: locations.journalBackupURL) else {
+            guard try fileSystem.itemStatus(at: locations.journalBackupURL)
+                == .missing else {
                 throw ProfileHydrationTransactionStoreError.ioFailure
             }
             try fileSystem.removeItemDurably(at: locations.journalPrimaryURL)
-            guard !fileSystem.fileExists(at: locations.journalPrimaryURL) else {
+            guard try fileSystem.itemStatus(at: locations.journalPrimaryURL)
+                == .missing else {
                 throw ProfileHydrationTransactionStoreError.ioFailure
             }
             return true
@@ -646,7 +672,7 @@ struct ProfileHydrationFileTransactionStore: Sendable {
     }
 
     private func readJournalCopy(at url: URL) throws -> JournalCopy {
-        guard fileSystem.fileExists(at: url) else { return .missing(url) }
+        guard try itemIsPresent(at: url) else { return .missing(url) }
         let size: Int
         do {
             size = try fileSystem.fileSize(at: url)
@@ -757,7 +783,7 @@ struct ProfileHydrationFileTransactionStore: Sendable {
         at url: URL,
         journal: ProfileHydrationJournalV1
     ) throws -> ProfileHydrationProfileCopyState {
-        guard fileSystem.fileExists(at: url) else { return .missing }
+        guard try itemIsPresent(at: url) else { return .missing }
         let size: Int
         do {
             size = try fileSystem.fileSize(at: url)
@@ -927,7 +953,7 @@ struct ProfileHydrationFileTransactionStore: Sendable {
     }
 
     private func exactData(at url: URL, limit: Int) throws -> Data {
-        guard fileSystem.fileExists(at: url) else {
+        guard try itemIsPresent(at: url) else {
             throw ProfileHydrationTransactionStoreError.ioFailure
         }
         do {
@@ -948,7 +974,7 @@ struct ProfileHydrationFileTransactionStore: Sendable {
     }
 
     private func quarantine(_ url: URL) throws {
-        guard fileSystem.fileExists(at: url) else { return }
+        guard try itemIsPresent(at: url) else { return }
         let sourceSize: Int
         do {
             sourceSize = try fileSystem.fileSize(at: url)
@@ -980,9 +1006,15 @@ struct ProfileHydrationFileTransactionStore: Sendable {
         guard !overflow, newTotal <= limits.maximumQuarantineBytes else {
             throw ProfileHydrationTransactionStoreError.quarantineCapacityExceeded
         }
-        guard let destination = (0 ..< limits.maximumQuarantineFiles)
-            .map(locations.quarantineSlotURL)
-            .first(where: { !fileSystem.fileExists(at: $0) }) else {
+        var destination: URL?
+        for index in 0 ..< limits.maximumQuarantineFiles {
+            let candidate = locations.quarantineSlotURL(index)
+            if try !itemIsPresent(at: candidate) {
+                destination = candidate
+                break
+            }
+        }
+        guard let destination else {
             throw ProfileHydrationTransactionStoreError.quarantineCapacityExceeded
         }
         do {
@@ -991,7 +1023,8 @@ struct ProfileHydrationFileTransactionStore: Sendable {
         } catch {
             throw mapped(error)
         }
-        guard !fileSystem.fileExists(at: url), fileSystem.fileExists(at: destination) else {
+        guard try !itemIsPresent(at: url),
+              try itemIsPresent(at: destination) else {
             throw ProfileHydrationTransactionStoreError.ioFailure
         }
     }
@@ -1000,7 +1033,7 @@ struct ProfileHydrationFileTransactionStore: Sendable {
         var result: [URL] = []
         for index in 0 ..< limits.maximumQuarantineFiles {
             let url = locations.quarantineSlotURL(index)
-            if fileSystem.fileExists(at: url) {
+            if try itemIsPresent(at: url) {
                 result.append(url)
             }
         }
@@ -1014,6 +1047,14 @@ struct ProfileHydrationFileTransactionStore: Sendable {
             } catch {
                 throw mapped(error)
             }
+        }
+    }
+
+    private func itemIsPresent(at url: URL) throws -> Bool {
+        do {
+            return try fileSystem.itemStatus(at: url) == .present
+        } catch {
+            throw mapped(error)
         }
     }
 

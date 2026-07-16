@@ -84,6 +84,32 @@ struct PlayerProfileEnvelopeV3: Codable, Equatable, Sendable {
     }
 }
 
+/// The complete authority returned by local profile persistence. Callers retain
+/// these exact canonical V3 bytes for compare-and-swap; reconstructing an
+/// envelope from `document` is not equivalent because `savedAt` is part of the
+/// persisted identity.
+struct CanonicalProfileEnvelopeArtifactV1: Equatable, Sendable {
+    let envelope: PlayerProfileEnvelopeV3
+    let exactBytes: Data
+    let digest: ProfileHydrationDigest
+
+    var document: LocalPlayerDocumentV1 {
+        envelope.document
+    }
+
+    var savedAt: Date {
+        envelope.savedAt
+    }
+}
+
+/// A decoded envelope before its source schema is rewritten to canonical V3.
+/// In particular, this preserves a legacy envelope's original `savedAt` value.
+struct DecodedProfileEnvelopeArtifactV1: Equatable, Sendable {
+    let sourceSchemaVersion: Int
+    let savedAt: Date
+    let document: LocalPlayerDocumentV1
+}
+
 struct CoinBalanceSummary: Equatable, Sendable {
     let confirmed: Int64
     let pending: Int64
@@ -268,6 +294,15 @@ struct ProfileLoadReport: Equatable, Sendable {
     let quarantinedURLs: [URL]
 }
 
+struct ProfileLoadResult: Equatable, Sendable {
+    let artifact: CanonicalProfileEnvelopeArtifactV1
+    let report: ProfileLoadReport
+
+    var document: LocalPlayerDocumentV1 {
+        artifact.document
+    }
+}
+
 struct ProfileStorageLocations: Equatable, Sendable {
     let directoryURL: URL
     let primaryURL: URL
@@ -289,6 +324,31 @@ enum ProfileMigrationError: Error, Equatable {
     case malformedEnvelope
     case unexpectedFormat(String)
     case unsupportedSchemaVersion(Int)
+}
+
+enum ProfileEnvelopeCopyState: Equatable, Sendable {
+    case missing
+    case oversized(Int)
+    case unexpected(ProfileHydrationDigest)
+}
+
+enum AtomicProfileFileStoreError: Error, Equatable, Sendable {
+    case hydrationRecoveryRequired
+    case profileAlreadyExists
+    case profileEnvelopeTooLarge(actual: Int, maximum: Int)
+    case invalidReplacementIntent
+    case backupEnvelopeConflict(
+        primary: ProfileHydrationDigest,
+        backup: ProfileHydrationDigest
+    )
+    case sourceEnvelopeCASMismatch(
+        expected: ProfileHydrationDigest,
+        actual: ProfileEnvelopeCopyState
+    )
+    case lockContended
+    case ioFailure
+    case atomicWriteOutcomeUnknown
+    case writeVerificationFailed
 }
 
 enum ProfileValidationError: Error, Equatable {
@@ -333,6 +393,7 @@ enum ProfileValidationError: Error, Equatable {
 
 enum LocalPlayerRepositoryError: Error, Equatable {
     case notLoaded
+    case profileWriteOutcomeUnknown
     case accountIdentityMismatch(
         expected: PlayerAccountIdentity,
         actual: PlayerAccountIdentity

@@ -8,6 +8,8 @@ actor LocalPlayerProfileRepository {
     private let economyMutationPolicy: EconomyMutationPolicy
 
     private var document: LocalPlayerDocumentV1?
+    private var persistedArtifact: CanonicalProfileEnvelopeArtifactV1?
+    private var pendingReplacementIntent: ExactProfileReplacementIntentV1?
     private let sessionNonce: UUID
     private var sessionIsActive = false
     private(set) var lastLoadReport: ProfileLoadReport?
@@ -19,7 +21,9 @@ actor LocalPlayerProfileRepository {
         sessionNonce: UUID = UUID(),
         catalog: LaunchCatalog = .approved,
         economyMutationPolicy: EconomyMutationPolicy = .requireDurablePrivateCloud,
-        migrator: any PlayerProfileMigrating = PlayerProfileMigrator()
+        migrator: any PlayerProfileMigrating = PlayerProfileMigrator(),
+        limits: ProfileHydrationLimits = .production,
+        fileSystem: any ProfileHydrationFileSystem = FoundationProfileHydrationFileSystem()
     ) {
         precondition(
             ProfileStampDeviceIDRuleV1.isValid(deviceID),
@@ -27,7 +31,9 @@ actor LocalPlayerProfileRepository {
         )
         fileStore = AtomicProfileFileStore(
             directoryURL: directoryURL,
-            migrator: migrator
+            migrator: migrator,
+            limits: limits,
+            fileSystem: fileSystem
         )
         self.catalog = catalog
         self.deviceID = deviceID
@@ -41,11 +47,8 @@ actor LocalPlayerProfileRepository {
         at date: Date = Date(),
         newProfileID: UUID = UUID()
     ) throws -> LocalPlayerProfileSnapshot {
-        if let document {
-            guard sessionIsActive else {
-                throw LocalPlayerRepositoryError.sessionInvalidated
-            }
-            return try makeSnapshot(for: document)
+        if document != nil {
+            return try makeSnapshot(for: requireActiveDocument())
         }
 
         let loaded = try fileStore.loadOrCreate(
@@ -59,20 +62,38 @@ actor LocalPlayerProfileRepository {
             at: date,
             catalog: catalog
         )
-        guard loaded.document.accountIdentity == accountIdentity else {
+        guard loaded.artifact.document.accountIdentity == accountIdentity else {
             throw LocalPlayerRepositoryError.accountIdentityMismatch(
                 expected: accountIdentity,
-                actual: loaded.document.accountIdentity
+                actual: loaded.artifact.document.accountIdentity
             )
         }
-        document = loaded.document
+        document = loaded.artifact.document
+        persistedArtifact = loaded.artifact
         sessionIsActive = true
         lastLoadReport = loaded.report
-        return try makeSnapshot(for: loaded.document)
+        return try makeSnapshot(for: loaded.artifact.document)
     }
 
     func snapshot() throws -> LocalPlayerProfileSnapshot {
         try makeSnapshot(for: requireActiveDocument())
+    }
+
+    /// Supplies the exact canonical bytes returned by persistence. Re-encoding
+    /// the in-memory document would discard the persisted envelope identity and
+    /// is never accepted as hydration compare-and-swap evidence.
+    func hydrationSource(
+        session: ProfileSessionToken
+    ) throws -> CloudProfileHydrationSourceV1 {
+        let document = try requireActiveDocument()
+        try validateSession(session, against: document)
+        guard let persistedArtifact else {
+            throw LocalPlayerRepositoryError.notLoaded
+        }
+        return CloudProfileHydrationSourceV1(
+            exactEnvelopeBytes: persistedArtifact.exactBytes,
+            activeSession: session
+        )
     }
 
     func settlementReceipt(
@@ -673,6 +694,7 @@ actor LocalPlayerProfileRepository {
                 ? LocalPlayerRepositoryError.notLoaded
                 : LocalPlayerRepositoryError.sessionInvalidated
         }
+        try reconcilePendingReplacementIfNeeded()
         guard let document else {
             throw LocalPlayerRepositoryError.notLoaded
         }
@@ -721,8 +743,51 @@ actor LocalPlayerProfileRepository {
         } catch let error as ProfileValidationError {
             throw LocalPlayerRepositoryError.validation(error)
         }
-        try fileStore.save(next, at: date, catalog: catalog)
-        document = next
+        guard let persistedArtifact else {
+            throw LocalPlayerRepositoryError.notLoaded
+        }
+        let attempt = try fileStore.save(
+            next,
+            at: date,
+            catalog: catalog,
+            replacing: persistedArtifact
+        )
+        switch attempt {
+        case let .committed(saved):
+            document = saved.document
+            self.persistedArtifact = saved
+        case let .reconciliationRequired(intent):
+            pendingReplacementIntent = intent
+            throw LocalPlayerRepositoryError.profileWriteOutcomeUnknown
+        }
+    }
+
+    private func reconcilePendingReplacementIfNeeded() throws {
+        guard let pendingReplacementIntent else { return }
+        guard persistedArtifact == pendingReplacementIntent.source,
+              document == pendingReplacementIntent.source.document else {
+            throw LocalPlayerRepositoryError.profileWriteOutcomeUnknown
+        }
+        do {
+            switch try fileStore.reconcile(
+                pendingReplacementIntent,
+                catalog: catalog
+            ) {
+            case let .committed(saved):
+                guard saved == pendingReplacementIntent.candidate else {
+                    throw LocalPlayerRepositoryError.profileWriteOutcomeUnknown
+                }
+                document = saved.document
+                persistedArtifact = saved
+                self.pendingReplacementIntent = nil
+            case let .reconciliationRequired(intent):
+                self.pendingReplacementIntent = intent
+                throw LocalPlayerRepositoryError.profileWriteOutcomeUnknown
+            }
+        } catch {
+            self.pendingReplacementIntent = pendingReplacementIntent
+            throw LocalPlayerRepositoryError.profileWriteOutcomeUnknown
+        }
     }
 
     private func incrementRevisions(

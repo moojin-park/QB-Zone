@@ -931,6 +931,134 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
     }
 
+    func testThrowingStatusAndReadFailuresFailClosedWithoutChangingEvidence() throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let liveCopyFailures: [
+            (String, FaultInjectingProfileHydrationFileSystem.Failure)
+        ] = [
+            (
+                "journal primary status",
+                .beforeStatus("profile-hydration-journal.json")
+            ),
+            (
+                "journal primary read",
+                .beforeRead("profile-hydration-journal.json")
+            ),
+            (
+                "journal backup status",
+                .beforeStatus("profile-hydration-journal.backup.json")
+            ),
+            (
+                "journal backup read",
+                .beforeRead("profile-hydration-journal.backup.json")
+            ),
+            ("profile primary status", .beforeStatus("player-profile.json")),
+            ("profile primary read", .beforeRead("player-profile.json")),
+            (
+                "profile backup status",
+                .beforeStatus("player-profile.backup.json")
+            ),
+            (
+                "profile backup read",
+                .beforeRead("player-profile.backup.json")
+            )
+        ]
+
+        for (name, failure) in liveCopyFailures {
+            let root = try temporaryDirectory()
+            let baseStore = makeStore(root: root)
+            try seedSourceProfile(fixture, locations: baseStore.locations)
+            _ = try baseStore.beginHydration(fixture.journal)
+            let evidenceURLs = [
+                baseStore.locations.profilePrimaryURL,
+                baseStore.locations.profileBackupURL,
+                baseStore.locations.journalPrimaryURL,
+                baseStore.locations.journalBackupURL
+            ]
+            let evidenceBefore = try evidenceURLs.map { try Data(contentsOf: $0) }
+            let fault = FaultInjectingProfileHydrationFileSystem()
+            fault.failNext(failure)
+            let faultedStore = makeStore(root: root, fileSystem: fault)
+
+            XCTAssertThrowsError(
+                try faultedStore.inspectRecovery(expected: fixture.expectedBinding),
+                name
+            ) { error in
+                XCTAssertEqual(
+                    error as? ProfileHydrationTransactionStoreError,
+                    .ioFailure,
+                    name
+                )
+            }
+            XCTAssertEqual(
+                try evidenceURLs.map { try Data(contentsOf: $0) },
+                evidenceBefore,
+                name
+            )
+            remove(root)
+        }
+
+        for (name, failure) in [
+            (
+                "quarantine status",
+                FaultInjectingProfileHydrationFileSystem.Failure.beforeStatus(
+                    "journal-evidence-0.json"
+                )
+            )
+        ] {
+            let root = try temporaryDirectory()
+            let baseStore = makeStore(root: root)
+            try seedSourceProfile(fixture, locations: baseStore.locations)
+            let fileSystem = FoundationProfileHydrationFileSystem()
+            let quarantineURL = baseStore.locations.quarantineSlotURL(0)
+            let quarantineBytes = Data("retained-journal-evidence".utf8)
+            try fileSystem.createDirectory(
+                at: baseStore.locations.quarantineDirectoryURL
+            )
+            try fileSystem.writeAtomicallyDurably(quarantineBytes, to: quarantineURL)
+            let profileBefore = try [
+                Data(contentsOf: baseStore.locations.profilePrimaryURL),
+                Data(contentsOf: baseStore.locations.profileBackupURL)
+            ]
+            let fault = FaultInjectingProfileHydrationFileSystem()
+            fault.failNext(failure)
+            let faultedStore = makeStore(root: root, fileSystem: fault)
+
+            XCTAssertThrowsError(
+                try faultedStore.inspectRecovery(expected: fixture.expectedBinding),
+                name
+            ) { error in
+                XCTAssertEqual(
+                    error as? ProfileHydrationTransactionStoreError,
+                    .ioFailure,
+                    name
+                )
+            }
+            XCTAssertEqual(
+                try [
+                    Data(contentsOf: baseStore.locations.profilePrimaryURL),
+                    Data(contentsOf: baseStore.locations.profileBackupURL)
+                ],
+                profileBefore,
+                name
+            )
+            XCTAssertEqual(try Data(contentsOf: quarantineURL), quarantineBytes, name)
+            XCTAssertFalse(
+                FileManager.default.fileExists(
+                    atPath: baseStore.locations.journalPrimaryURL.path
+                ),
+                name
+            )
+            XCTAssertFalse(
+                FileManager.default.fileExists(
+                    atPath: baseStore.locations.journalBackupURL.path
+                ),
+                name
+            )
+            remove(root)
+        }
+    }
+
     func testLockContentionFailsFastWithTypedError() throws {
         let fixture = try ProfileHydrationTestFixture()
         let root = try temporaryDirectory()
@@ -1070,6 +1198,8 @@ private final class FaultInjectingProfileHydrationFileSystem:
     enum Failure: Equatable {
         case beforeWrite(String)
         case afterWrite(String)
+        case beforeRead(String)
+        case beforeStatus(String)
         case beforeRemove(String)
         case afterRemove(String)
         case lock
@@ -1089,8 +1219,11 @@ private final class FaultInjectingProfileHydrationFileSystem:
         try base.createDirectory(at: url)
     }
 
-    func fileExists(at url: URL) -> Bool {
-        base.fileExists(at: url)
+    func itemStatus(at url: URL) throws -> ProfileHydrationFileItemStatus {
+        if consume(.beforeStatus(url.lastPathComponent)) {
+            throw ProfileHydrationFileSystemError.ioFailure
+        }
+        return try base.itemStatus(at: url)
     }
 
     func fileSize(at url: URL) throws -> Int {
@@ -1098,7 +1231,10 @@ private final class FaultInjectingProfileHydrationFileSystem:
     }
 
     func read(from url: URL) throws -> Data {
-        try base.read(from: url)
+        if consume(.beforeRead(url.lastPathComponent)) {
+            throw ProfileHydrationFileSystemError.ioFailure
+        }
+        return try base.read(from: url)
     }
 
     func writeAtomicallyDurably(_ data: Data, to url: URL) throws {
@@ -1107,7 +1243,7 @@ private final class FaultInjectingProfileHydrationFileSystem:
         }
         try base.writeAtomicallyDurably(data, to: url)
         if consume(.afterWrite(url.lastPathComponent)) {
-            throw ProfileHydrationFileSystemError.ioFailure
+            throw ProfileHydrationFileSystemError.atomicWriteOutcomeUnknown
         }
     }
 

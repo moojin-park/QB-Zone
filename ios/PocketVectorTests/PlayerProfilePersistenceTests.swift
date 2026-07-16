@@ -347,6 +347,1044 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertNoThrow(try PlayerProfileValidator.validate(remoteClock))
     }
 
+    func testLegacyAndNoncanonicalLoadsDurablyRewriteExactCanonicalV3PreservingSavedAt()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        let savedAt = baseDate.addingTimeInterval(123)
+        var document = PlayerProfileFactory.makeDefault(
+            profileID: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
+            accountIdentity: .local,
+            deviceID: "canonical-rewrite-device",
+            createdAt: baseDate
+        )
+        document.player.revision = 7
+        document.economyRevision = 7
+        let canonical = try migrator.encode(document, savedAt: savedAt)
+        let object = try JSONSerialization.jsonObject(with: canonical)
+        let noncanonicalV3 = try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )
+        let fixtures: [(String, Data)] = [
+            (
+                "v1",
+                try envelopeData(
+                    from: canonical,
+                    schemaVersion: PlayerProfileEnvelopeV1.schemaVersion,
+                    removingLogicalCounterFrom: ["settings", "selection"],
+                    removeRewardedRunObservations: true
+                )
+            ),
+            (
+                "v2",
+                try envelopeData(
+                    from: canonical,
+                    schemaVersion: PlayerProfileEnvelopeV2.schemaVersion,
+                    removingLogicalCounterFrom: ["settings", "selection"]
+                )
+            ),
+            ("noncanonical-v3", noncanonicalV3),
+        ]
+
+        for (name, sourceBytes) in fixtures {
+            let directory = makeTemporaryDirectory().appendingPathComponent(
+                name,
+                isDirectory: true
+            )
+            defer { removeTemporaryDirectory(directory) }
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            let locations = ProfileStorageLocations(directoryURL: directory)
+            try sourceBytes.write(to: locations.primaryURL, options: .atomic)
+            try sourceBytes.write(to: locations.backupURL, options: .atomic)
+            let store = AtomicProfileFileStore(directoryURL: directory)
+
+            let loaded = try store.loadOrCreate(
+                defaultDocument: PlayerProfileFactory.makeDefault(
+                    accountIdentity: .local,
+                    deviceID: "unused-default-device",
+                    createdAt: baseDate.addingTimeInterval(999)
+                ),
+                at: baseDate.addingTimeInterval(999),
+                catalog: .approved
+            )
+            let primary = try Data(contentsOf: locations.primaryURL)
+            let backup = try Data(contentsOf: locations.backupURL)
+
+            XCTAssertEqual(loaded.report.source, .primary, name)
+            XCTAssertEqual(loaded.artifact.savedAt, savedAt, name)
+            XCTAssertEqual(primary, loaded.artifact.exactBytes, name)
+            XCTAssertEqual(backup, loaded.artifact.exactBytes, name)
+            XCTAssertNotEqual(sourceBytes, loaded.artifact.exactBytes, name)
+            XCTAssertEqual(
+                loaded.artifact.digest,
+                .envelopeBytes(loaded.artifact.exactBytes),
+                name
+            )
+            XCTAssertEqual(
+                try migrator.decodeArtifact(primary).sourceSchemaVersion,
+                PlayerProfileEnvelopeV3.schemaVersion,
+                name
+            )
+            XCTAssertEqual(
+                try migrator.encode(loaded.document, savedAt: savedAt),
+                primary,
+                name
+            )
+        }
+    }
+
+    func testHydrationSourceUsesExactCanonicalBytesCurrentlyOnDisk() async throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let repository = makeRepository(directory: directory)
+        let loaded = try await repository.load(
+            at: baseDate,
+            newProfileID: UUID(uuidString: "11111111-2222-3333-4444-666666666666")!
+        )
+
+        let source = try await repository.hydrationSource(session: loaded.session)
+        let primary = try Data(
+            contentsOf: ProfileStorageLocations(directoryURL: directory).primaryURL
+        )
+
+        XCTAssertEqual(source.activeSession, loaded.session)
+        XCTAssertEqual(source.exactEnvelopeBytes, primary)
+        let decoded = try PlayerProfileMigrator().decodeArtifact(
+            source.exactEnvelopeBytes
+        )
+        XCTAssertEqual(decoded.sourceSchemaVersion, PlayerProfileEnvelopeV3.schemaVersion)
+        XCTAssertEqual(decoded.savedAt, baseDate)
+        XCTAssertEqual(decoded.document.player.profileID, loaded.player.profileID)
+    }
+
+    func testTwoLoadedRepositoriesRejectStaleWriterWithoutChangingActorOrDisk()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let first = makeRepository(directory: directory, deviceID: "cas-device-a")
+        let firstLoaded = try await first.load(at: baseDate)
+        let second = makeRepository(directory: directory, deviceID: "cas-device-b")
+        let secondLoaded = try await second.load(at: baseDate.addingTimeInterval(1))
+        let secondSource = try await second.hydrationSource(
+            session: secondLoaded.session
+        )
+
+        _ = try await first.updateSettings(
+            PlayerSettings(
+                musicVolume: 0.1,
+                sfxVolume: 0.2,
+                isMuted: true,
+                reducedMotion: false,
+                tutorialCompleted: false
+            ),
+            session: firstLoaded.session,
+            at: baseDate.addingTimeInterval(2)
+        )
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let primaryAfterFirst = try Data(contentsOf: locations.primaryURL)
+        let backupAfterFirst = try Data(contentsOf: locations.backupURL)
+
+        do {
+            _ = try await second.updateSettings(
+                PlayerSettings(
+                    musicVolume: 0.9,
+                    sfxVolume: 0.8,
+                    isMuted: false,
+                    reducedMotion: true,
+                    tutorialCompleted: true
+                ),
+                session: secondLoaded.session,
+                at: baseDate.addingTimeInterval(3)
+            )
+            XCTFail("A repository with stale exact bytes must not overwrite a newer writer")
+        } catch {
+            XCTAssertEqual(
+                error as? AtomicProfileFileStoreError,
+                .sourceEnvelopeCASMismatch(
+                    expected: .envelopeBytes(secondSource.exactEnvelopeBytes),
+                    actual: .unexpected(.envelopeBytes(primaryAfterFirst))
+                )
+            )
+        }
+
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), primaryAfterFirst)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), backupAfterFirst)
+        let secondAfterRejection = try await second.snapshot()
+        XCTAssertEqual(secondAfterRejection, secondLoaded)
+    }
+
+    func testSemanticallyEqualDifferentEnvelopeFailsExactCASAndLeavesStateUntouched()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let repository = makeRepository(directory: directory)
+        let loaded = try await repository.load(at: baseDate)
+        let source = try await repository.hydrationSource(session: loaded.session)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let sourceDocument = try PlayerProfileMigrator().decode(
+            source.exactEnvelopeBytes
+        )
+        let externallyReencoded = try PlayerProfileMigrator().encode(
+            sourceDocument,
+            savedAt: baseDate.addingTimeInterval(50)
+        )
+        XCTAssertNotEqual(externallyReencoded, source.exactEnvelopeBytes)
+        try externallyReencoded.write(to: locations.primaryURL, options: .atomic)
+        let backupBefore = try Data(contentsOf: locations.backupURL)
+
+        do {
+            _ = try await repository.updateSettings(
+                PlayerSettings(
+                    musicVolume: 0.7,
+                    sfxVolume: 0.6,
+                    isMuted: true,
+                    reducedMotion: true,
+                    tutorialCompleted: false
+                ),
+                session: loaded.session,
+                at: baseDate.addingTimeInterval(51)
+            )
+            XCTFail("Semantic equality must not substitute for exact envelope bytes")
+        } catch {
+            XCTAssertEqual(
+                error as? AtomicProfileFileStoreError,
+                .sourceEnvelopeCASMismatch(
+                    expected: .envelopeBytes(source.exactEnvelopeBytes),
+                    actual: .unexpected(.envelopeBytes(externallyReencoded))
+                )
+            )
+        }
+
+        let snapshotAfterRejection = try await repository.snapshot()
+        XCTAssertEqual(snapshotAfterRejection, loaded)
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), externallyReencoded)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), backupBefore)
+    }
+
+    func testExactCASLostResponseRetryRepairsDivergentBackupToPredecessor()
+        throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let store = AtomicProfileFileStore(directoryURL: directory)
+        let expected = try store.loadOrCreate(
+            defaultDocument: PlayerProfileFactory.makeDefault(
+                accountIdentity: .local,
+                deviceID: "idempotent-cas-device",
+                createdAt: baseDate
+            ),
+            at: baseDate,
+            catalog: .approved
+        ).artifact
+        var candidateDocument = expected.document
+        candidateDocument.player.settings.value.isMuted = true
+        candidateDocument.player.settings.modifiedAt = baseDate.addingTimeInterval(1)
+        candidateDocument.player.settings.logicalCounter += 1
+        candidateDocument.player.revision += 1
+        let candidateDate = baseDate.addingTimeInterval(1)
+        let candidate = try PlayerProfileMigrator().canonicalArtifact(
+            for: candidateDocument,
+            savedAt: candidateDate
+        )
+        let locations = ProfileStorageLocations(directoryURL: directory)
+
+        // Simulate a committed primary followed by a lost response and a
+        // damaged recovery copy before the caller retries the same operation.
+        try candidate.exactBytes.write(to: locations.primaryURL, options: .atomic)
+        try Data("divergent-backup".utf8).write(
+            to: locations.backupURL,
+            options: .atomic
+        )
+
+        let retried = try store.save(
+            candidateDocument,
+            at: candidateDate,
+            catalog: .approved,
+            replacing: expected
+        )
+
+        XCTAssertEqual(retried, .committed(candidate))
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), candidate.exactBytes)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), expected.exactBytes)
+    }
+
+    func testJournalAndQuarantineEvidenceBlockOrdinaryProfileCreation() throws {
+        for marker in ["journal-primary", "journal-backup", "quarantine-evidence"] {
+            let directory = makeTemporaryDirectory().appendingPathComponent(
+                marker,
+                isDirectory: true
+            )
+            defer { removeTemporaryDirectory(directory) }
+            let store = AtomicProfileFileStore(directoryURL: directory)
+            let markerURL: URL
+            switch marker {
+            case "journal-primary":
+                markerURL = store.transactionLocations.journalPrimaryURL
+            case "journal-backup":
+                markerURL = store.transactionLocations.journalBackupURL
+            default:
+                markerURL = store.transactionLocations.quarantineSlotURL(0)
+            }
+            try FileManager.default.createDirectory(
+                at: markerURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("recovery-evidence".utf8).write(to: markerURL, options: .atomic)
+
+            XCTAssertThrowsError(
+                try store.loadOrCreate(
+                    defaultDocument: PlayerProfileFactory.makeDefault(
+                        accountIdentity: .local,
+                        deviceID: "barrier-device",
+                        createdAt: baseDate
+                    ),
+                    at: baseDate,
+                    catalog: .approved
+                )
+            ) {
+                XCTAssertEqual(
+                    $0 as? AtomicProfileFileStoreError,
+                    .hydrationRecoveryRequired,
+                    marker
+                )
+            }
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: store.locations.primaryURL.path),
+                marker
+            )
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: store.locations.backupURL.path),
+                marker
+            )
+        }
+    }
+
+    func testJournalAndQuarantineEvidenceBlockMutationWithoutChangingActorOrDisk()
+        async throws
+    {
+        for marker in ["journal", "quarantine-evidence"] {
+            let directory = makeTemporaryDirectory().appendingPathComponent(
+                marker,
+                isDirectory: true
+            )
+            defer { removeTemporaryDirectory(directory) }
+            let repository = makeRepository(directory: directory)
+            let loaded = try await repository.load(at: baseDate)
+            let locations = ProfileStorageLocations(directoryURL: directory)
+            let transactionLocations = ProfileHydrationTransactionLocations(
+                profileDirectoryURL: directory
+            )
+            let primaryBefore = try Data(contentsOf: locations.primaryURL)
+            let backupBefore = try Data(contentsOf: locations.backupURL)
+            let markerURL = marker == "journal"
+                ? transactionLocations.journalPrimaryURL
+                : transactionLocations.quarantineSlotURL(0)
+            try FileManager.default.createDirectory(
+                at: markerURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("recovery-evidence".utf8).write(to: markerURL, options: .atomic)
+
+            do {
+                _ = try await repository.updateSettings(
+                    PlayerSettings(
+                        musicVolume: 0,
+                        sfxVolume: 0,
+                        isMuted: true,
+                        reducedMotion: true,
+                        tutorialCompleted: true
+                    ),
+                    session: loaded.session,
+                    at: baseDate.addingTimeInterval(1)
+                )
+                XCTFail("Recovery evidence must block ordinary mutation")
+            } catch {
+                XCTAssertEqual(
+                    error as? AtomicProfileFileStoreError,
+                    .hydrationRecoveryRequired,
+                    marker
+                )
+            }
+
+            let snapshotAfterBarrier = try await repository.snapshot()
+            XCTAssertEqual(snapshotAfterBarrier, loaded, marker)
+            XCTAssertEqual(try Data(contentsOf: locations.primaryURL), primaryBefore, marker)
+            XCTAssertEqual(try Data(contentsOf: locations.backupURL), backupBefore, marker)
+        }
+    }
+
+    func testAtomicStoreAndHydrationTransactionUseTheSameRealFlock() throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FoundationProfileHydrationFileSystem()
+        let store = AtomicProfileFileStore(
+            directoryURL: directory,
+            fileSystem: fileSystem
+        )
+        let hydrationStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: directory
+        )
+        XCTAssertEqual(
+            store.transactionLocations.lockURL,
+            hydrationStore.locations.lockURL
+        )
+
+        try fileSystem.withExclusiveLock(at: hydrationStore.locations.lockURL) {
+            XCTAssertThrowsError(
+                try store.loadOrCreate(
+                    defaultDocument: PlayerProfileFactory.makeDefault(
+                        accountIdentity: .local,
+                        deviceID: "shared-flock-device",
+                        createdAt: baseDate
+                    ),
+                    at: baseDate,
+                    catalog: .approved
+                )
+            ) {
+                XCTAssertEqual(
+                    $0 as? AtomicProfileFileStoreError,
+                    .lockContended
+                )
+            }
+        }
+
+        let loaded = try store.loadOrCreate(
+            defaultDocument: PlayerProfileFactory.makeDefault(
+                accountIdentity: .local,
+                deviceID: "shared-flock-device",
+                createdAt: baseDate
+            ),
+            at: baseDate,
+            catalog: .approved
+        )
+        var candidate = loaded.document
+        candidate.player.settings.value.isMuted.toggle()
+        candidate.player.settings.modifiedAt = baseDate.addingTimeInterval(1)
+        candidate.player.settings.logicalCounter += 1
+        candidate.player.revision += 1
+        let primaryBefore = try Data(contentsOf: store.locations.primaryURL)
+        let backupBefore = try Data(contentsOf: store.locations.backupURL)
+
+        try fileSystem.withExclusiveLock(at: hydrationStore.locations.lockURL) {
+            XCTAssertThrowsError(
+                try store.save(
+                    candidate,
+                    at: baseDate.addingTimeInterval(1),
+                    catalog: .approved,
+                    replacing: loaded.artifact
+                )
+            ) {
+                XCTAssertEqual(
+                    $0 as? AtomicProfileFileStoreError,
+                    .lockContended
+                )
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: store.locations.primaryURL), primaryBefore)
+        XCTAssertEqual(try Data(contentsOf: store.locations.backupURL), backupBefore)
+    }
+
+    func testDefinitivePreRenameFailureLeavesSourceCachedAndRetryAppliesOnce()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        let repository = makeRepository(directory: directory, fileSystem: fileSystem)
+        let loaded = try await repository.load(at: baseDate)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let sourceBytes = try Data(contentsOf: locations.primaryURL)
+        let settings = PlayerSettings(
+            musicVolume: 0.25,
+            sfxVolume: 0.5,
+            isMuted: true,
+            reducedMotion: false,
+            tutorialCompleted: false
+        )
+
+        fileSystem.failNext(.beforeWrite(locations.primaryURL.lastPathComponent))
+        do {
+            _ = try await repository.updateSettings(
+                settings,
+                session: loaded.session,
+                at: baseDate.addingTimeInterval(1)
+            )
+            XCTFail("A pre-rename failure must be definitive")
+        } catch {
+            XCTAssertEqual(error as? AtomicProfileFileStoreError, .ioFailure)
+        }
+
+        let afterDefinitiveFailure = try await repository.snapshot()
+        XCTAssertEqual(afterDefinitiveFailure, loaded)
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), sourceBytes)
+        let retried = try await repository.updateSettings(
+            settings,
+            session: loaded.session,
+            at: baseDate.addingTimeInterval(2)
+        )
+        XCTAssertEqual(retried.player.revision, loaded.player.revision + 1)
+        XCTAssertEqual(retried.player.settings, settings)
+    }
+
+    func testPostRenameFailureReconcilesExactCandidateBeforeSnapshotPublication()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        let repository = makeRepository(directory: directory, fileSystem: fileSystem)
+        let loaded = try await repository.load(at: baseDate)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let sourceBytes = try Data(contentsOf: locations.primaryURL)
+        fileSystem.failNext(.afterWrite(locations.primaryURL.lastPathComponent))
+
+        do {
+            _ = try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: loaded.session,
+                at: baseDate.addingTimeInterval(1)
+            )
+            XCTFail("A post-rename failure must enter reconciliation")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .profileWriteOutcomeUnknown)
+        }
+
+        let installedBytes = try Data(contentsOf: locations.primaryURL)
+        let reconciled = try await repository.snapshot()
+        let source = try await repository.hydrationSource(session: loaded.session)
+        XCTAssertTrue(reconciled.player.settings.isMuted)
+        XCTAssertEqual(reconciled.player.revision, loaded.player.revision + 1)
+        XCTAssertEqual(source.exactEnvelopeBytes, installedBytes)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), sourceBytes)
+    }
+
+    func testPersistentReconciliationFailureBlocksReadsUntilExactRecovery()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        let repository = makeRepository(directory: directory, fileSystem: fileSystem)
+        let loaded = try await repository.load(at: baseDate)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        fileSystem.failNext(.afterWrite(locations.primaryURL.lastPathComponent))
+        do {
+            _ = try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: loaded.session,
+                at: baseDate.addingTimeInterval(1)
+            )
+            XCTFail("Expected an outcome-unknown replacement")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .profileWriteOutcomeUnknown)
+        }
+
+        fileSystem.failRepeatedly(.beforeWrite(locations.backupURL.lastPathComponent))
+        for operation in 0 ..< 2 {
+            do {
+                if operation == 0 {
+                    _ = try await repository.snapshot()
+                } else {
+                    _ = try await repository.hydrationSource(session: loaded.session)
+                }
+                XCTFail("Pending durability must block every profile exposure")
+            } catch let error as LocalPlayerRepositoryError {
+                XCTAssertEqual(error, .profileWriteOutcomeUnknown)
+            }
+        }
+
+        fileSystem.clearRepeatedFailure()
+        let recovered = try await repository.snapshot()
+        XCTAssertTrue(recovered.player.settings.isMuted)
+        XCTAssertEqual(recovered.player.revision, loaded.player.revision + 1)
+    }
+
+    func testPendingReplacementRemainsBlockedByHydrationEvidence() async throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        let repository = makeRepository(directory: directory, fileSystem: fileSystem)
+        let loaded = try await repository.load(at: baseDate)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        fileSystem.failNext(.afterWrite(locations.primaryURL.lastPathComponent))
+        do {
+            _ = try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: loaded.session,
+                at: baseDate.addingTimeInterval(1)
+            )
+            XCTFail("Expected an outcome-unknown replacement")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .profileWriteOutcomeUnknown)
+        }
+
+        let transactionLocations = ProfileHydrationTransactionLocations(
+            profileDirectoryURL: directory
+        )
+        try FileManager.default.createDirectory(
+            at: transactionLocations.journalDirectoryURL,
+            withIntermediateDirectories: true
+        )
+        try Data("transaction-barrier".utf8).write(
+            to: transactionLocations.journalPrimaryURL,
+            options: .atomic
+        )
+        do {
+            _ = try await repository.snapshot()
+            XCTFail("A pending replacement cannot cross a hydration barrier")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .profileWriteOutcomeUnknown)
+        }
+        try FileManager.default.removeItem(at: transactionLocations.journalPrimaryURL)
+        let recovered = try await repository.snapshot()
+        XCTAssertTrue(recovered.player.settings.isMuted)
+    }
+
+    func testPendingReplacementRejectsUnexpectedPrimaryWithoutPublishingIt()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        let repository = makeRepository(directory: directory, fileSystem: fileSystem)
+        let loaded = try await repository.load(at: baseDate)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        fileSystem.failNext(.afterWrite(locations.primaryURL.lastPathComponent))
+        do {
+            _ = try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: loaded.session,
+                at: baseDate.addingTimeInterval(1)
+            )
+            XCTFail("Expected an outcome-unknown replacement")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .profileWriteOutcomeUnknown)
+        }
+        let candidateBytes = try Data(contentsOf: locations.primaryURL)
+        var unexpectedDocument = try PlayerProfileMigrator().decode(candidateBytes)
+        unexpectedDocument.player.settings.value.reducedMotion = true
+        let unexpectedBytes = try PlayerProfileMigrator().encode(
+            unexpectedDocument,
+            savedAt: baseDate.addingTimeInterval(50)
+        )
+        try unexpectedBytes.write(to: locations.primaryURL, options: .atomic)
+
+        do {
+            _ = try await repository.snapshot()
+            XCTFail("Unexpected third-party bytes must not be adopted")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .profileWriteOutcomeUnknown)
+        }
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), unexpectedBytes)
+
+        try candidateBytes.write(to: locations.primaryURL, options: .atomic)
+        let recovered = try await repository.snapshot()
+        XCTAssertTrue(recovered.player.settings.isMuted)
+        XCTAssertFalse(recovered.player.settings.reducedMotion)
+        XCTAssertEqual(recovered.player.revision, loaded.player.revision + 1)
+    }
+
+    func testRestartAdoptsEitherExactSourceOrCandidateWithoutDuplicateRevision()
+        async throws
+    {
+        for candidateSurvives in [false, true] {
+            let directory = makeTemporaryDirectory().appendingPathComponent(
+                candidateSurvives ? "candidate" : "source",
+                isDirectory: true
+            )
+            defer { removeTemporaryDirectory(directory) }
+            let fileSystem = FaultInjectingProfileStoreFileSystem()
+            let first = makeRepository(directory: directory, fileSystem: fileSystem)
+            let loaded = try await first.load(at: baseDate)
+            let locations = ProfileStorageLocations(directoryURL: directory)
+            let sourceBytes = try Data(contentsOf: locations.primaryURL)
+            fileSystem.failNext(.afterWrite(locations.primaryURL.lastPathComponent))
+            do {
+                _ = try await first.updateSettings(
+                    PlayerSettings(isMuted: true),
+                    session: loaded.session,
+                    at: baseDate.addingTimeInterval(1)
+                )
+                XCTFail("Expected an outcome-unknown replacement")
+            } catch let error as LocalPlayerRepositoryError {
+                XCTAssertEqual(error, .profileWriteOutcomeUnknown)
+            }
+            if !candidateSurvives {
+                try sourceBytes.write(to: locations.primaryURL, options: .atomic)
+            }
+
+            let relaunched = makeRepository(directory: directory)
+            let reloaded = try await relaunched.load(at: baseDate.addingTimeInterval(2))
+            XCTAssertEqual(reloaded.player.revision, candidateSurvives ? 1 : 0)
+            XCTAssertEqual(reloaded.player.settings.isMuted, candidateSurvives)
+        }
+    }
+
+    func testRelaunchBlocksCandidatePublicationUntilPredecessorDurabilityBarrierSucceeds()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let initial = makeRepository(directory: directory)
+        let loaded = try await initial.load(at: baseDate)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let sourceBytes = try Data(contentsOf: locations.primaryURL)
+        var candidateDocument = try PlayerProfileMigrator().decode(sourceBytes)
+        candidateDocument.player.settings.value.isMuted = true
+        candidateDocument.player.settings.modifiedAt = baseDate.addingTimeInterval(1)
+        candidateDocument.player.settings.logicalCounter += 1
+        candidateDocument.player.revision += 1
+        let candidateBytes = try PlayerProfileMigrator().encode(
+            candidateDocument,
+            savedAt: baseDate.addingTimeInterval(1)
+        )
+
+        // This is the exact visible layout left by a candidate-primary rename
+        // whose parent-directory durability result was lost with the process.
+        try candidateBytes.write(to: locations.primaryURL, options: .atomic)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), sourceBytes)
+
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        fileSystem.failNext(.beforeWrite(locations.backupURL.lastPathComponent))
+        let relaunched = makeRepository(
+            directory: directory,
+            fileSystem: fileSystem
+        )
+        do {
+            _ = try await relaunched.load(at: baseDate.addingTimeInterval(2))
+            XCTFail("A visible candidate cannot publish before the durability barrier")
+        } catch {
+            XCTAssertEqual(error as? AtomicProfileFileStoreError, .ioFailure)
+        }
+        do {
+            _ = try await relaunched.snapshot()
+            XCTFail("A failed durability barrier must leave the repository unloaded")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .notLoaded)
+        }
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), candidateBytes)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), sourceBytes)
+
+        let recovered = try await relaunched.load(at: baseDate.addingTimeInterval(3))
+        XCTAssertEqual(recovered.player.revision, loaded.player.revision + 1)
+        XCTAssertTrue(recovered.player.settings.isMuted)
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), candidateBytes)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), sourceBytes)
+    }
+
+    func testPendingReplacementInvalidationBlocksOldActorAndReturnRechecksDurability()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        let first = makeRepository(directory: directory, fileSystem: fileSystem)
+        let loaded = try await first.load(at: baseDate)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let sourceBytes = try Data(contentsOf: locations.primaryURL)
+        fileSystem.failNext(.afterWrite(locations.primaryURL.lastPathComponent))
+        do {
+            _ = try await first.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: loaded.session,
+                at: baseDate.addingTimeInterval(1)
+            )
+            XCTFail("Expected an outcome-unknown replacement")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .profileWriteOutcomeUnknown)
+        }
+        let candidateBytes = try Data(contentsOf: locations.primaryURL)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), sourceBytes)
+
+        // This one-shot fault proves invalidation returns before attempting the
+        // old actor's pending reconciliation: the returning account consumes it.
+        fileSystem.failNext(.beforeWrite(locations.backupURL.lastPathComponent))
+        await first.invalidateForAccountSwitch()
+        do {
+            _ = try await first.snapshot()
+            XCTFail("An invalidated actor must never reconcile or publish")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .sessionInvalidated)
+        }
+
+        let returning = makeRepository(directory: directory, fileSystem: fileSystem)
+        do {
+            _ = try await returning.load(at: baseDate.addingTimeInterval(2))
+            XCTFail("The returning account must establish its durability barrier")
+        } catch {
+            XCTAssertEqual(error as? AtomicProfileFileStoreError, .ioFailure)
+        }
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), candidateBytes)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), sourceBytes)
+
+        let recovered = try await returning.load(at: baseDate.addingTimeInterval(3))
+        XCTAssertEqual(recovered.player.revision, loaded.player.revision + 1)
+        XCTAssertTrue(recovered.player.settings.isMuted)
+        do {
+            _ = try await first.snapshot()
+            XCTFail("Returning to the account must not reactivate the old actor")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .sessionInvalidated)
+        }
+    }
+
+    func testOversizedFreshArtifactIsRejectedBeforeEitherProfileWrite() throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let store = AtomicProfileFileStore(
+            directoryURL: directory,
+            limits: profileLimits(maximumEnvelopeBytes: 1)
+        )
+        XCTAssertThrowsError(
+            try store.loadOrCreate(
+                defaultDocument: PlayerProfileFactory.makeDefault(
+                    accountIdentity: .local,
+                    deviceID: "oversized-fresh-device",
+                    createdAt: baseDate
+                ),
+                at: baseDate,
+                catalog: .approved
+            )
+        ) {
+            guard case .profileEnvelopeTooLarge = $0 as? AtomicProfileFileStoreError else {
+                return XCTFail("Expected a typed preflight size rejection, got \($0)")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.locations.primaryURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.locations.backupURL.path))
+    }
+
+    func testOversizedCanonicalLegacyRewriteLeavesBothSourceCopiesUntouched() throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let migrator = PlayerProfileMigrator()
+        let document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "oversized-legacy-device",
+            createdAt: baseDate
+        )
+        let canonical = try migrator.encode(document, savedAt: baseDate)
+        let legacy = try envelopeData(
+            from: canonical,
+            schemaVersion: PlayerProfileEnvelopeV1.schemaVersion,
+            removingLogicalCounterFrom: ["settings", "selection"],
+            removeRewardedRunObservations: true
+        )
+        let migrated = try migrator.canonicalArtifact(
+            for: migrator.decode(legacy),
+            savedAt: baseDate
+        )
+        XCTAssertGreaterThan(migrated.exactBytes.count, legacy.count)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        try legacy.write(to: locations.primaryURL, options: .atomic)
+        try legacy.write(to: locations.backupURL, options: .atomic)
+        let store = AtomicProfileFileStore(
+            directoryURL: directory,
+            limits: profileLimits(maximumEnvelopeBytes: legacy.count)
+        )
+
+        XCTAssertThrowsError(
+            try store.loadOrCreate(
+                defaultDocument: document,
+                at: baseDate,
+                catalog: .approved
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? AtomicProfileFileStoreError,
+                .profileEnvelopeTooLarge(
+                    actual: migrated.exactBytes.count,
+                    maximum: legacy.count
+                )
+            )
+        }
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), legacy)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), legacy)
+    }
+
+    func testOversizedReplacementCandidateIsRejectedBeforeBackupRotation() throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let initialStore = AtomicProfileFileStore(directoryURL: directory)
+        let source = try initialStore.loadOrCreate(
+            defaultDocument: PlayerProfileFactory.makeDefault(
+                accountIdentity: .local,
+                deviceID: "oversized-candidate-device",
+                createdAt: baseDate
+            ),
+            at: baseDate,
+            catalog: .approved
+        ).artifact
+        var candidateDocument = source.document
+        candidateDocument.player.settings.value.musicVolume = 0.123456789
+        candidateDocument.player.settings.modifiedAt = baseDate.addingTimeInterval(1)
+        candidateDocument.player.settings.deviceID = String(repeating: "a", count: 64)
+        candidateDocument.player.settings.logicalCounter += 1
+        candidateDocument.player.revision += 1
+        let candidateDate = baseDate.addingTimeInterval(1)
+        let candidate = try PlayerProfileMigrator().canonicalArtifact(
+            for: candidateDocument,
+            savedAt: candidateDate
+        )
+        XCTAssertGreaterThan(candidate.exactBytes.count, source.exactBytes.count)
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let primaryBefore = try Data(contentsOf: locations.primaryURL)
+        let backupBefore = try Data(contentsOf: locations.backupURL)
+        let limitedStore = AtomicProfileFileStore(
+            directoryURL: directory,
+            limits: profileLimits(maximumEnvelopeBytes: source.exactBytes.count)
+        )
+
+        XCTAssertThrowsError(
+            try limitedStore.save(
+                candidateDocument,
+                at: candidateDate,
+                catalog: .approved,
+                replacing: source
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? AtomicProfileFileStoreError,
+                .profileEnvelopeTooLarge(
+                    actual: candidate.exactBytes.count,
+                    maximum: source.exactBytes.count
+                )
+            )
+        }
+        XCTAssertEqual(try Data(contentsOf: locations.primaryURL), primaryBefore)
+        XCTAssertEqual(try Data(contentsOf: locations.backupURL), backupBefore)
+    }
+
+    func testMalformedHydrationDirectoryIsIOFailureNotMissingEvidence() throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = AtomicProfileFileStore(directoryURL: directory)
+        try Data("not-a-directory".utf8).write(
+            to: store.transactionLocations.journalDirectoryURL,
+            options: .atomic
+        )
+
+        XCTAssertThrowsError(
+            try store.loadOrCreate(
+                defaultDocument: PlayerProfileFactory.makeDefault(
+                    accountIdentity: .local,
+                    deviceID: "status-failure-device",
+                    createdAt: baseDate
+                ),
+                at: baseDate,
+                catalog: .approved
+            )
+        ) {
+            XCTAssertEqual($0 as? AtomicProfileFileStoreError, .ioFailure)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.locations.primaryURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.locations.backupURL.path))
+    }
+
+    func testThrowingStatusAndProfileReadFailuresFailClosedWithoutMutation() throws {
+        let failures: [(String, FaultInjectingProfileStoreFileSystem.Failure)] = [
+            (
+                "journal primary status",
+                .beforeStatus("profile-hydration-journal.json")
+            ),
+            (
+                "journal backup status",
+                .beforeStatus("profile-hydration-journal.backup.json")
+            ),
+            (
+                "quarantine status",
+                .beforeStatus("journal-evidence-0.json")
+            ),
+            ("profile primary status", .beforeStatus("player-profile.json")),
+            ("profile primary read", .beforeRead("player-profile.json")),
+            (
+                "profile backup status",
+                .beforeStatus("player-profile.backup.json")
+            ),
+            (
+                "profile backup read",
+                .beforeRead("player-profile.backup.json")
+            )
+        ]
+
+        for (name, failure) in failures {
+            let directory = makeTemporaryDirectory()
+            let seedStore = AtomicProfileFileStore(directoryURL: directory)
+            let defaultDocument = PlayerProfileFactory.makeDefault(
+                accountIdentity: .local,
+                deviceID: "throwing-status-device",
+                createdAt: baseDate
+            )
+            _ = try seedStore.loadOrCreate(
+                defaultDocument: defaultDocument,
+                at: baseDate,
+                catalog: .approved
+            )
+            let primaryBefore = try Data(contentsOf: seedStore.locations.primaryURL)
+            let backupBefore = try Data(contentsOf: seedStore.locations.backupURL)
+            let fileSystem = FaultInjectingProfileStoreFileSystem()
+            fileSystem.failNext(failure)
+            let faultedStore = AtomicProfileFileStore(
+                directoryURL: directory,
+                fileSystem: fileSystem
+            )
+
+            XCTAssertThrowsError(
+                try faultedStore.loadOrCreate(
+                    defaultDocument: defaultDocument,
+                    at: baseDate.addingTimeInterval(1),
+                    catalog: .approved
+                ),
+                name
+            ) {
+                XCTAssertEqual(
+                    $0 as? AtomicProfileFileStoreError,
+                    .ioFailure,
+                    name
+                )
+            }
+            XCTAssertEqual(
+                try Data(contentsOf: seedStore.locations.primaryURL),
+                primaryBefore,
+                name
+            )
+            XCTAssertEqual(
+                try Data(contentsOf: seedStore.locations.backupURL),
+                backupBefore,
+                name
+            )
+            XCTAssertFalse(
+                FileManager.default.fileExists(
+                    atPath: seedStore.transactionLocations.journalPrimaryURL.path
+                ),
+                name
+            )
+            XCTAssertFalse(
+                FileManager.default.fileExists(
+                    atPath: seedStore.transactionLocations.journalBackupURL.path
+                ),
+                name
+            )
+            removeTemporaryDirectory(directory)
+        }
+    }
+
+    func testEqualRevisionDivergentBackupFailsClosedWithoutChangingEvidence() throws {
+        try assertDivergentBackupFailsClosed(primaryRevision: 1, backupRevision: 1)
+    }
+
+    func testNewerDivergentBackupFailsClosedWithoutChangingEvidence() throws {
+        try assertDivergentBackupFailsClosed(primaryRevision: 1, backupRevision: 2)
+    }
+
     func testFirstLaunchCreatesConservativeProfileWithoutSpendableOrPendingCoins() async throws {
         let directory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(directory) }
@@ -2246,15 +3284,115 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         try data.write(to: locations.backupURL, options: .atomic)
     }
 
+    private func assertDivergentBackupFailsClosed(
+        primaryRevision: UInt64,
+        backupRevision: UInt64,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let profileID = UUID(uuidString: "77777777-8888-9999-aaaa-bbbbbbbbbbbb")!
+        var primary = PlayerProfileFactory.makeDefault(
+            profileID: profileID,
+            accountIdentity: .local,
+            deviceID: "split-primary-device",
+            createdAt: baseDate
+        )
+        primary.player.revision = primaryRevision
+        primary.player.settings = Stamped(
+            value: PlayerSettings(musicVolume: 0.2, isMuted: true),
+            modifiedAt: baseDate.addingTimeInterval(1),
+            deviceID: "split-primary-device",
+            logicalCounter: primaryRevision
+        )
+        var backup = PlayerProfileFactory.makeDefault(
+            profileID: profileID,
+            accountIdentity: .local,
+            deviceID: "split-backup-device",
+            createdAt: baseDate
+        )
+        backup.player.revision = backupRevision
+        backup.player.settings = Stamped(
+            value: PlayerSettings(musicVolume: 0.8, reducedMotion: true),
+            modifiedAt: baseDate.addingTimeInterval(2),
+            deviceID: "split-backup-device",
+            logicalCounter: backupRevision
+        )
+        try PlayerProfileValidator.validate(primary)
+        try PlayerProfileValidator.validate(backup)
+        let migrator = PlayerProfileMigrator()
+        let primaryBytes = try migrator.encode(primary, savedAt: baseDate.addingTimeInterval(1))
+        let backupBytes = try migrator.encode(backup, savedAt: baseDate.addingTimeInterval(2))
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        try primaryBytes.write(to: locations.primaryURL, options: .atomic)
+        try backupBytes.write(to: locations.backupURL, options: .atomic)
+        let primaryDigest = ProfileHydrationDigest.envelopeBytes(primaryBytes)
+        let backupDigest = ProfileHydrationDigest.envelopeBytes(backupBytes)
+        let store = AtomicProfileFileStore(directoryURL: directory)
+
+        XCTAssertThrowsError(
+            try store.loadOrCreate(
+                defaultDocument: primary,
+                at: baseDate.addingTimeInterval(3),
+                catalog: .approved
+            ),
+            file: file,
+            line: line
+        ) {
+            XCTAssertEqual(
+                $0 as? AtomicProfileFileStoreError,
+                .backupEnvelopeConflict(
+                    primary: primaryDigest,
+                    backup: backupDigest
+                ),
+                file: file,
+                line: line
+            )
+        }
+        XCTAssertEqual(
+            try Data(contentsOf: locations.primaryURL),
+            primaryBytes,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: locations.backupURL),
+            backupBytes,
+            file: file,
+            line: line
+        )
+    }
+
+    private func profileLimits(
+        maximumEnvelopeBytes: Int
+    ) -> ProfileHydrationLimits {
+        let production = ProfileHydrationLimits.production
+        return ProfileHydrationLimits(
+            maximumEncodedJournalBytes: production.maximumEncodedJournalBytes,
+            maximumProfileEnvelopeBytes: maximumEnvelopeBytes,
+            maximumEncodedCheckpointBytes: production.maximumEncodedCheckpointBytes,
+            maximumIdentifierBytes: production.maximumIdentifierBytes,
+            maximumProfileCollectionEntries: production.maximumProfileCollectionEntries,
+            maximumQuarantineFiles: production.maximumQuarantineFiles,
+            maximumQuarantineBytes: production.maximumQuarantineBytes
+        )
+    }
+
     private func makeRepository(
         directory: URL,
-        deviceID: String = "test-device"
+        deviceID: String = "test-device",
+        limits: ProfileHydrationLimits = .production,
+        fileSystem: any ProfileHydrationFileSystem = FoundationProfileHydrationFileSystem()
     ) -> LocalPlayerProfileRepository {
         LocalPlayerProfileRepository(
             directoryURL: directory,
             deviceID: deviceID,
             accountIdentity: .local,
-            economyMutationPolicy: .allowLocalTesting
+            economyMutationPolicy: .allowLocalTesting,
+            limits: limits,
+            fileSystem: fileSystem
         )
     }
 
@@ -2479,5 +3617,94 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
     private func decodePrimary(in directory: URL) throws -> LocalPlayerDocumentV1 {
         let locations = ProfileStorageLocations(directoryURL: directory)
         return try PlayerProfileMigrator().decode(Data(contentsOf: locations.primaryURL))
+    }
+}
+
+private final class FaultInjectingProfileStoreFileSystem:
+    ProfileHydrationFileSystem,
+    @unchecked Sendable
+{
+    enum Failure: Equatable {
+        case beforeWrite(String)
+        case afterWrite(String)
+        case beforeRead(String)
+        case beforeStatus(String)
+    }
+
+    private let base = FoundationProfileHydrationFileSystem()
+    private let lock = NSLock()
+    private var nextFailure: Failure?
+    private var repeatedFailure: Failure?
+
+    func failNext(_ failure: Failure) {
+        lock.lock()
+        nextFailure = failure
+        lock.unlock()
+    }
+
+    func failRepeatedly(_ failure: Failure) {
+        lock.lock()
+        repeatedFailure = failure
+        lock.unlock()
+    }
+
+    func clearRepeatedFailure() {
+        lock.lock()
+        repeatedFailure = nil
+        lock.unlock()
+    }
+
+    func createDirectory(at url: URL) throws {
+        try base.createDirectory(at: url)
+    }
+
+    func itemStatus(at url: URL) throws -> ProfileHydrationFileItemStatus {
+        if consume(.beforeStatus(url.lastPathComponent)) {
+            throw ProfileHydrationFileSystemError.ioFailure
+        }
+        return try base.itemStatus(at: url)
+    }
+
+    func fileSize(at url: URL) throws -> Int {
+        try base.fileSize(at: url)
+    }
+
+    func read(from url: URL) throws -> Data {
+        if consume(.beforeRead(url.lastPathComponent)) {
+            throw ProfileHydrationFileSystemError.ioFailure
+        }
+        return try base.read(from: url)
+    }
+
+    func writeAtomicallyDurably(_ data: Data, to url: URL) throws {
+        if consume(.beforeWrite(url.lastPathComponent)) {
+            throw ProfileHydrationFileSystemError.ioFailure
+        }
+        try base.writeAtomicallyDurably(data, to: url)
+        if consume(.afterWrite(url.lastPathComponent)) {
+            throw ProfileHydrationFileSystemError.atomicWriteOutcomeUnknown
+        }
+    }
+
+    func moveItemDurably(at sourceURL: URL, to destinationURL: URL) throws {
+        try base.moveItemDurably(at: sourceURL, to: destinationURL)
+    }
+
+    func removeItemDurably(at url: URL) throws {
+        try base.removeItemDurably(at: url)
+    }
+
+    func withExclusiveLock(at url: URL, perform: () throws -> Void) throws {
+        try base.withExclusiveLock(at: url, perform: perform)
+    }
+
+    private func consume(_ failure: Failure) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if nextFailure == failure {
+            nextFailure = nil
+            return true
+        }
+        return repeatedFailure == failure
     }
 }
