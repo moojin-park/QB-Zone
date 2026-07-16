@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import XCTest
 
@@ -935,17 +936,28 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             tombstonesByProviderLocator: [:],
             replicaEpoch: oldEpoch
         )
-        try await store.activate(replicaEpoch: oldEpoch, for: accountA)
+        try await store.activate(
+            replicaEpoch: oldEpoch,
+            configurationScopeFingerprint: oldScope,
+            for: accountA
+        )
         try await store.save(oldCheckpoint, at: Date(timeIntervalSince1970: 5_000))
 
-        let wrongScope = try await store.load(
-            for: accountA,
-            configurationScopeFingerprint: newScope,
-            at: Date(timeIntervalSince1970: 5_001)
-        )
-        XCTAssertNil(wrongScope.checkpoint)
         do {
-            try await store.activate(replicaEpoch: freshEpoch, for: accountA)
+            _ = try await store.load(
+                for: accountA,
+                configurationScopeFingerprint: newScope,
+                at: Date(timeIntervalSince1970: 5_001)
+            )
+            XCTFail("An active epoch must reject a different scope")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .configurationScopeMismatch
+            )
+        }
+        do {
+            try await store.activate(replicaEpoch: freshEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
             XCTFail("A schema reset must not rotate an active epoch implicitly")
         } catch {
             XCTAssertEqual(
@@ -955,7 +967,11 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         }
 
         try await store.remove(for: accountA, revoking: oldEpoch)
-        try await store.activate(replicaEpoch: freshEpoch, for: accountA)
+        try await store.activate(
+            replicaEpoch: freshEpoch,
+            configurationScopeFingerprint: newScope,
+            for: accountA
+        )
         var accumulator = CloudReplicaStagedAccumulator(
             accountID: accountA,
             configurationScopeFingerprint: newScope,
@@ -990,7 +1006,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let expected = try checkpoint(
             modifications: [discovered(id: "profile", locator: "provider-profile")]
         )
-        try await store.activate(replicaEpoch: expected.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: expected.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(expected, at: Date(timeIntervalSince1970: 1_000))
         let locations = storageLocations(root: root, accountID: accountA)
 
@@ -1027,6 +1043,47 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(quarantined.allSatisfy { $0.lastPathComponent.hasPrefix("checkpoint-") })
     }
 
+    func testUnknownQuarantineMoveIsReconciledBeforeRecoveryContinues()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let expected = try checkpoint(modifications: [])
+        try await store.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await store.save(expected, at: Date(timeIntervalSince1970: 1_010))
+        let locations = storageLocations(root: root, accountID: accountA)
+        try Data("corrupt".utf8).write(to: locations.primary, options: .atomic)
+        fileSystem.failAfterNextMove()
+
+        let recovered = try await store.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: Date(timeIntervalSince1970: 1_011)
+        )
+        XCTAssertEqual(recovered.checkpoint, expected)
+        XCTAssertEqual(recovered.source, .backup)
+        XCTAssertGreaterThan(
+            fileSystem.durableReconciliationCount(named: "checkpoint.json"),
+            0
+        )
+        XCTAssertGreaterThan(
+            fileSystem.durableReconciliationCount(
+                named: "checkpoint-primary-corrupt.json"
+            ),
+            0
+        )
+        XCTAssertEqual(fileSystem.unresolvedDurabilityPathCount(), 0)
+    }
+
     func testCorruptAndMismatchedEnvelopesNeverBecomeCurrent() async throws {
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1034,17 +1091,22 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let expected = try checkpoint(
             modifications: [discovered(id: "profile", locator: "provider-profile")]
         )
-        try await store.activate(replicaEpoch: expected.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: expected.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(expected, at: Date(timeIntervalSince1970: 2_000))
 
-        let wrongScope = try await store.load(
-            for: accountA,
-            configurationScopeFingerprint: alternateScopeFingerprint(),
-            at: Date(timeIntervalSince1970: 2_001)
-        )
-        XCTAssertNil(wrongScope.checkpoint)
-        XCTAssertEqual(wrongScope.source, .none)
-        XCTAssertEqual(wrongScope.quarantinedFileCount, 3)
+        do {
+            _ = try await store.load(
+                for: accountA,
+                configurationScopeFingerprint: alternateScopeFingerprint(),
+                at: Date(timeIntervalSince1970: 2_001)
+            )
+            XCTFail("The active authority must reject a mismatched scope")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .configurationScopeMismatch
+            )
+        }
 
         try await store.save(expected, at: Date(timeIntervalSince1970: 2_002))
         let accountALocations = storageLocations(root: root, accountID: accountA)
@@ -1078,8 +1140,8 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             accountID: accountB,
             modifications: [discovered(id: "profile-b", locator: "provider-b")]
         )
-        try await store.activate(replicaEpoch: checkpointA.replicaEpoch, for: accountA)
-        try await store.activate(replicaEpoch: checkpointB.replicaEpoch, for: accountB)
+        try await store.activate(replicaEpoch: checkpointA.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
+        try await store.activate(replicaEpoch: checkpointB.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountB)
         try await store.save(checkpointA, at: Date(timeIntervalSince1970: 3_000))
         try await store.save(checkpointB, at: Date(timeIntervalSince1970: 3_001))
 
@@ -1112,7 +1174,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: root) }
         let writer = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
         let expected = try checkpoint(modifications: [])
-        try await writer.activate(replicaEpoch: expected.replicaEpoch, for: accountA)
+        try await writer.activate(replicaEpoch: expected.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await writer.save(expected, at: Date(timeIntervalSince1970: 3_100))
 
         let relaunched = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
@@ -1122,7 +1184,1345 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             at: Date(timeIntervalSince1970: 3_101)
         )
         XCTAssertEqual(loaded.checkpoint, expected)
-        try await relaunched.activate(replicaEpoch: expected.replicaEpoch, for: accountA)
+        try await relaunched.activate(replicaEpoch: expected.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
+    }
+
+    func testRelaunchResumesActiveEpochBeforeGenerationOneAndCanSave()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let writer = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        try await writer.activate(replicaEpoch: epoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
+
+        let relaunched = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        let resumedValue = try await relaunched.resumeActiveReplicaEpoch(for: accountA, configurationScopeFingerprint: scopeFingerprint())
+        let resumed = try XCTUnwrap(resumedValue)
+        XCTAssertEqual(
+            resumed,
+            CloudReplicaEpochResumeResult(
+                replicaEpoch: epoch,
+                acceptedHistory: nil,
+                hasDurableCheckpointIntent: false
+            )
+        )
+
+        let first = try checkpoint(modifications: [])
+        try await relaunched.save(first, at: Date(timeIntervalSince1970: 3_102))
+        let loaded = try await relaunched.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: Date(timeIntervalSince1970: 3_103)
+        )
+        XCTAssertEqual(loaded.checkpoint, first)
+    }
+
+    func testResumeReturnsNilForMissingAndFreshRevokedAuthority() async throws {
+        let missingRoot = temporaryDirectory()
+        let revokedRoot = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: missingRoot)
+            try? FileManager.default.removeItem(at: revokedRoot)
+        }
+        let missingResume = try await AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: missingRoot
+        ).resumeActiveReplicaEpoch(for: accountA, configurationScopeFingerprint: scopeFingerprint())
+        XCTAssertNil(missingResume)
+
+        let owner = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: revokedRoot
+        )
+        try await owner.activate(replicaEpoch: epoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
+        let revoker = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: revokedRoot
+        )
+        try await revoker.remove(for: accountA, revoking: epoch)
+        let revokedResume = try await AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: revokedRoot
+        ).resumeActiveReplicaEpoch(for: accountA, configurationScopeFingerprint: scopeFingerprint())
+        XCTAssertNil(revokedResume)
+    }
+
+    func testPreGenerationRelaunchRejectsScopeMismatch() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        ).activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+
+        let relaunched = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        do {
+            _ = try await relaunched.resumeActiveReplicaEpoch(
+                for: accountA,
+                configurationScopeFingerprint: alternateScopeFingerprint()
+            )
+            XCTFail("Scope ownership must survive a pre-generation-one relaunch")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .configurationScopeMismatch
+            )
+        }
+        let resumed = try await relaunched.resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        XCTAssertEqual(resumed?.replicaEpoch, epoch)
+    }
+
+    func testCheckpointObservationMintsOnlyLockedAcceptedState() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        try await store.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+
+        let absent = try await store.observeCurrentCheckpoint(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch,
+            at: Date(timeIntervalSince1970: 3_110)
+        )
+        XCTAssertEqual(absent.accountID, accountA)
+        XCTAssertEqual(absent.configurationScopeFingerprint, scopeFingerprint())
+        XCTAssertEqual(absent.replicaEpoch, epoch)
+        XCTAssertEqual(absent.state, .absent)
+
+        let first = try checkpoint(modifications: [])
+        try await store.save(first, at: Date(timeIntervalSince1970: 3_111))
+        let accepted = try await store.observeCurrentCheckpoint(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch,
+            at: Date(timeIntervalSince1970: 3_112)
+        )
+        XCTAssertEqual(
+            accepted.state,
+            .checkpoint(ProfileHydrationCheckpointIdentityV1(checkpoint: first))
+        )
+    }
+
+    func testCheckpointObservationRejectsWrongBindingsAndRevocation()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stale = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        try await stale.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let first = try checkpoint(modifications: [])
+        try await stale.save(first, at: Date(timeIntervalSince1970: 3_137))
+
+        do {
+            _ = try await stale.observeCurrentCheckpoint(
+                for: accountA,
+                configurationScopeFingerprint: alternateScopeFingerprint(),
+                replicaEpoch: epoch,
+                at: Date(timeIntervalSince1970: 3_138)
+            )
+            XCTFail("A receipt cannot cross configuration scopes")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .configurationScopeMismatch
+            )
+        }
+        do {
+            _ = try await stale.observeCurrentCheckpoint(
+                for: accountA,
+                configurationScopeFingerprint: scopeFingerprint(),
+                replicaEpoch: UUID(),
+                at: Date(timeIntervalSince1970: 3_139)
+            )
+            XCTFail("A receipt cannot cross replica epochs")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochMismatch
+            )
+        }
+
+        try await AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        ).remove(for: accountA, revoking: epoch)
+        do {
+            _ = try await stale.observeCurrentCheckpoint(
+                for: accountA,
+                configurationScopeFingerprint: scopeFingerprint(),
+                replicaEpoch: epoch,
+                at: Date(timeIntervalSince1970: 3_140)
+            )
+            XCTFail("A revoked authority cannot mint a receipt")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochRevoked
+            )
+        }
+    }
+
+    func testCheckpointObservationRecoversPreexistingPendingPublication()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let first = try checkpoint(modifications: [])
+        try await store.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await store.save(first, at: Date(timeIntervalSince1970: 3_141))
+        var accumulator = try self.accumulator(from: first)
+        let second = try XCTUnwrap(
+            accumulator.apply(
+                page(
+                    accountID: accountA,
+                    requestedAfter: "seed-cursor",
+                    cursor: "pending-observation",
+                    moreComing: false
+                )
+            )
+        )
+        fileSystem.failNextWrite(named: "checkpoint.watermark.json")
+        do {
+            try await store.save(second, at: Date(timeIntervalSince1970: 3_142))
+            XCTFail("The injected publication must remain pending")
+        } catch {
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+
+        let recovered = try await store.observeCurrentCheckpoint(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch,
+            at: Date(timeIntervalSince1970: 3_143)
+        )
+        XCTAssertEqual(
+            recovered.state,
+            .checkpoint(ProfileHydrationCheckpointIdentityV1(checkpoint: first))
+        )
+        let resume = try await store.resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        XCTAssertFalse(resume?.hasDurableCheckpointIntent == true)
+    }
+
+    func testCheckpointObservationRevalidatesAuthorityAfterLoad() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let writer = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let observer = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let first = try checkpoint(modifications: [])
+        try await writer.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await writer.save(first, at: Date(timeIntervalSince1970: 3_144))
+        var accumulator = try self.accumulator(from: first)
+        let second = try XCTUnwrap(
+            accumulator.apply(
+                page(
+                    accountID: accountA,
+                    requestedAfter: "seed-cursor",
+                    cursor: "raced-observation",
+                    moreComing: false
+                )
+            )
+        )
+        let blockedAttempt = fileSystem.exclusiveLockAttemptCount() + 3
+        fileSystem.blockExclusiveLockAttempt(blockedAttempt)
+        defer { fileSystem.releaseExclusiveLockAttempt() }
+        let observationTask = Task { () -> CloudReplicaCheckpointStoreError? in
+            do {
+                _ = try await observer.observeCurrentCheckpoint(
+                    for: self.accountA,
+                    configurationScopeFingerprint: self.scopeFingerprint(),
+                    replicaEpoch: self.epoch,
+                    at: Date(timeIntervalSince1970: 3_145)
+                )
+                return nil
+            } catch {
+                return error as? CloudReplicaCheckpointStoreError
+            }
+        }
+        let reachedSecondAuthorityCheck = await waitUntil {
+            fileSystem.isExclusiveLockAttemptBlocked()
+        }
+        guard reachedSecondAuthorityCheck else {
+            fileSystem.releaseExclusiveLockAttempt()
+            _ = await observationTask.value
+            XCTFail("The observation never reached its second authority check")
+            return
+        }
+
+        fileSystem.failNextWrite(named: "checkpoint.watermark.json")
+        do {
+            try await writer.save(second, at: Date(timeIntervalSince1970: 3_146))
+            XCTFail("The raced publication must retain pending authority")
+        } catch {
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+        fileSystem.releaseExclusiveLockAttempt()
+        let observationError = await observationTask.value
+        XCTAssertEqual(
+            observationError,
+            .checkpointPublicationPending
+        )
+    }
+
+    func testResumeRejectsRevokedRememberedEpochWithoutMutation() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stale = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        try await stale.activate(replicaEpoch: epoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
+        try await AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        ).remove(for: accountA, revoking: epoch)
+        let locations = storageLocations(root: root, accountID: accountA)
+        let authorityBefore = try Data(contentsOf: locations.authority)
+
+        do {
+            _ = try await stale.resumeActiveReplicaEpoch(for: accountA, configurationScopeFingerprint: scopeFingerprint())
+            XCTFail("A remembered revoked epoch must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochRevoked
+            )
+        }
+        XCTAssertEqual(try Data(contentsOf: locations.authority), authorityBefore)
+    }
+
+    func testResumeRejectsStaleMemoryWhenDurableActiveEpochMismatches()
+        async throws
+    {
+        let root = temporaryDirectory()
+        let donorRoot = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: donorRoot)
+        }
+        let stale = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        try await stale.activate(replicaEpoch: epoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
+
+        let replacementEpoch = UUID(
+            uuidString: "BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF"
+        )!
+        let donor = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: donorRoot
+        )
+        try await donor.activate(replicaEpoch: replacementEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
+        let locations = storageLocations(root: root, accountID: accountA)
+        let donorLocations = storageLocations(root: donorRoot, accountID: accountA)
+        try Data(contentsOf: donorLocations.authority).write(
+            to: locations.authority,
+            options: .atomic
+        )
+        let authorityBefore = try Data(contentsOf: locations.authority)
+
+        do {
+            _ = try await stale.resumeActiveReplicaEpoch(for: accountA, configurationScopeFingerprint: scopeFingerprint())
+            XCTFail("Stale in-memory ownership must not adopt a different epoch")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochMismatch
+            )
+        }
+        XCTAssertEqual(try Data(contentsOf: locations.authority), authorityBefore)
+    }
+
+    func testResumeReportsDurablePendingCheckpointIntent() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let writer = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let first = try checkpoint(modifications: [])
+        try await writer.activate(replicaEpoch: epoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
+        fileSystem.failNextWrite(named: "checkpoint.watermark.json")
+        do {
+            try await writer.save(first, at: Date(timeIntervalSince1970: 3_104))
+            XCTFail("The injected checkpoint publication must fail")
+        } catch {
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+
+        let resumedValue = try await AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        ).resumeActiveReplicaEpoch(for: accountA, configurationScopeFingerprint: scopeFingerprint())
+        let resumed = try XCTUnwrap(resumedValue)
+        XCTAssertEqual(resumed.replicaEpoch, epoch)
+        XCTAssertFalse(resumed.hasAcceptedCheckpoint)
+        XCTAssertTrue(resumed.hasDurableCheckpointIntent)
+    }
+
+    func testResumeDistinguishesAcceptedHistoryWithPendingSuccessor()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let writer = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let first = try checkpoint(modifications: [])
+        try await writer.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await writer.save(first, at: Date(timeIntervalSince1970: 3_114))
+        var accumulator = try self.accumulator(from: first)
+        let second = try XCTUnwrap(
+            accumulator.apply(
+                page(
+                    accountID: accountA,
+                    requestedAfter: "seed-cursor",
+                    cursor: "successor-cursor",
+                    moreComing: false
+                )
+            )
+        )
+        fileSystem.failNextWrite(named: "checkpoint.watermark.json")
+        do {
+            try await writer.save(second, at: Date(timeIntervalSince1970: 3_115))
+            XCTFail("The successor publication fault must retain its intent")
+        } catch {
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+
+        let resumeValue = try await AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        ).resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        let resumed = try XCTUnwrap(resumeValue)
+        XCTAssertTrue(resumed.hasAcceptedCheckpoint)
+        XCTAssertTrue(resumed.hasDurableCheckpointIntent)
+    }
+
+    func testResumeRetainsAcceptedHistoryWhenLocalCopiesAreLost() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let writer = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        let first = try checkpoint(modifications: [])
+        try await writer.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await writer.save(first, at: Date(timeIntervalSince1970: 3_116))
+        let locations = storageLocations(root: root, accountID: accountA)
+        try FoundationCloudReplicaCheckpointFileSystem().removeItem(
+            at: locations.directory
+        )
+
+        let relaunched = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        let resumeValue = try await relaunched.resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        let resumed = try XCTUnwrap(resumeValue)
+        XCTAssertTrue(resumed.hasAcceptedCheckpoint)
+        XCTAssertFalse(resumed.hasDurableCheckpointIntent)
+        let acceptedHistory = try XCTUnwrap(resumed.acceptedHistory)
+        XCTAssertEqual(acceptedHistory.generation, first.generation)
+        let missing = try await relaunched.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: Date(timeIntervalSince1970: 3_117)
+        )
+        XCTAssertNil(missing.checkpoint)
+
+        do {
+            _ = try await relaunched.observeCurrentCheckpoint(
+                for: accountA,
+                configurationScopeFingerprint: scopeFingerprint(),
+                replicaEpoch: epoch,
+                at: Date(timeIntervalSince1970: 3_118)
+            )
+            XCTFail("Accepted history without exact copies must not mint a receipt")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .invalidCheckpoint
+            )
+        }
+
+        var reconstruction = CloudReplicaStagedAccumulator(
+            reconstructingFullSnapshotFrom: acceptedHistory
+        )
+        let reconstructed = try XCTUnwrap(
+            reconstruction.apply(
+                page(
+                    accountID: accountA,
+                    modifications: [
+                        discovered(
+                            id: "reconstructed-profile",
+                            locator: "provider-reconstructed-profile"
+                        ),
+                    ],
+                    requestedAfter: nil,
+                    cursor: "reconstructed-full-snapshot",
+                    moreComing: false
+                )
+            )
+        )
+        XCTAssertEqual(reconstructed.generation, first.generation + 1)
+
+        do {
+            try await relaunched.save(
+                reconstructed,
+                at: Date(timeIntervalSince1970: 3_119)
+            )
+            XCTFail("Ordinary save must reject a successor without current cache")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .invalidCheckpoint
+            )
+        }
+        try await relaunched.saveReconstructedFullSnapshot(
+            reconstructed,
+            replacing: acceptedHistory,
+            at: Date(timeIntervalSince1970: 3_120)
+        )
+        do {
+            try await relaunched.saveReconstructedFullSnapshot(
+                reconstructed,
+                replacing: acceptedHistory,
+                at: Date(timeIntervalSince1970: 3_120.5)
+            )
+            XCTFail("An accepted-history token must become stale after recovery")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .acceptedHistoryMismatch
+            )
+        }
+
+        let verifiedStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        )
+        let verified = try await verifiedStore.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: Date(timeIntervalSince1970: 3_121)
+        )
+        XCTAssertEqual(verified.checkpoint, reconstructed)
+        let verifiedResume = try await verifiedStore.resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        XCTAssertEqual(
+            verifiedResume?.acceptedHistory?.generation,
+            reconstructed.generation
+        )
+    }
+
+    func testFullSnapshotRecoveryRejectsWhenAcceptedCacheStillExists()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        let first = try checkpoint(modifications: [])
+        try await store.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await store.save(first, at: Date(timeIntervalSince1970: 3_122))
+        let resume = try await store.resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        let acceptedHistory = try XCTUnwrap(resume?.acceptedHistory)
+        var reconstruction = CloudReplicaStagedAccumulator(
+            reconstructingFullSnapshotFrom: acceptedHistory
+        )
+        let candidate = try XCTUnwrap(
+            reconstruction.apply(
+                page(
+                    accountID: accountA,
+                    requestedAfter: nil,
+                    cursor: "unneeded-full-snapshot",
+                    moreComing: false
+                )
+            )
+        )
+
+        do {
+            try await store.saveReconstructedFullSnapshot(
+                candidate,
+                replacing: acceptedHistory,
+                at: Date(timeIntervalSince1970: 3_123)
+            )
+            XCTFail("Recovery must not replace a usable accepted checkpoint")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .acceptedCheckpointStillAvailable
+            )
+        }
+    }
+
+    func testFullSnapshotRecoveryRejectsIncompatiblePendingPublication()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let first = try checkpoint(modifications: [])
+        try await store.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await store.save(first, at: Date(timeIntervalSince1970: 3_124))
+        let resume = try await store.resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        let acceptedHistory = try XCTUnwrap(resume?.acceptedHistory)
+        var firstRecovery = CloudReplicaStagedAccumulator(
+            reconstructingFullSnapshotFrom: acceptedHistory
+        )
+        let pendingCandidate = try XCTUnwrap(
+            firstRecovery.apply(
+                page(
+                    accountID: accountA,
+                    modifications: [
+                        discovered(id: "pending", locator: "provider-pending"),
+                    ],
+                    requestedAfter: nil,
+                    cursor: "pending-full-snapshot",
+                    moreComing: false
+                )
+            )
+        )
+        var divergentRecovery = CloudReplicaStagedAccumulator(
+            reconstructingFullSnapshotFrom: acceptedHistory
+        )
+        let divergentCandidate = try XCTUnwrap(
+            divergentRecovery.apply(
+                page(
+                    accountID: accountA,
+                    modifications: [
+                        discovered(id: "divergent", locator: "provider-divergent"),
+                    ],
+                    requestedAfter: nil,
+                    cursor: "divergent-full-snapshot",
+                    moreComing: false
+                )
+            )
+        )
+        fileSystem.failNextWrite(named: "checkpoint.watermark.json")
+        do {
+            try await store.save(
+                pendingCandidate,
+                at: Date(timeIntervalSince1970: 3_125)
+            )
+            XCTFail("The injected pending publication must fail")
+        } catch {
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+        let locations = storageLocations(root: root, accountID: accountA)
+        try FoundationCloudReplicaCheckpointFileSystem().removeItem(
+            at: locations.directory
+        )
+
+        do {
+            try await store.saveReconstructedFullSnapshot(
+                divergentCandidate,
+                replacing: acceptedHistory,
+                at: Date(timeIntervalSince1970: 3_126)
+            )
+            XCTFail("An incompatible durable pending intent must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .checkpointPublicationPending
+            )
+        }
+        try await store.saveReconstructedFullSnapshot(
+            pendingCandidate,
+            replacing: acceptedHistory,
+            at: Date(timeIntervalSince1970: 3_127)
+        )
+        let loaded = try await store.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: Date(timeIntervalSince1970: 3_128)
+        )
+        XCTAssertEqual(loaded.checkpoint, pendingCandidate)
+    }
+
+    func testFullSnapshotRecoveryRejectsWrongBindingsAndRevokedAuthority()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let staleStore = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        let first = try checkpoint(modifications: [])
+        try await staleStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await staleStore.save(first, at: Date(timeIntervalSince1970: 3_133))
+        let resume = try await staleStore.resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        let acceptedHistory = try XCTUnwrap(resume?.acceptedHistory)
+        var reconstruction = CloudReplicaStagedAccumulator(
+            reconstructingFullSnapshotFrom: acceptedHistory
+        )
+        let candidate = try XCTUnwrap(
+            reconstruction.apply(
+                page(
+                    accountID: accountA,
+                    requestedAfter: nil,
+                    cursor: "binding-full-snapshot",
+                    moreComing: false
+                )
+            )
+        )
+        let wrongScope = try CloudReplicaCheckpointV1(
+            accountID: accountA,
+            configurationScopeFingerprint: alternateScopeFingerprint(),
+            generation: candidate.generation,
+            finalCursor: candidate.finalCursor,
+            recordsByLogicalID: candidate.recordsByLogicalID,
+            providerLocatorByLogicalID: candidate.providerLocatorByLogicalID,
+            logicalIDByProviderLocator: candidate.logicalIDByProviderLocator,
+            tombstonesByProviderLocator: candidate.tombstonesByProviderLocator,
+            replicaEpoch: epoch
+        )
+        do {
+            try await staleStore.saveReconstructedFullSnapshot(
+                wrongScope,
+                replacing: acceptedHistory,
+                at: Date(timeIntervalSince1970: 3_134)
+            )
+            XCTFail("A recovery token cannot authorize another scope")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .acceptedHistoryMismatch
+            )
+        }
+        let wrongEpoch = try CloudReplicaCheckpointV1(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            generation: candidate.generation,
+            finalCursor: candidate.finalCursor,
+            recordsByLogicalID: candidate.recordsByLogicalID,
+            providerLocatorByLogicalID: candidate.providerLocatorByLogicalID,
+            logicalIDByProviderLocator: candidate.logicalIDByProviderLocator,
+            tombstonesByProviderLocator: candidate.tombstonesByProviderLocator,
+            replicaEpoch: UUID()
+        )
+        do {
+            try await staleStore.saveReconstructedFullSnapshot(
+                wrongEpoch,
+                replacing: acceptedHistory,
+                at: Date(timeIntervalSince1970: 3_135)
+            )
+            XCTFail("A recovery token cannot authorize another epoch")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .acceptedHistoryMismatch
+            )
+        }
+
+        try await AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        ).remove(for: accountA, revoking: epoch)
+        do {
+            try await staleStore.saveReconstructedFullSnapshot(
+                candidate,
+                replacing: acceptedHistory,
+                at: Date(timeIntervalSince1970: 3_136)
+            )
+            XCTFail("A revoked authority must reject recovery")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochRevoked
+            )
+        }
+    }
+
+    func testResumeItemStatusFailureFailsClosedWithoutMutation() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        try await store.activate(replicaEpoch: epoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
+        let locations = storageLocations(root: root, accountID: accountA)
+        let authorityBefore = try Data(contentsOf: locations.authority)
+        fileSystem.failNextItemStatus(named: "replica-authority.json")
+
+        do {
+            _ = try await store.resumeActiveReplicaEpoch(for: accountA, configurationScopeFingerprint: scopeFingerprint())
+            XCTFail("An indeterminate authority status must not become absence")
+        } catch {
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+        XCTAssertEqual(try Data(contentsOf: locations.authority), authorityBefore)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: locations.directory.path))
+    }
+
+    func testLoadItemStatusFailureFailsClosedWithoutMutatingReplicaEvidence()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let expected = try checkpoint(modifications: [])
+        try await store.activate(replicaEpoch: epoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
+        try await store.save(expected, at: Date(timeIntervalSince1970: 3_105))
+        let locations = storageLocations(root: root, accountID: accountA)
+        let primaryBefore = try Data(contentsOf: locations.primary)
+        let backupBefore = try Data(contentsOf: locations.backup)
+        let watermarkBefore = try Data(contentsOf: locations.watermark)
+        let authorityBefore = try Data(contentsOf: locations.authority)
+        fileSystem.failNextItemStatus(named: "checkpoint.json")
+
+        do {
+            _ = try await store.load(
+                for: accountA,
+                configurationScopeFingerprint: scopeFingerprint(),
+                at: Date(timeIntervalSince1970: 3_106)
+            )
+            XCTFail("An indeterminate primary status must fail closed")
+        } catch {
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+        XCTAssertEqual(try Data(contentsOf: locations.primary), primaryBefore)
+        XCTAssertEqual(try Data(contentsOf: locations.backup), backupBefore)
+        XCTAssertEqual(try Data(contentsOf: locations.watermark), watermarkBefore)
+        XCTAssertEqual(try Data(contentsOf: locations.authority), authorityBefore)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: locations.quarantine.path))
+    }
+
+    func testDurabilityOutcomeUnknownIsReconciledBeforePublicationAdvances()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let writer = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let first = try checkpoint(modifications: [])
+        try await writer.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let reconciliationsBefore = fileSystem.durableReconciliationCount(
+            named: "checkpoint.watermark.json"
+        )
+        fileSystem.failAfterNextWrite(named: "checkpoint.watermark.json")
+        try await writer.save(first, at: Date(timeIntervalSince1970: 3_107))
+        XCTAssertGreaterThan(
+            fileSystem.durableReconciliationCount(
+                named: "checkpoint.watermark.json"
+            ),
+            reconciliationsBefore
+        )
+        XCTAssertEqual(fileSystem.unresolvedDurabilityPathCount(), 0)
+
+        let relaunched = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        let resumedValue = try await relaunched.resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        let resumed = try XCTUnwrap(resumedValue)
+        XCTAssertTrue(resumed.hasAcceptedCheckpoint)
+        XCTAssertFalse(resumed.hasDurableCheckpointIntent)
+        let recovered = try await relaunched.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: Date(timeIntervalSince1970: 3_108)
+        )
+        XCTAssertEqual(recovered.checkpoint, first)
+    }
+
+    func testAuthorityActivationPromotionAndRevocationReconcileUnknownWrites()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        var reconciliationCount = fileSystem.durableReconciliationCount(
+            named: "replica-authority.json"
+        )
+
+        fileSystem.failAfterNextWrite(named: "replica-authority.json")
+        try await store.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        XCTAssertGreaterThan(
+            fileSystem.durableReconciliationCount(
+                named: "replica-authority.json"
+            ),
+            reconciliationCount
+        )
+        XCTAssertEqual(fileSystem.unresolvedDurabilityPathCount(), 0)
+
+        let first = try checkpoint(modifications: [])
+        reconciliationCount = fileSystem.durableReconciliationCount(
+            named: "replica-authority.json"
+        )
+        fileSystem.failAfterWrite(
+            named: "replica-authority.json",
+            afterSuccessfulMatchingWrites: 1
+        )
+        try await store.save(first, at: Date(timeIntervalSince1970: 3_113))
+        XCTAssertGreaterThan(
+            fileSystem.durableReconciliationCount(
+                named: "replica-authority.json"
+            ),
+            reconciliationCount
+        )
+        XCTAssertEqual(fileSystem.unresolvedDurabilityPathCount(), 0)
+
+        reconciliationCount = fileSystem.durableReconciliationCount(
+            named: "replica-authority.json"
+        )
+        let locations = storageLocations(root: root, accountID: accountA)
+        let directoryReconciliationsBefore = fileSystem.durableReconciliationCount(
+            named: locations.directory.lastPathComponent
+        )
+        fileSystem.failAfterNextWrite(named: "replica-authority.json")
+        fileSystem.failAfterNextRemove(named: locations.directory.lastPathComponent)
+        try await store.remove(for: accountA, revoking: epoch)
+        XCTAssertGreaterThan(
+            fileSystem.durableReconciliationCount(
+                named: "replica-authority.json"
+            ),
+            reconciliationCount
+        )
+        XCTAssertGreaterThan(
+            fileSystem.durableReconciliationCount(
+                named: locations.directory.lastPathComponent
+            ),
+            directoryReconciliationsBefore
+        )
+        XCTAssertEqual(fileSystem.unresolvedDurabilityPathCount(), 0)
+        let resumed = try await AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        ).resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        XCTAssertNil(resumed)
+    }
+
+    func testAncestorDirectoryCreationRetryReconcilesExistingChain()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let locations = storageLocations(root: root, accountID: accountA)
+        let directoryName = locations.authorityDirectory.lastPathComponent
+        fileSystem.failAfterNextCreate(named: directoryName)
+        do {
+            try await store.activate(
+                replicaEpoch: epoch,
+                configurationScopeFingerprint: scopeFingerprint(),
+                for: accountA
+            )
+            XCTFail("The modeled post-create durability fault must surface")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .durabilityOutcomeUnknown
+            )
+        }
+        XCTAssertGreaterThan(fileSystem.unresolvedDurabilityPathCount(), 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: locations.authority.path))
+        let reconciliationsBefore = fileSystem.durableReconciliationCount(
+            named: directoryName
+        )
+
+        try await store.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        XCTAssertGreaterThan(
+            fileSystem.durableReconciliationCount(named: directoryName),
+            reconciliationsBefore
+        )
+        XCTAssertEqual(fileSystem.unresolvedDurabilityPathCount(), 0)
+    }
+
+    func testRememberedEpochRejectsDurablyMissingAuthority() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        try await store.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let locations = storageLocations(root: root, accountID: accountA)
+        try FoundationCloudReplicaCheckpointFileSystem().removeItem(
+            at: locations.authority
+        )
+
+        do {
+            _ = try await store.resumeActiveReplicaEpoch(
+                for: accountA,
+                configurationScopeFingerprint: scopeFingerprint()
+            )
+            XCTFail("Remembered ownership must not turn missing authority into genesis")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochNotActive
+            )
+        }
+    }
+
+    func testResumeSerializesBehindConcurrentRevocation() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let owner = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let revoker = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let observer = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        try await owner.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let attemptsBefore = fileSystem.exclusiveLockAttemptCount()
+        fileSystem.blockNextWrite(named: "replica-authority.json")
+        defer { fileSystem.releaseBlockedWrite() }
+        let revokeTask = Task {
+            try await revoker.remove(for: self.accountA, revoking: self.epoch)
+        }
+        let revocationReachedAuthorityWrite = await waitUntil {
+            fileSystem.isBlockedWriteWaiting()
+        }
+        XCTAssertTrue(revocationReachedAuthorityWrite)
+        let resumeTask = Task {
+            try await observer.resumeActiveReplicaEpoch(
+                for: self.accountA,
+                configurationScopeFingerprint: self.scopeFingerprint()
+            )
+        }
+        let resumeAttemptedLock = await waitUntil {
+            fileSystem.exclusiveLockAttemptCount() >= attemptsBefore + 2
+        }
+        XCTAssertTrue(resumeAttemptedLock)
+
+        fileSystem.releaseBlockedWrite()
+        try await revokeTask.value
+        let resumed = try await resumeTask.value
+        XCTAssertNil(resumed)
+    }
+
+    func testFoundationCheckpointFileSystemDurableFileLifecycle() throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FoundationCloudReplicaCheckpointFileSystem()
+        let source = root
+            .appendingPathComponent("nested", isDirectory: true)
+            .appendingPathComponent("authority.json")
+        let destination = source.deletingLastPathComponent()
+            .appendingPathComponent("authority.previous.json")
+
+        try fileSystem.writeAtomically(Data("first".utf8), to: source)
+        let boundedTemporary = source.deletingLastPathComponent()
+            .appendingPathComponent(".pocket-vector-checkpoint-write.tmp")
+        try Data("stale".utf8).write(to: boundedTemporary)
+        try fileSystem.writeAtomically(Data("second".utf8), to: source)
+        XCTAssertEqual(try fileSystem.read(from: source), Data("second".utf8))
+        try fileSystem.moveItem(at: source, to: destination)
+        XCTAssertEqual(try fileSystem.itemStatus(at: source), .missing)
+        XCTAssertEqual(try fileSystem.itemStatus(at: destination), .present)
+        XCTAssertEqual(try fileSystem.read(from: destination), Data("second".utf8))
+        try fileSystem.removeItem(at: destination)
+        XCTAssertEqual(try fileSystem.itemStatus(at: destination), .missing)
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(
+                at: source.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            ).isEmpty,
+            "Durable atomic writes must not leave temporary artifacts"
+        )
+    }
+
+    func testFoundationCheckpointFileSystemRejectsOutsideDurabilityBoundaryBeforeMutation()
+        throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let boundary = root.appendingPathComponent("durable-root", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: boundary,
+            withIntermediateDirectories: true
+        )
+        let fileSystem = FoundationCloudReplicaCheckpointFileSystem(
+            durabilityBoundaryURL: boundary
+        )
+
+        XCTAssertEqual(try fileSystem.reconcileDurableItem(at: boundary), .present)
+        let inside = boundary.appendingPathComponent("nested", isDirectory: true)
+            .appendingPathComponent("checkpoint.json")
+        try fileSystem.writeAtomically(Data("checkpoint".utf8), to: inside)
+        XCTAssertEqual(try fileSystem.reconcileDurableItem(at: inside), .present)
+
+        let outside = root.appendingPathComponent("durable-root-sibling", isDirectory: true)
+            .appendingPathComponent("must-not-exist", isDirectory: true)
+        XCTAssertThrowsError(try fileSystem.createDirectory(at: outside)) { error in
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: root.appendingPathComponent("durable-root-sibling").path
+            )
+        )
+    }
+
+    func testFoundationCheckpointFileSystemRequiresPreexistingDurabilityBoundary() {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let missingBoundary = root
+            .appendingPathComponent("missing", isDirectory: true)
+            .appendingPathComponent("durable-root", isDirectory: true)
+        let fileSystem = FoundationCloudReplicaCheckpointFileSystem(
+            durabilityBoundaryURL: missingBoundary
+        )
+        let target = missingBoundary
+            .appendingPathComponent("nested", isDirectory: true)
+            .appendingPathComponent("checkpoint.json")
+
+        XCTAssertThrowsError(try fileSystem.writeAtomically(Data(), to: target)) { error in
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+    }
+
+    func testFoundationCheckpointFileSystemSynchronizesTwoParentRename() throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FoundationCloudReplicaCheckpointFileSystem()
+        let source = root.appendingPathComponent("source", isDirectory: true)
+            .appendingPathComponent("checkpoint.json")
+        let destination = root.appendingPathComponent("destination", isDirectory: true)
+            .appendingPathComponent("checkpoint.json")
+        try fileSystem.writeAtomically(Data("checkpoint".utf8), to: source)
+        try fileSystem.createDirectory(at: destination.deletingLastPathComponent())
+
+        try fileSystem.moveItem(at: source, to: destination)
+
+        XCTAssertEqual(try fileSystem.reconcileDurableItem(at: source), .missing)
+        XCTAssertEqual(
+            try fileSystem.reconcileDurableItem(at: destination),
+            .present
+        )
+        XCTAssertEqual(try fileSystem.read(from: destination), Data("checkpoint".utf8))
+    }
+
+    func testFoundationDirectoryRemovalTombstonesAreTargetBound() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FoundationCloudReplicaCheckpointFileSystem()
+        let left = root.appendingPathComponent("account-left", isDirectory: true)
+        let right = root.appendingPathComponent("account-right", isDirectory: true)
+        try fileSystem.writeAtomically(
+            Data("left".utf8),
+            to: left.appendingPathComponent("checkpoint.json")
+        )
+        try fileSystem.writeAtomically(
+            Data("right".utf8),
+            to: right.appendingPathComponent("checkpoint.json")
+        )
+
+        let leftRemoval = Task { try fileSystem.removeItem(at: left) }
+        let rightRemoval = Task { try fileSystem.removeItem(at: right) }
+        try await leftRemoval.value
+        try await rightRemoval.value
+
+        XCTAssertEqual(try fileSystem.reconcileDurableItem(at: left), .missing)
+        XCTAssertEqual(try fileSystem.reconcileDurableItem(at: right), .missing)
+        let residue = try FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertFalse(
+            residue.contains {
+                $0.lastPathComponent.hasPrefix(
+                    ".pocket-vector-checkpoint-remove-"
+                )
+            }
+        )
+    }
+
+    func testMissingAccountDirectoryRetryClearsOnlyItsTargetBoundTombstone()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recursiveRemoval = FailNextRecursiveDirectoryRemovals(count: 0)
+        let fileSystem = FoundationCloudReplicaCheckpointFileSystem(
+            recursivelyRemoveDirectory: { url in
+                try recursiveRemoval.removeItem(at: url)
+            }
+        )
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem
+        )
+        let checkpointA = try checkpoint(modifications: [])
+        let checkpointB = try checkpoint(accountID: accountB, modifications: [])
+        try await store.activate(
+            replicaEpoch: checkpointA.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        try await store.activate(
+            replicaEpoch: checkpointB.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountB
+        )
+        try await store.save(checkpointA, at: Date(timeIntervalSince1970: 3_130))
+        try await store.save(checkpointB, at: Date(timeIntervalSince1970: 3_131))
+        let locationsA = storageLocations(root: root, accountID: accountA)
+        let locationsB = storageLocations(root: root, accountID: accountB)
+        let tombstoneA = directoryRemovalTombstone(for: locationsA.directory)
+        let tombstoneB = directoryRemovalTombstone(for: locationsB.directory)
+
+        recursiveRemoval.failNext(count: 2)
+        try await store.remove(for: accountA, revoking: checkpointA.replicaEpoch)
+        try await store.remove(for: accountB, revoking: checkpointB.replicaEpoch)
+        XCTAssertEqual(
+            recursiveRemoval.attemptedPaths(),
+            [tombstoneA.path, tombstoneB.path]
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: locationsA.directory.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: locationsB.directory.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tombstoneA.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tombstoneB.path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: tombstoneA.appendingPathComponent("checkpoint.json").path
+            ),
+            "A completed rename must hide the whole account while retaining bounded cleanup residue"
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: tombstoneB.appendingPathComponent("checkpoint.json").path
+            )
+        )
+        let accountsDirectory = locationsA.directory.deletingLastPathComponent()
+        let boundedResidue = try FileManager.default.contentsOfDirectory(
+            at: accountsDirectory,
+            includingPropertiesForKeys: nil
+        ).filter {
+            $0.lastPathComponent.hasPrefix(
+                ".pocket-vector-checkpoint-remove-"
+            )
+        }
+        XCTAssertEqual(Set(boundedResidue), Set([tombstoneA, tombstoneB]))
+
+        let replacementEpochA = UUID(
+            uuidString: "A0000000-0000-4000-8000-000000000001"
+        )!
+        try await store.activate(
+            replicaEpoch: replacementEpochA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tombstoneA.path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: tombstoneB.path),
+            "Account A cleanup must not consume account B's bounded tombstone"
+        )
+
+        let replacementA = try checkpoint(
+            replicaEpoch: replacementEpochA,
+            modifications: []
+        )
+        try await store.save(
+            replacementA,
+            at: Date(timeIntervalSince1970: 3_132)
+        )
+        try await store.remove(for: accountA, revoking: replacementEpochA)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: locationsA.directory.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tombstoneA.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tombstoneB.path))
     }
 
     func testMissingWatermarkChoosesNewestOfTwoValidGenerations() async throws {
@@ -1146,12 +2546,12 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         )
 
         let currentStore = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
-        try await currentStore.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await currentStore.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await currentStore.save(first, at: Date(timeIntervalSince1970: 3_150))
         try await currentStore.save(second, at: Date(timeIntervalSince1970: 3_151))
 
         let oldStore = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: oldRoot)
-        try await oldStore.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await oldStore.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await oldStore.save(first, at: Date(timeIntervalSince1970: 3_149))
 
         let currentLocations = storageLocations(root: root, accountID: accountA)
@@ -1201,6 +2601,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         )
         try await orphanStore.activate(
             replicaEpoch: orphan.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
             for: accountA
         )
         try await orphanStore.save(orphan, at: Date(timeIntervalSince1970: 3_160))
@@ -1208,6 +2609,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let freshStore = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
         try await freshStore.activate(
             replicaEpoch: replacement.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
             for: accountA
         )
         let locations = storageLocations(root: root, accountID: accountA)
@@ -1232,6 +2634,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
 
         try await relaunched.activate(
             replicaEpoch: replacement.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
             for: accountA
         )
         try await relaunched.save(
@@ -1268,6 +2671,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         )
         try await orphanStore.activate(
             replicaEpoch: orphan.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
             for: accountA
         )
         try await orphanStore.save(orphan, at: Date(timeIntervalSince1970: 3_170))
@@ -1275,6 +2679,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let freshStore = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
         try await freshStore.activate(
             replicaEpoch: replacement.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
             for: accountA
         )
         let locations = storageLocations(root: root, accountID: accountA)
@@ -1323,6 +2728,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let writer = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
         try await writer.activate(
             replicaEpoch: oldCheckpoint.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
             for: accountA
         )
         try await writer.save(
@@ -1346,7 +2752,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         )
         fileSystem.failNextWrite(named: "replica-authority.json")
         do {
-            try await rotator.activate(replicaEpoch: newEpoch, for: accountA)
+            try await rotator.activate(replicaEpoch: newEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
             XCTFail("The injected authority publication must fail")
         } catch {
             XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
@@ -1356,7 +2762,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             "Unowned cache must be cleared before new authority is published"
         )
 
-        try await rotator.activate(replicaEpoch: newEpoch, for: accountA)
+        try await rotator.activate(replicaEpoch: newEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await rotator.save(
             replacement,
             at: Date(timeIntervalSince1970: 3_181)
@@ -1378,6 +2784,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let staleStore = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
         try await staleStore.activate(
             replicaEpoch: oldCheckpoint.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
             for: accountA
         )
         try await staleStore.save(
@@ -1397,7 +2804,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             for: accountA,
             revoking: oldCheckpoint.replicaEpoch
         )
-        try await rotator.activate(replicaEpoch: newEpoch, for: accountA)
+        try await rotator.activate(replicaEpoch: newEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await rotator.save(
             replacement,
             at: Date(timeIntervalSince1970: 3_191)
@@ -1445,7 +2852,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let first = try checkpoint(
             modifications: [discovered(id: "profile", locator: "provider-profile")]
         )
-        try await store.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(first, at: Date(timeIntervalSince1970: 3_200))
 
         var accumulator = try self.accumulator(from: first)
@@ -1499,7 +2906,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             fileSystem: fileSystem
         )
         let first = try checkpoint(modifications: [])
-        try await store.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(first, at: Date(timeIntervalSince1970: 3_225))
 
         var accumulator = try self.accumulator(from: first)
@@ -1557,7 +2964,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             fileSystem: fileSystem
         )
         let first = try checkpoint(modifications: [])
-        try await store.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(first, at: Date(timeIntervalSince1970: 3_230))
 
         var accumulator = try self.accumulator(from: first)
@@ -1610,7 +3017,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             fileSystem: fileSystem
         )
         let first = try checkpoint(modifications: [])
-        try await store.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(first, at: Date(timeIntervalSince1970: 3_235))
 
         var accumulator = try self.accumulator(from: first)
@@ -1680,13 +3087,14 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             ]
         )
         let store = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
-        try await store.activate(replicaEpoch: expected.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: expected.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(expected, at: Date(timeIntervalSince1970: 3_240))
         let divergentStore = AtomicCloudReplicaCheckpointDiskStore(
             rootDirectoryURL: divergentRoot
         )
         try await divergentStore.activate(
             replicaEpoch: divergent.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
             for: accountA
         )
         try await divergentStore.save(
@@ -1725,7 +3133,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             fileSystem: fileSystem
         )
         let first = try checkpoint(modifications: [])
-        try await store.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(first, at: Date(timeIntervalSince1970: 3_243))
 
         var interruptedAccumulator = try self.accumulator(from: first)
@@ -1770,7 +3178,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
                 )
             )
         )
-        try await relaunched.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await relaunched.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await relaunched.save(
             replacementSecond,
             at: Date(timeIntervalSince1970: 3_246)
@@ -1794,7 +3202,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             fileSystem: fileSystem
         )
         let first = try checkpoint(modifications: [])
-        try await store.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(first, at: Date(timeIntervalSince1970: 3_248))
         var accumulator = try self.accumulator(from: first)
         let second = try XCTUnwrap(
@@ -1856,6 +3264,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         )
         try await store.activate(
             replicaEpoch: interrupted.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
             for: accountA
         )
         fileSystem.failNextWrite(named: "checkpoint.json")
@@ -1880,6 +3289,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
 
         try await relaunched.activate(
             replicaEpoch: interrupted.replicaEpoch,
+            configurationScopeFingerprint: scopeFingerprint(),
             for: accountA
         )
         try await relaunched.save(
@@ -1907,7 +3317,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             fileSystem: fileSystem
         )
         let first = try checkpoint(modifications: [])
-        try await store.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(first, at: Date(timeIntervalSince1970: 3_250))
         let locations = storageLocations(root: root, accountID: accountA)
         let generationOnePrimary = try Data(contentsOf: locations.primary)
@@ -1961,7 +3371,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
                 )
             )
         )
-        try await relaunched.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await relaunched.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await relaunched.save(
             replacementSecond,
             at: Date(timeIntervalSince1970: 3_253)
@@ -1983,7 +3393,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
         let first = try checkpoint(modifications: [])
-        try await store.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(first, at: Date(timeIntervalSince1970: 3_260))
         let locations = storageLocations(root: root, accountID: accountA)
         let generationOneData = try Data(contentsOf: locations.primary)
@@ -2037,7 +3447,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             fileSystem: fileSystem
         )
         let expected = try checkpoint(modifications: [])
-        try await store.activate(replicaEpoch: expected.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: expected.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(expected, at: Date(timeIntervalSince1970: 3_300))
         let locations = storageLocations(root: root, accountID: accountA)
         try Data("corrupt-primary".utf8).write(to: locations.primary, options: .atomic)
@@ -2064,7 +3474,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let first = try checkpoint(
             modifications: [discovered(id: "profile", locator: "provider-profile")]
         )
-        try await store.activate(replicaEpoch: first.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: first.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(first, at: Date(timeIntervalSince1970: 3_400))
         try await store.save(first, at: Date(timeIntervalSince1970: 3_401))
 
@@ -2111,7 +3521,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
         let expected = try checkpoint(modifications: [])
-        try await store.activate(replicaEpoch: expected.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: expected.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(expected, at: Date(timeIntervalSince1970: 3_500))
         let locations = storageLocations(root: root, accountID: accountA)
 
@@ -2170,7 +3580,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             limits: limits
         )
         let expected = try checkpoint(modifications: [])
-        try await store.activate(replicaEpoch: expected.replicaEpoch, for: accountA)
+        try await store.activate(replicaEpoch: expected.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await store.save(expected, at: Date(timeIntervalSince1970: 3_550))
         let locations = storageLocations(root: root, accountID: accountA)
         let oversizedReplica = Data(repeating: 0x41, count: 8_001)
@@ -2209,7 +3619,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let expected = try checkpoint(
             modifications: [discovered(id: "profile", locator: "provider-profile")]
         )
-        try await permissive.activate(replicaEpoch: expected.replicaEpoch, for: accountA)
+        try await permissive.activate(replicaEpoch: expected.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await permissive.save(expected, at: Date(timeIntervalSince1970: 3_600))
 
         let strict = AtomicCloudReplicaCheckpointDiskStore(
@@ -2232,8 +3642,8 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let store = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
         let checkpointA = try checkpoint(modifications: [])
         let checkpointB = try checkpoint(accountID: accountB, modifications: [])
-        try await store.activate(replicaEpoch: checkpointA.replicaEpoch, for: accountA)
-        try await store.activate(replicaEpoch: checkpointB.replicaEpoch, for: accountB)
+        try await store.activate(replicaEpoch: checkpointA.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
+        try await store.activate(replicaEpoch: checkpointB.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountB)
         try await store.save(checkpointA, at: Date(timeIntervalSince1970: 4_000))
         try await store.save(checkpointB, at: Date(timeIntervalSince1970: 4_001))
 
@@ -2259,7 +3669,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let staleWriter = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
         let remover = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
         let old = try checkpoint(modifications: [])
-        try await staleWriter.activate(replicaEpoch: old.replicaEpoch, for: accountA)
+        try await staleWriter.activate(replicaEpoch: old.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await staleWriter.save(old, at: Date(timeIntervalSince1970: 4_100))
 
         try await remover.remove(for: accountA, revoking: old.replicaEpoch)
@@ -2271,7 +3681,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         }
         do {
             try await AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
-                .activate(replicaEpoch: old.replicaEpoch, for: accountA)
+                .activate(replicaEpoch: old.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
             XCTFail("A relaunched store must not reactivate a revoked epoch")
         } catch {
             XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .replicaEpochRevoked)
@@ -2280,7 +3690,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let newEpoch = UUID(uuidString: "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff")!
         let replacement = try checkpoint(replicaEpoch: newEpoch, modifications: [])
         let relaunched = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
-        try await relaunched.activate(replicaEpoch: newEpoch, for: accountA)
+        try await relaunched.activate(replicaEpoch: newEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await relaunched.save(replacement, at: Date(timeIntervalSince1970: 4_102))
         let loaded = try await relaunched.load(
             for: accountA,
@@ -2309,7 +3719,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
                     ),
                 ]
             )
-            try await store.activate(replicaEpoch: replicaEpoch, for: accountA)
+            try await store.activate(replicaEpoch: replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
             try await store.save(
                 current,
                 at: Date(timeIntervalSince1970: 4_200 + Double(index))
@@ -2337,7 +3747,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
 
         do {
             try await AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
-                .activate(replicaEpoch: retiredEpochs[0], for: accountA)
+                .activate(replicaEpoch: retiredEpochs[0], configurationScopeFingerprint: scopeFingerprint(), for: accountA)
             XCTFail("The bounded authority must retain oldest-epoch revocation")
         } catch {
             XCTAssertEqual(
@@ -2362,7 +3772,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             fileSystem: fileSystem
         )
         let old = try checkpoint(modifications: [])
-        try await staleWriter.activate(replicaEpoch: old.replicaEpoch, for: accountA)
+        try await staleWriter.activate(replicaEpoch: old.replicaEpoch, configurationScopeFingerprint: scopeFingerprint(), for: accountA)
         try await staleWriter.save(old, at: Date(timeIntervalSince1970: 4_300))
 
         let lockAttemptsBeforeRace = fileSystem.exclusiveLockAttemptCount()
@@ -2417,9 +3827,9 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
     private func waitUntil(
         _ predicate: @escaping @Sendable () -> Bool
     ) async -> Bool {
-        for _ in 0 ..< 10_000 {
+        for _ in 0 ..< 5_000 {
             if predicate() { return true }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
         return predicate()
     }
@@ -2652,6 +4062,57 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             authorityDirectory.appendingPathComponent("replica-authority.lock")
         )
     }
+
+    private func directoryRemovalTombstone(for url: URL) -> URL {
+        let digest = SHA256.hash(data: Data(url.standardizedFileURL.path.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return url.deletingLastPathComponent().appendingPathComponent(
+            ".pocket-vector-checkpoint-remove-\(digest).tmp",
+            isDirectory: true
+        )
+    }
+}
+
+private final class FailNextRecursiveDirectoryRemovals: @unchecked Sendable {
+    private enum InjectedFailure: Error {
+        case requested
+    }
+
+    private let lock = NSLock()
+    private var remainingFailures: Int
+    private var removalAttemptPaths: [String] = []
+
+    init(count: Int) {
+        remainingFailures = count
+    }
+
+    func failNext(count: Int) {
+        lock.lock()
+        remainingFailures = count
+        removalAttemptPaths.removeAll(keepingCapacity: true)
+        lock.unlock()
+    }
+
+    func removeItem(at url: URL) throws {
+        lock.lock()
+        removalAttemptPaths.append(url.standardizedFileURL.path)
+        let shouldFail = remainingFailures > 0
+        if shouldFail {
+            remainingFailures -= 1
+        }
+        lock.unlock()
+        if shouldFail {
+            throw InjectedFailure.requested
+        }
+        try FileManager.default.removeItem(at: url)
+    }
+
+    func attemptedPaths() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return removalAttemptPaths
+    }
 }
 
 private final class FaultInjectingCheckpointFileSystem: CloudReplicaCheckpointFileSystem,
@@ -2664,16 +4125,60 @@ private final class FaultInjectingCheckpointFileSystem: CloudReplicaCheckpointFi
     private let base = FoundationCloudReplicaCheckpointFileSystem()
     private let lock = NSLock()
     private let blockedWriteGate = NSCondition()
+    private let exclusiveLockGate = NSCondition()
     private var nextWriteName: String?
+    private var nextPostWriteFailureName: String?
+    private var successfulPostWritesBeforeFailure = 0
     private var successfulMatchingWritesBeforeFailure = 0
+    private var nextItemStatusName: String?
+    private var unresolvedDurabilityPaths: Set<String> = []
+    private var durableReconciliationCounts: [String: Int] = [:]
     private var shouldFailNextMove = false
+    private var shouldFailAfterNextMove = false
+    private var nextPostRemoveFailureName: String?
+    private var nextPostCreateFailureName: String?
     private var nextBlockedWriteName: String?
     private var blockedWriteStarted = false
     private var mayReleaseBlockedWrite = false
     private var exclusiveLockAttempts = 0
+    private var blockedExclusiveLockAttempt: Int?
+    private var blockedExclusiveLockStarted = false
+    private var mayReleaseExclusiveLock = false
 
     func failNextWrite(named name: String) {
         failWrite(named: name, afterSuccessfulMatchingWrites: 0)
+    }
+
+    func failAfterNextWrite(named name: String) {
+        failAfterWrite(named: name, afterSuccessfulMatchingWrites: 0)
+    }
+
+    func failAfterWrite(
+        named name: String,
+        afterSuccessfulMatchingWrites count: Int
+    ) {
+        lock.lock()
+        nextPostWriteFailureName = name
+        successfulPostWritesBeforeFailure = count
+        lock.unlock()
+    }
+
+    func failNextItemStatus(named name: String) {
+        lock.lock()
+        nextItemStatusName = name
+        lock.unlock()
+    }
+
+    func durableReconciliationCount(named name: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return durableReconciliationCounts[name, default: 0]
+    }
+
+    func unresolvedDurabilityPathCount() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return unresolvedDurabilityPaths.count
     }
 
     func failWrite(named name: String, afterSuccessfulMatchingWrites count: Int) {
@@ -2686,6 +4191,24 @@ private final class FaultInjectingCheckpointFileSystem: CloudReplicaCheckpointFi
     func failNextMove() {
         lock.lock()
         shouldFailNextMove = true
+        lock.unlock()
+    }
+
+    func failAfterNextMove() {
+        lock.lock()
+        shouldFailAfterNextMove = true
+        lock.unlock()
+    }
+
+    func failAfterNextRemove(named name: String) {
+        lock.lock()
+        nextPostRemoveFailureName = name
+        lock.unlock()
+    }
+
+    func failAfterNextCreate(named name: String) {
+        lock.lock()
+        nextPostCreateFailureName = name
         lock.unlock()
     }
 
@@ -2716,31 +4239,107 @@ private final class FaultInjectingCheckpointFileSystem: CloudReplicaCheckpointFi
         return exclusiveLockAttempts
     }
 
-    func createDirectory(at url: URL) throws {
-        try base.createDirectory(at: url)
+    func blockExclusiveLockAttempt(_ attempt: Int) {
+        exclusiveLockGate.lock()
+        blockedExclusiveLockAttempt = attempt
+        blockedExclusiveLockStarted = false
+        mayReleaseExclusiveLock = false
+        exclusiveLockGate.unlock()
     }
 
-    func fileExists(at url: URL) -> Bool {
-        base.fileExists(at: url)
+    func isExclusiveLockAttemptBlocked() -> Bool {
+        exclusiveLockGate.lock()
+        defer { exclusiveLockGate.unlock() }
+        return blockedExclusiveLockStarted
+    }
+
+    func releaseExclusiveLockAttempt() {
+        exclusiveLockGate.lock()
+        mayReleaseExclusiveLock = true
+        exclusiveLockGate.broadcast()
+        exclusiveLockGate.unlock()
+    }
+
+    func createDirectory(at url: URL) throws {
+        lock.lock()
+        let shouldFailAfter = nextPostCreateFailureName == url.lastPathComponent
+        if shouldFailAfter {
+            nextPostCreateFailureName = nil
+        }
+        lock.unlock()
+        try base.createDirectory(at: url)
+        if shouldFailAfter {
+            lock.lock()
+            unresolvedDurabilityPaths.formUnion(durabilityPathChain(for: url))
+            lock.unlock()
+            throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+        }
+        _ = try reconcileDurableItem(at: url)
+    }
+
+    func itemStatus(at url: URL) throws -> CloudReplicaCheckpointFileItemStatus {
+        lock.lock()
+        let shouldFail = nextItemStatusName == url.lastPathComponent
+        if shouldFail {
+            nextItemStatusName = nil
+        }
+        lock.unlock()
+        if shouldFail {
+            throw InjectedFailure.requested
+        }
+        return try base.itemStatus(at: url)
+    }
+
+    func reconcileDurableItem(
+        at url: URL
+    ) throws -> CloudReplicaCheckpointFileItemStatus {
+        lock.lock()
+        let shouldFail = nextItemStatusName == url.lastPathComponent
+        if shouldFail {
+            nextItemStatusName = nil
+        }
+        lock.unlock()
+        if shouldFail {
+            throw InjectedFailure.requested
+        }
+        let status = try base.reconcileDurableItem(at: url)
+        lock.lock()
+        for path in durabilityPathChain(for: url) {
+            unresolvedDurabilityPaths.remove(path)
+        }
+        durableReconciliationCounts[url.lastPathComponent, default: 0] += 1
+        lock.unlock()
+        return status
     }
 
     func fileSize(at url: URL) throws -> Int {
-        try base.fileSize(at: url)
+        try rejectUnresolvedRead(at: url)
+        return try base.fileSize(at: url)
     }
 
     func read(from url: URL) throws -> Data {
-        try base.read(from: url)
+        try rejectUnresolvedRead(at: url)
+        return try base.read(from: url)
     }
 
     func writeAtomically(_ data: Data, to url: URL) throws {
         lock.lock()
         var shouldFail = false
+        var shouldFailAfterWrite = false
         if nextWriteName == url.lastPathComponent {
             if successfulMatchingWritesBeforeFailure > 0 {
                 successfulMatchingWritesBeforeFailure -= 1
             } else {
                 shouldFail = true
                 nextWriteName = nil
+            }
+        }
+        if nextPostWriteFailureName == url.lastPathComponent {
+            if successfulPostWritesBeforeFailure > 0 {
+                successfulPostWritesBeforeFailure -= 1
+            } else {
+                shouldFailAfterWrite = true
+                nextPostWriteFailureName = nil
             }
         }
         lock.unlock()
@@ -2760,30 +4359,96 @@ private final class FaultInjectingCheckpointFileSystem: CloudReplicaCheckpointFi
         }
         blockedWriteGate.unlock()
         try base.writeAtomically(data, to: url)
+        if shouldFailAfterWrite {
+            lock.lock()
+            unresolvedDurabilityPaths.formUnion(durabilityPathChain(for: url))
+            lock.unlock()
+            throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+        }
     }
 
     func moveItem(at sourceURL: URL, to destinationURL: URL) throws {
         lock.lock()
         let shouldFail = shouldFailNextMove
+        let shouldFailAfter = shouldFailAfterNextMove
         if shouldFail {
             shouldFailNextMove = false
+        }
+        if shouldFailAfter {
+            shouldFailAfterNextMove = false
         }
         lock.unlock()
         if shouldFail {
             throw InjectedFailure.requested
         }
         try base.moveItem(at: sourceURL, to: destinationURL)
+        if shouldFailAfter {
+            lock.lock()
+            unresolvedDurabilityPaths.formUnion(
+                durabilityPathChain(for: sourceURL)
+            )
+            unresolvedDurabilityPaths.formUnion(
+                durabilityPathChain(for: destinationURL)
+            )
+            lock.unlock()
+            throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+        }
     }
 
     func removeItem(at url: URL) throws {
+        lock.lock()
+        let shouldFailAfter = nextPostRemoveFailureName == url.lastPathComponent
+        if shouldFailAfter {
+            nextPostRemoveFailureName = nil
+        }
+        lock.unlock()
         try base.removeItem(at: url)
+        if shouldFailAfter {
+            lock.lock()
+            unresolvedDurabilityPaths.formUnion(durabilityPathChain(for: url))
+            lock.unlock()
+            throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+        }
     }
 
     func withExclusiveLock(at url: URL, perform: () throws -> Void) throws {
         lock.lock()
         exclusiveLockAttempts += 1
+        let attempt = exclusiveLockAttempts
         lock.unlock()
+        exclusiveLockGate.lock()
+        if blockedExclusiveLockAttempt == attempt {
+            blockedExclusiveLockAttempt = nil
+            blockedExclusiveLockStarted = true
+            exclusiveLockGate.broadcast()
+            while !mayReleaseExclusiveLock {
+                exclusiveLockGate.wait()
+            }
+            blockedExclusiveLockStarted = false
+            mayReleaseExclusiveLock = false
+        }
+        exclusiveLockGate.unlock()
         try base.withExclusiveLock(at: url, perform: perform)
+    }
+
+    private func rejectUnresolvedRead(at url: URL) throws {
+        lock.lock()
+        let isUnresolved = unresolvedDurabilityPaths.contains(
+            url.standardizedFileURL.path
+        )
+        lock.unlock()
+        if isUnresolved {
+            throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+        }
+    }
+
+    private func durabilityPathChain(for url: URL) -> Set<String> {
+        let components = url.standardizedFileURL.pathComponents
+        return Set(components.indices.map { index in
+            NSString.path(
+                withComponents: Array(components.prefix(index + 1))
+            )
+        })
     }
 }
 

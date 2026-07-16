@@ -233,6 +233,137 @@ final class ProfileHydrationJournalTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(Set(variants.map(\.checkpointDigest)).count, variants.count)
     }
 
+    func testCheckpointRelationshipClassifiesOnlyStoreObservedBoundReceipts()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let unrelatedCheckpoint = try fixture.checkpoint(
+            generation: 1,
+            cursorByte: 9
+        )
+        let genesis = fixture.journal
+        let genesisTarget = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let genesisPredecessor = try await checkpointObservation(
+            fixture: fixture
+        )
+        let unrelated = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [unrelatedCheckpoint]
+        )
+        let wrongAccount = try await checkpointObservation(
+            fixture: fixture,
+            accountID: CloudAccountID("wrong-cloud-account")
+        )
+        let wrongScope = try await checkpointObservation(
+            fixture: fixture,
+            scope: fixture.alternateScope
+        )
+        let wrongEpoch = try await checkpointObservation(
+            fixture: fixture,
+            replicaEpoch: fixture.fixedUUID(899)
+        )
+        let genesisCases: [(
+            String,
+            CloudReplicaCheckpointObservationV1,
+            ProfileHydrationCheckpointRelationshipV1
+        )] = [
+            ("exact target", genesisTarget, .target),
+            ("observed absent genesis predecessor", genesisPredecessor, .predecessor),
+            ("unrelated checkpoint", unrelated, .unexpected),
+            ("wrong account", wrongAccount, .unexpected),
+            ("wrong scope", wrongScope, .unexpected),
+            ("wrong epoch", wrongEpoch, .unexpected),
+        ]
+        for (name, observation, expected) in genesisCases {
+            XCTAssertEqual(
+                genesis.checkpointRelationship(to: observation),
+                expected,
+                name
+            )
+        }
+
+        let predecessorCheckpoint = try fixture.checkpoint(
+            generation: 1,
+            cursorByte: 1
+        )
+        let predecessorIdentity = ProfileHydrationCheckpointIdentityV1(
+            checkpoint: predecessorCheckpoint
+        )
+        let targetCheckpoint = try fixture.checkpoint(
+            generation: 2,
+            cursorByte: 2
+        )
+        let nonGenesis = try fixture.makeJournal(
+            predecessor: predecessorIdentity,
+            targetCheckpoint: targetCheckpoint
+        )
+        let nonGenesisTarget = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [predecessorCheckpoint, targetCheckpoint]
+        )
+        let nonGenesisPredecessor = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [predecessorCheckpoint]
+        )
+        let nonGenesisAbsent = try await checkpointObservation(
+            fixture: fixture
+        )
+        let nonGenesisCases: [(
+            String,
+            CloudReplicaCheckpointObservationV1,
+            ProfileHydrationCheckpointRelationshipV1
+        )] = [
+            ("exact target", nonGenesisTarget, .target),
+            ("exact predecessor", nonGenesisPredecessor, .predecessor),
+            ("observed absent non-genesis checkpoint", nonGenesisAbsent, .unexpected),
+            ("unrelated", unrelated, .unexpected),
+        ]
+        for (name, observation, expected) in nonGenesisCases {
+            XCTAssertEqual(
+                nonGenesis.checkpointRelationship(to: observation),
+                expected,
+                name
+            )
+        }
+    }
+
+    private func checkpointObservation(
+        fixture: ProfileHydrationTestFixture,
+        accountID: CloudAccountID? = nil,
+        scope: CloudReplicaScopeFingerprint? = nil,
+        replicaEpoch: UUID? = nil,
+        checkpoints: [CloudReplicaCheckpointV1] = []
+    ) async throws -> CloudReplicaCheckpointObservationV1 {
+        let accountID = accountID ?? fixture.cloudAccountID
+        let scope = scope ?? fixture.scope
+        let replicaEpoch = replicaEpoch ?? fixture.replicaEpoch
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "PocketVector-CheckpointObservation-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        )
+        try await store.activate(
+            replicaEpoch: replicaEpoch,
+            configurationScopeFingerprint: scope,
+            for: accountID
+        )
+        for checkpoint in checkpoints {
+            try await store.save(checkpoint, at: fixture.date)
+        }
+        return try await store.observeCurrentCheckpoint(
+            for: accountID,
+            configurationScopeFingerprint: scope,
+            replicaEpoch: replicaEpoch,
+            at: fixture.date
+        )
+    }
+
     func testEnvelopeDigestTamperingFailsClosed() throws {
         let fixture = try ProfileHydrationTestFixture()
         let mutated = try fixture.mutating(fixture.journal) { object in
@@ -302,6 +433,63 @@ final class ProfileHydrationJournalTests: XCTestCase, @unchecked Sendable {
                 error as? ProfileHydrationJournalValidationError,
                 .sourceProfileBindingMismatch
             )
+        }
+    }
+
+    func testStructurallyConsistentCrossAccountSourceRequiresExplicitMigration()
+        throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let otherAccount = PlayerAccountIdentity("migration-source-player")
+        let otherProfileID = fixture.fixedUUID(996)
+        let cases: [(String, PlayerAccountIdentity, UUID)] = [
+            ("account", otherAccount, fixture.sourceProfileID),
+            ("profile", fixture.sourceAccount, otherProfileID),
+            ("account and profile", otherAccount, otherProfileID),
+        ]
+
+        for (name, accountIdentity, profileID) in cases {
+            let otherSession = ProfileSessionToken(
+                accountIdentity: accountIdentity,
+                nonce: fixture.fixedUUID(995),
+                profileID: profileID
+            )
+            var otherSource = PlayerProfileFactory.makeDefault(
+                profileID: profileID,
+                accountIdentity: accountIdentity,
+                deviceID: "migration-source-device",
+                createdAt: fixture.date
+            )
+            otherSource.player.revision = 4
+            otherSource.economyRevision = 4
+            let otherSourceEnvelope = try PlayerProfileMigrator().encode(
+                otherSource,
+                savedAt: fixture.date
+            )
+
+            XCTAssertThrowsError(
+                try ProfileHydrationJournalV1.make(
+                    transactionID: fixture.transactionID,
+                    createdAt: fixture.date,
+                    sourceSession: otherSession,
+                    sourcePlayerRevision: otherSource.player.revision,
+                    sourceEconomyRevision: otherSource.economyRevision,
+                    sourceProfileEnvelope: otherSourceEnvelope,
+                    candidateProfileEnvelope: fixture.candidateEnvelope,
+                    cloudAccountID: fixture.cloudAccountID,
+                    configurationScopeFingerprint: fixture.scope,
+                    replicaEpoch: fixture.replicaEpoch,
+                    predecessorCheckpointIdentity: nil,
+                    targetCheckpoint: fixture.targetCheckpoint
+                ),
+                name
+            ) { error in
+                XCTAssertEqual(
+                    error as? ProfileHydrationJournalValidationError,
+                    .sourceTargetBindingMismatch,
+                    name
+                )
+            }
         }
     }
 
@@ -541,8 +729,8 @@ private struct ProfileHydrationCheckpointMapEncodingProbe: Encodable {
 struct ProfileHydrationTestFixture {
     let date = Date(timeIntervalSince1970: 1_750_000_000)
     let transactionID = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
-    let sourceAccount = PlayerAccountIdentity("local-player")
-    let sourceProfileID = UUID(uuidString: "20000000-0000-0000-0000-000000000002")!
+    let sourceAccount: PlayerAccountIdentity
+    let sourceProfileID: UUID
     let cloudAccountID = CloudAccountID("test-cloud-account")
     let scope = CloudReplicaScopeFingerprint(rawValue: String(repeating: "a", count: 64))
     let alternateScope = CloudReplicaScopeFingerprint(
@@ -559,12 +747,14 @@ struct ProfileHydrationTestFixture {
     let journal: ProfileHydrationJournalV1
 
     init() throws {
+        targetBindings = CloudAccountDerivedBindings.derive(from: cloudAccountID)
+        sourceAccount = targetBindings.playerAccountIdentity
+        sourceProfileID = targetBindings.durableAccountBinding.profileID
         sourceSession = ProfileSessionToken(
             accountIdentity: sourceAccount,
             nonce: UUID(uuidString: "40000000-0000-0000-0000-000000000004")!,
             profileID: sourceProfileID
         )
-        targetBindings = CloudAccountDerivedBindings.derive(from: cloudAccountID)
         var source = PlayerProfileFactory.makeDefault(
             profileID: sourceProfileID,
             accountIdentity: sourceAccount,

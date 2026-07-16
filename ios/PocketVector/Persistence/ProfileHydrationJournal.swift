@@ -146,6 +146,15 @@ struct ProfileHydrationCheckpointIdentityV1: Codable, Equatable, Sendable {
     }
 }
 
+/// Classifies one independently observed checkpoint against the immutable
+/// transition bound into a hydration journal. An absent observation is the
+/// exact predecessor only for a generation-one (genesis) transition.
+enum ProfileHydrationCheckpointRelationshipV1: Equatable, Sendable {
+    case target
+    case predecessor
+    case unexpected
+}
+
 struct ProfileHydrationSourceStateV1: Codable, Equatable, Sendable {
     let accountIdentity: PlayerAccountIdentity
     let sessionNonce: UUID
@@ -294,6 +303,7 @@ enum ProfileHydrationJournalValidationError: Error, Equatable, Sendable {
     case candidateEconomyRevisionMismatch
     case profileCollectionLimitExceeded
     case targetAccountBindingMismatch
+    case sourceTargetBindingMismatch
     case invalidTargetCheckpoint
     case targetCheckpointBindingMismatch
     case targetCheckpointIdentityMismatch
@@ -330,6 +340,34 @@ struct ProfileHydrationJournalV1: Codable, Equatable, Sendable {
             timeIntervalSince1970:
                 Double(createdAtMillisecondsSince1970) / 1_000
         )
+    }
+
+    func checkpointRelationship(
+        to observation: CloudReplicaCheckpointObservationV1
+    ) -> ProfileHydrationCheckpointRelationshipV1 {
+        guard observation.accountID == target.cloudAccountID,
+              observation.configurationScopeFingerprint
+                == target.configurationScopeFingerprint,
+              observation.replicaEpoch == target.replicaEpoch else {
+            return .unexpected
+        }
+
+        switch observation.state {
+        case .absent:
+            return predecessorCheckpointIdentity == nil
+                ? .predecessor
+                : .unexpected
+
+        case let .checkpoint(identity):
+            if identity == targetCheckpointIdentity {
+                return .target
+            }
+            if let predecessorCheckpointIdentity,
+               identity == predecessorCheckpointIdentity {
+                return .predecessor
+            }
+            return .unexpected
+        }
     }
 
     private init(
@@ -524,6 +562,14 @@ struct ProfileHydrationJournalV1: Codable, Equatable, Sendable {
               target.accountKey == derived.durableAccountBinding.accountKey,
               target.profileID == derived.durableAccountBinding.profileID else {
             throw ProfileHydrationJournalValidationError.targetAccountBindingMismatch
+        }
+        // Ordinary hydration is an in-place merge for one cloud-derived
+        // player. Cross-account/profile migration requires a separate explicit
+        // workflow and cannot be represented by this journal.
+        guard source.accountIdentity == target.playerAccountIdentity,
+              source.profileID == target.profileID else {
+            throw ProfileHydrationJournalValidationError
+                .sourceTargetBindingMismatch
         }
 
         do {

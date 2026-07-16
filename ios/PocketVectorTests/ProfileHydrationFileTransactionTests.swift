@@ -3,6 +3,14 @@ import XCTest
 
 @testable import PocketVector
 
+private enum HydrationProfileMatrixState: String, CaseIterable {
+    case source
+    case candidate
+    case missing
+    case unexpected
+    case oversized
+}
+
 final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendable {
     func testLocationsExposeOneStableLockForJournalAndProfileMutationCoordination() throws {
         let root = try temporaryDirectory()
@@ -324,8 +332,10 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         let journalPrimary = try Data(
             contentsOf: store.locations.journalPrimaryURL
         )
-        let journalBackup = try Data(
-            contentsOf: store.locations.journalBackupURL
+        let journalBackup = Data("retained-corrupt-backup".utf8)
+        try FoundationProfileHydrationFileSystem().writeAtomicallyDurably(
+            journalBackup,
+            to: store.locations.journalBackupURL
         )
         var unexpected = fixture.sourceDocument
         unexpected.player.settings.value.isMuted.toggle()
@@ -365,6 +375,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             try Data(contentsOf: store.locations.journalBackupURL),
             journalBackup
         )
+        XCTAssertTrue(try store.quarantinedEvidenceURLs().isEmpty)
     }
 
     func testPreparedJournalIsImmutableAndDifferentTransactionCannotReplaceIt() throws {
@@ -375,6 +386,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         try seedSourceProfile(fixture, locations: store.locations)
         _ = try store.beginHydration(fixture.journal)
         let originalPrimary = try Data(contentsOf: store.locations.journalPrimaryURL)
+        let corruptBackup = Data("different-intent-corrupt-peer".utf8)
+        try FoundationProfileHydrationFileSystem().writeAtomicallyDurably(
+            corruptBackup,
+            to: store.locations.journalBackupURL
+        )
         let alternate = try fixture.mutating(fixture.journal) { object in
             object["transactionID"] = fixture.fixedUUID(803).uuidString.uppercased()
         }
@@ -389,10 +405,14 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             try Data(contentsOf: store.locations.journalPrimaryURL),
             originalPrimary
         )
-        assertJournalCopiesEqual(store.locations)
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.journalBackupURL),
+            corruptBackup
+        )
+        XCTAssertTrue(try store.quarantinedEvidenceURLs().isEmpty)
     }
 
-    func testMissingJournalCopyIsRepairedOnlyInsideStoreLock() throws {
+    func testRecoveryInspectionLeavesMissingJournalCopyUntouched() throws {
         let fixture = try ProfileHydrationTestFixture()
         let root = try temporaryDirectory()
         defer { remove(root) }
@@ -406,11 +426,20 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         let inspection = try XCTUnwrap(
             store.inspectRecovery(expected: fixture.expectedBinding)
         )
-        XCTAssertEqual(inspection.repairedJournalCopy, .primary)
-        assertJournalCopiesEqual(store.locations)
+        XCTAssertEqual(inspection.repairedJournalCopy, .none)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: store.locations.journalPrimaryURL.path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: store.locations.journalBackupURL.path
+            )
+        )
     }
 
-    func testCorruptJournalCopyIsQuarantinedThenRepairedFromValidPeer() throws {
+    func testRecoveryInspectionLeavesCorruptJournalCopyUntouched() throws {
         let fixture = try ProfileHydrationTestFixture()
         let root = try temporaryDirectory()
         defer { remove(root) }
@@ -422,12 +451,22 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             to: store.locations.journalBackupURL
         )
 
+        let primaryBefore = try Data(
+            contentsOf: store.locations.journalPrimaryURL
+        )
         let inspection = try XCTUnwrap(
             store.inspectRecovery(expected: fixture.expectedBinding)
         )
-        XCTAssertEqual(inspection.repairedJournalCopy, .backup)
-        XCTAssertEqual(try store.quarantinedEvidenceURLs().count, 1)
-        assertJournalCopiesEqual(store.locations)
+        XCTAssertEqual(inspection.repairedJournalCopy, .none)
+        XCTAssertTrue(try store.quarantinedEvidenceURLs().isEmpty)
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.journalPrimaryURL),
+            primaryBefore
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.journalBackupURL),
+            Data("corrupt".utf8)
+        )
     }
 
     func testNoncanonicalJournalCopyIsEvidenceAndCannotBecomeAuthority() throws {
@@ -451,9 +490,12 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         let inspection = try XCTUnwrap(
             store.inspectRecovery(expected: fixture.expectedBinding)
         )
-        XCTAssertEqual(inspection.repairedJournalCopy, .backup)
-        XCTAssertEqual(try store.quarantinedEvidenceURLs().count, 1)
-        assertJournalCopiesEqual(store.locations)
+        XCTAssertEqual(inspection.repairedJournalCopy, .none)
+        XCTAssertTrue(try store.quarantinedEvidenceURLs().isEmpty)
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.journalBackupURL),
+            noncanonical
+        )
     }
 
     func testTwoValidUnequalJournalsFailWithoutQuarantineOrRepair() throws {
@@ -510,20 +552,23 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
         XCTAssertThrowsError(
             try makeStore(root: root, fileSystem: fault)
-                .inspectRecovery(expected: fixture.expectedBinding)
+                .beginHydration(fixture.journal)
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: baseStore.locations.journalBackupURL.path))
         XCTAssertEqual(try baseStore.quarantinedEvidenceURLs().count, 1)
 
-        let recovered = try XCTUnwrap(
-            baseStore.inspectRecovery(expected: fixture.expectedBinding)
-        )
+        let recovered = try baseStore.beginHydration(fixture.journal)
+        XCTAssertTrue(recovered.wasAlreadyPresent)
         XCTAssertEqual(recovered.repairedJournalCopy, .backup)
         assertJournalCopiesEqual(baseStore.locations)
     }
 
-    func testCrashAfterCandidateBackupLeavesClassifiedPartialInstall() throws {
+    func testCrashAfterCandidateBackupLeavesClassifiedPartialInstall() async throws {
         let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
         let root = try temporaryDirectory()
         defer { remove(root) }
         let fault = FaultInjectingProfileHydrationFileSystem()
@@ -535,7 +580,8 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         XCTAssertThrowsError(
             try store.installCandidate(
                 transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding
+                expected: fixture.expectedBinding,
+                confirmedTargetCheckpointObservation: targetObservation
             )
         )
         let inspection = try XCTUnwrap(
@@ -547,14 +593,19 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
         let recovered = try makeStore(root: root).installCandidate(
             transactionID: fixture.transactionID,
-            expected: fixture.expectedBinding
+            expected: fixture.expectedBinding,
+            confirmedTargetCheckpointObservation: targetObservation
         )
         XCTAssertFalse(recovered.wasAlreadyInstalled)
         XCTAssertEqual(recovered.inspection.installationState, .candidate)
     }
 
-    func testCrashAfterCandidatePrimaryIsRecognizedAsAlreadyInstalled() throws {
+    func testCrashAfterCandidatePrimaryIsRecognizedAsAlreadyInstalled() async throws {
         let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
         let root = try temporaryDirectory()
         defer { remove(root) }
         let fault = FaultInjectingProfileHydrationFileSystem()
@@ -566,19 +617,25 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         XCTAssertThrowsError(
             try store.installCandidate(
                 transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding
+                expected: fixture.expectedBinding,
+                confirmedTargetCheckpointObservation: targetObservation
             )
         )
         let recovered = try makeStore(root: root).installCandidate(
             transactionID: fixture.transactionID,
-            expected: fixture.expectedBinding
+            expected: fixture.expectedBinding,
+            confirmedTargetCheckpointObservation: targetObservation
         )
         XCTAssertTrue(recovered.wasAlreadyInstalled)
         XCTAssertEqual(recovered.inspection.installationState, .candidate)
     }
 
-    func testCandidateInstallationIsDeterministicallyIdempotent() throws {
+    func testCandidateInstallationIsDeterministicallyIdempotent() async throws {
         let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
         let root = try temporaryDirectory()
         defer { remove(root) }
         let store = makeStore(root: root)
@@ -587,11 +644,13 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
         let first = try store.installCandidate(
             transactionID: fixture.transactionID,
-            expected: fixture.expectedBinding
+            expected: fixture.expectedBinding,
+            confirmedTargetCheckpointObservation: targetObservation
         )
         let second = try store.installCandidate(
             transactionID: fixture.transactionID,
-            expected: fixture.expectedBinding
+            expected: fixture.expectedBinding,
+            confirmedTargetCheckpointObservation: targetObservation
         )
 
         XCTAssertFalse(first.wasAlreadyInstalled)
@@ -606,8 +665,345 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
     }
 
-    func testStaleButValidProfileBytesFailWithoutBeingOverwritten() throws {
+    func testInstallCandidateFullFiveByFiveProfileStateMatrix() async throws {
         let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let unexpectedBytes = Data("install-matrix-unexpected".utf8)
+        let limits = compactMatrixLimits(fixture: fixture)
+        let oversizedBytes = Data(
+            repeating: 0x69,
+            count: limits.maximumProfileEnvelopeBytes + 1
+        )
+        let fileSystem = FoundationProfileHydrationFileSystem()
+
+        for primaryState in HydrationProfileMatrixState.allCases {
+            for backupState in HydrationProfileMatrixState.allCases {
+                let name = "\(primaryState.rawValue)/\(backupState.rawValue)"
+                let root = try temporaryDirectory()
+                let store = makeStore(root: root, limits: limits)
+                try seedSourceProfile(fixture, locations: store.locations)
+                _ = try store.beginHydration(fixture.journal)
+                try applyMatrixState(
+                    primaryState,
+                    to: store.locations.profilePrimaryURL,
+                    fixture: fixture,
+                    unexpectedBytes: unexpectedBytes,
+                    oversizedBytes: oversizedBytes
+                )
+                try applyMatrixState(
+                    backupState,
+                    to: store.locations.profileBackupURL,
+                    fixture: fixture,
+                    unexpectedBytes: unexpectedBytes,
+                    oversizedBytes: oversizedBytes
+                )
+                let quarantineURL = store.locations.quarantineSlotURL(0)
+                try fileSystem.createDirectory(
+                    at: store.locations.quarantineDirectoryURL
+                )
+                try fileSystem.writeAtomicallyDurably(
+                    Data("install-matrix-evidence".utf8),
+                    to: quarantineURL
+                )
+                let evidenceURLs = [
+                    store.locations.profilePrimaryURL,
+                    store.locations.profileBackupURL,
+                    store.locations.journalPrimaryURL,
+                    store.locations.journalBackupURL,
+                    quarantineURL,
+                ]
+                let evidenceBefore = try evidenceURLs.map {
+                    try optionalData(at: $0)
+                }
+                let hasUnexpectedState = [primaryState, backupState]
+                    .contains(.unexpected)
+                    || [primaryState, backupState].contains(.oversized)
+                let bothMissing = primaryState == .missing
+                    && backupState == .missing
+
+                if !hasUnexpectedState, !bothMissing {
+                    let result = try store.installCandidate(
+                        transactionID: fixture.transactionID,
+                        expected: fixture.expectedBinding,
+                        confirmedTargetCheckpointObservation: targetObservation
+                    )
+                    XCTAssertEqual(
+                        result.inspection.installationState,
+                        .candidate,
+                        name
+                    )
+                    XCTAssertEqual(
+                        result.wasAlreadyInstalled,
+                        primaryState == .candidate && backupState == .candidate,
+                        name
+                    )
+                    XCTAssertEqual(
+                        try Data(contentsOf: store.locations.profilePrimaryURL),
+                        fixture.candidateEnvelope,
+                        name
+                    )
+                    XCTAssertEqual(
+                        try Data(contentsOf: store.locations.profileBackupURL),
+                        fixture.candidateEnvelope,
+                        name
+                    )
+                    XCTAssertEqual(
+                        try optionalData(at: quarantineURL),
+                        evidenceBefore[4],
+                        name
+                    )
+                    assertJournalCopiesEqual(store.locations)
+                } else {
+                    XCTAssertThrowsError(
+                        try store.installCandidate(
+                            transactionID: fixture.transactionID,
+                            expected: fixture.expectedBinding,
+                            confirmedTargetCheckpointObservation: targetObservation
+                        ),
+                        name
+                    ) { error in
+                        XCTAssertEqual(
+                            error as? ProfileHydrationTransactionStoreError,
+                            bothMissing
+                                ? .profileCopiesMissing
+                                : .unexpectedProfileBytes,
+                            name
+                        )
+                    }
+                    XCTAssertEqual(
+                        try evidenceURLs.map { try optionalData(at: $0) },
+                        evidenceBefore,
+                        name
+                    )
+                }
+                remove(root)
+            }
+        }
+    }
+
+    func testCandidateInstallRequiresExactTargetBeforeWritesAndIdempotentReturn()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let wrongCheckpoint = try fixture.checkpoint(
+            generation: 1,
+            cursorByte: 9
+        )
+        let wrongObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [wrongCheckpoint]
+        )
+        let root = try temporaryDirectory()
+        defer { remove(root) }
+        let store = makeStore(root: root)
+        try seedSourceProfile(fixture, locations: store.locations)
+        _ = try store.beginHydration(fixture.journal)
+        let sourceEvidence = try [
+            Data(contentsOf: store.locations.profilePrimaryURL),
+            Data(contentsOf: store.locations.profileBackupURL),
+        ]
+
+        XCTAssertThrowsError(
+            try store.installCandidate(
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                confirmedTargetCheckpointObservation: wrongObservation
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .checkpointConfirmationMismatch
+            )
+        }
+        XCTAssertEqual(
+            try [
+                Data(contentsOf: store.locations.profilePrimaryURL),
+                Data(contentsOf: store.locations.profileBackupURL),
+            ],
+            sourceEvidence
+        )
+
+        _ = try store.installCandidate(
+            transactionID: fixture.transactionID,
+            expected: fixture.expectedBinding,
+            confirmedTargetCheckpointObservation: targetObservation
+        )
+        let candidateEvidence = try [
+            Data(contentsOf: store.locations.profilePrimaryURL),
+            Data(contentsOf: store.locations.profileBackupURL),
+        ]
+        XCTAssertThrowsError(
+            try store.installCandidate(
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                confirmedTargetCheckpointObservation: wrongObservation
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .checkpointConfirmationMismatch
+            )
+        }
+        XCTAssertEqual(
+            try [
+                Data(contentsOf: store.locations.profilePrimaryURL),
+                Data(contentsOf: store.locations.profileBackupURL),
+            ],
+            candidateEvidence
+        )
+        assertJournalCopiesEqual(store.locations)
+    }
+
+    func testInstallRejectionsNeverRepairOrQuarantineJournalEvidence()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let wrongCheckpoint = try fixture.checkpoint(
+            generation: 1,
+            cursorByte: 9
+        )
+        let wrongObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [wrongCheckpoint]
+        )
+        let corruptJournalBytes = Data("retained-corrupt-journal-copy".utf8)
+        let unexpectedProfileBytes = Data("retained-unexpected-profile".utf8)
+        let fileSystem = FoundationProfileHydrationFileSystem()
+
+        for rejection in ["transaction", "receipt", "profile"] {
+            let root = try temporaryDirectory()
+            let store = makeStore(root: root)
+            try seedSourceProfile(fixture, locations: store.locations)
+            _ = try store.beginHydration(fixture.journal)
+            try fileSystem.writeAtomicallyDurably(
+                corruptJournalBytes,
+                to: store.locations.journalBackupURL
+            )
+            if rejection == "profile" {
+                try writeProfile(
+                    unexpectedProfileBytes,
+                    locations: store.locations
+                )
+            }
+            let evidenceURLs = [
+                store.locations.profilePrimaryURL,
+                store.locations.profileBackupURL,
+                store.locations.journalPrimaryURL,
+                store.locations.journalBackupURL,
+            ]
+            let evidenceBefore = try evidenceURLs.map {
+                try optionalData(at: $0)
+            }
+
+            XCTAssertThrowsError(
+                try store.installCandidate(
+                    transactionID: rejection == "transaction"
+                        ? fixture.fixedUUID(898)
+                        : fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    confirmedTargetCheckpointObservation: rejection == "receipt"
+                        ? wrongObservation
+                        : targetObservation
+                ),
+                rejection
+            ) { error in
+                let expectedError: ProfileHydrationTransactionStoreError
+                switch rejection {
+                case "transaction":
+                    expectedError = .transactionMismatch
+                case "receipt":
+                    expectedError = .checkpointConfirmationMismatch
+                default:
+                    expectedError = .unexpectedProfileBytes
+                }
+                XCTAssertEqual(
+                    error as? ProfileHydrationTransactionStoreError,
+                    expectedError,
+                    rejection
+                )
+            }
+            XCTAssertEqual(
+                try evidenceURLs.map { try optionalData(at: $0) },
+                evidenceBefore,
+                rejection
+            )
+            XCTAssertTrue(
+                try store.quarantinedEvidenceURLs().isEmpty,
+                rejection
+            )
+            remove(root)
+        }
+    }
+
+    func testAuthorizedInstallRepairsJournalPeerThenExactlyRevalidates()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let root = try temporaryDirectory()
+        defer { remove(root) }
+        let store = makeStore(root: root)
+        try seedSourceProfile(fixture, locations: store.locations)
+        _ = try store.beginHydration(fixture.journal)
+        let corruptPeer = Data("repair-then-revalidate-peer".utf8)
+        try FoundationProfileHydrationFileSystem().writeAtomicallyDurably(
+            corruptPeer,
+            to: store.locations.journalBackupURL
+        )
+
+        let result = try store.installCandidate(
+            transactionID: fixture.transactionID,
+            expected: fixture.expectedBinding,
+            confirmedTargetCheckpointObservation: targetObservation
+        )
+
+        XCTAssertEqual(result.inspection.repairedJournalCopy, .backup)
+        XCTAssertEqual(result.inspection.installationState, .candidate)
+        let canonicalJournal = try ProfileHydrationCanonicalCodec.encode(
+            fixture.journal
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.journalPrimaryURL),
+            canonicalJournal
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.journalBackupURL),
+            canonicalJournal
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.profilePrimaryURL),
+            fixture.candidateEnvelope
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.profileBackupURL),
+            fixture.candidateEnvelope
+        )
+        let evidenceURL = try XCTUnwrap(
+            store.quarantinedEvidenceURLs().first
+        )
+        XCTAssertEqual(try Data(contentsOf: evidenceURL), corruptPeer)
+    }
+
+    func testStaleButValidProfileBytesFailWithoutBeingOverwritten() async throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
         let root = try temporaryDirectory()
         defer { remove(root) }
         let store = makeStore(root: root)
@@ -625,7 +1021,8 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         XCTAssertThrowsError(
             try store.installCandidate(
                 transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding
+                expected: fixture.expectedBinding,
+                confirmedTargetCheckpointObservation: targetObservation
             )
         ) { error in
             XCTAssertEqual(
@@ -637,8 +1034,12 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         XCTAssertEqual(try Data(contentsOf: store.locations.profileBackupURL), staleBytes)
     }
 
-    func testWrongAccountScopeEpochAndProfileFailBeforeAnyProfileWrite() throws {
+    func testWrongAccountScopeEpochAndProfileFailBeforeAnyProfileWrite() async throws {
         let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
         let root = try temporaryDirectory()
         defer { remove(root) }
         let store = makeStore(root: root)
@@ -657,6 +1058,28 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                     replicaEpoch: target.replicaEpoch
                 ),
                 .cloudAccountID
+            ),
+            (
+                ProfileHydrationExpectedBinding(
+                    cloudAccountID: target.cloudAccountID,
+                    playerAccountIdentity: PlayerAccountIdentity("wrong-player"),
+                    accountKey: target.accountKey,
+                    profileID: target.profileID,
+                    configurationScopeFingerprint: target.configurationScopeFingerprint,
+                    replicaEpoch: target.replicaEpoch
+                ),
+                .playerAccountIdentity
+            ),
+            (
+                ProfileHydrationExpectedBinding(
+                    cloudAccountID: target.cloudAccountID,
+                    playerAccountIdentity: target.playerAccountIdentity,
+                    accountKey: ServiceAccountKey("wrong-account-key"),
+                    profileID: target.profileID,
+                    configurationScopeFingerprint: target.configurationScopeFingerprint,
+                    replicaEpoch: target.replicaEpoch
+                ),
+                .accountKey
             ),
             (
                 ProfileHydrationExpectedBinding(
@@ -697,7 +1120,8 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             XCTAssertThrowsError(
                 try store.installCandidate(
                     transactionID: fixture.transactionID,
-                    expected: wrong
+                    expected: wrong,
+                    confirmedTargetCheckpointObservation: targetObservation
                 )
             ) { error in
                 XCTAssertEqual(
@@ -712,8 +1136,12 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         }
     }
 
-    func testMissingBothProfileCopiesAreInspectedWithoutDefaultSynthesis() throws {
+    func testMissingBothProfileCopiesAreInspectedWithoutDefaultSynthesis() async throws {
         let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
         let root = try temporaryDirectory()
         defer { remove(root) }
         let store = makeStore(root: root)
@@ -732,7 +1160,8 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         XCTAssertThrowsError(
             try store.installCandidate(
                 transactionID: fixture.transactionID,
-                expected: fixture.expectedBinding
+                expected: fixture.expectedBinding,
+                confirmedTargetCheckpointObservation: targetObservation
             )
         ) { error in
             XCTAssertEqual(
@@ -744,8 +1173,12 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.locations.profileBackupURL.path))
     }
 
-    func testOneExactSourceProfileCopyIsEnoughForJournalBoundRecovery() throws {
+    func testOneExactSourceProfileCopyIsEnoughForJournalBoundRecovery() async throws {
         let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
         let root = try temporaryDirectory()
         defer { remove(root) }
         let store = makeStore(root: root)
@@ -757,7 +1190,8 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
         let result = try store.installCandidate(
             transactionID: fixture.transactionID,
-            expected: fixture.expectedBinding
+            expected: fixture.expectedBinding,
+            confirmedTargetCheckpointObservation: targetObservation
         )
         XCTAssertEqual(result.inspection.installationState, .candidate)
         XCTAssertEqual(
@@ -766,8 +1200,12 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
     }
 
-    func testCrashAfterRemovingOneJournalCopyRepairsThenFinishesCleanup() throws {
+    func testCrashAfterRemovingOneJournalCopyDirectlyFinishesCleanup() async throws {
         let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
         let root = try temporaryDirectory()
         defer { remove(root) }
         let fault = FaultInjectingProfileHydrationFileSystem()
@@ -776,7 +1214,8 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         _ = try store.beginHydration(fixture.journal)
         _ = try store.installCandidate(
             transactionID: fixture.transactionID,
-            expected: fixture.expectedBinding
+            expected: fixture.expectedBinding,
+            confirmedTargetCheckpointObservation: targetObservation
         )
         fault.failNext(.beforeRemove("profile-hydration-journal.json"))
 
@@ -784,17 +1223,22 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             try store.removeJournalAfterCheckpointConfirmation(
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                committedCheckpointIdentity: fixture.journal.targetCheckpointIdentity
+                confirmedTargetCheckpointObservation: targetObservation
             )
         )
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.locations.journalPrimaryURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.locations.journalBackupURL.path))
 
+        let noRepairFault = FaultInjectingProfileHydrationFileSystem()
+        noRepairFault.failNext(
+            .beforeWrite("profile-hydration-journal.backup.json")
+        )
         XCTAssertTrue(
-            try makeStore(root: root).removeJournalAfterCheckpointConfirmation(
+            try makeStore(root: root, fileSystem: noRepairFault)
+                .removeJournalAfterCheckpointConfirmation(
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                committedCheckpointIdentity: fixture.journal.targetCheckpointIdentity
+                confirmedTargetCheckpointObservation: targetObservation
             )
         )
         XCTAssertNil(
@@ -802,8 +1246,20 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
     }
 
-    func testWrongCheckpointConfirmationCannotRemoveJournal() throws {
+    func testWrongCheckpointConfirmationCannotRemoveJournal() async throws {
         let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let otherCheckpoint = try fixture.checkpoint(
+            generation: 1,
+            cursorByte: 9
+        )
+        let wrongObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [otherCheckpoint]
+        )
         let root = try temporaryDirectory()
         defer { remove(root) }
         let store = makeStore(root: root)
@@ -811,17 +1267,15 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         _ = try store.beginHydration(fixture.journal)
         _ = try store.installCandidate(
             transactionID: fixture.transactionID,
-            expected: fixture.expectedBinding
+            expected: fixture.expectedBinding,
+            confirmedTargetCheckpointObservation: targetObservation
         )
-        let otherCheckpoint = try fixture.checkpoint(generation: 1, cursorByte: 9)
 
         XCTAssertThrowsError(
             try store.removeJournalAfterCheckpointConfirmation(
                 transactionID: fixture.transactionID,
                 expected: fixture.expectedBinding,
-                committedCheckpointIdentity: ProfileHydrationCheckpointIdentityV1(
-                    checkpoint: otherCheckpoint
-                )
+                confirmedTargetCheckpointObservation: wrongObservation
             )
         ) { error in
             XCTAssertEqual(
@@ -832,7 +1286,1283 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         assertJournalCopiesEqual(store.locations)
     }
 
-    func testBothCorruptJournalsLeaveBoundedEvidenceAndFailClosedOnRelaunch() throws {
+    func testTargetCleanupFullFiveByFiveProfileStateMatrix() async throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let unexpectedBytes = Data("cleanup-matrix-unexpected".utf8)
+        let limits = compactMatrixLimits(fixture: fixture)
+        let oversizedBytes = Data(
+            repeating: 0x63,
+            count: limits.maximumProfileEnvelopeBytes + 1
+        )
+        let fileSystem = FoundationProfileHydrationFileSystem()
+
+        for primaryState in HydrationProfileMatrixState.allCases {
+            for backupState in HydrationProfileMatrixState.allCases {
+                let name = "\(primaryState.rawValue)/\(backupState.rawValue)"
+                let root = try temporaryDirectory()
+                let store = makeStore(root: root, limits: limits)
+                try seedSourceProfile(fixture, locations: store.locations)
+                _ = try store.beginHydration(fixture.journal)
+                try applyMatrixState(
+                    primaryState,
+                    to: store.locations.profilePrimaryURL,
+                    fixture: fixture,
+                    unexpectedBytes: unexpectedBytes,
+                    oversizedBytes: oversizedBytes
+                )
+                try applyMatrixState(
+                    backupState,
+                    to: store.locations.profileBackupURL,
+                    fixture: fixture,
+                    unexpectedBytes: unexpectedBytes,
+                    oversizedBytes: oversizedBytes
+                )
+                let quarantineURL = store.locations.quarantineSlotURL(0)
+                try fileSystem.createDirectory(
+                    at: store.locations.quarantineDirectoryURL
+                )
+                try fileSystem.writeAtomicallyDurably(
+                    Data("cleanup-matrix-evidence".utf8),
+                    to: quarantineURL
+                )
+                let evidenceURLs = [
+                    store.locations.profilePrimaryURL,
+                    store.locations.profileBackupURL,
+                    store.locations.journalPrimaryURL,
+                    store.locations.journalBackupURL,
+                    quarantineURL,
+                ]
+                let evidenceBefore = try evidenceURLs.map {
+                    try optionalData(at: $0)
+                }
+
+                if primaryState == .candidate, backupState == .candidate {
+                    XCTAssertTrue(
+                        try store.removeJournalAfterCheckpointConfirmation(
+                            transactionID: fixture.transactionID,
+                            expected: fixture.expectedBinding,
+                            confirmedTargetCheckpointObservation: targetObservation
+                        ),
+                        name
+                    )
+                    XCTAssertEqual(
+                        try Data(contentsOf: store.locations.profilePrimaryURL),
+                        fixture.candidateEnvelope,
+                        name
+                    )
+                    XCTAssertEqual(
+                        try Data(contentsOf: store.locations.profileBackupURL),
+                        fixture.candidateEnvelope,
+                        name
+                    )
+                    XCTAssertFalse(
+                        FileManager.default.fileExists(
+                            atPath: store.locations.journalPrimaryURL.path
+                        ),
+                        name
+                    )
+                    XCTAssertFalse(
+                        FileManager.default.fileExists(
+                            atPath: store.locations.journalBackupURL.path
+                        ),
+                        name
+                    )
+                    XCTAssertFalse(
+                        FileManager.default.fileExists(
+                            atPath: quarantineURL.path
+                        ),
+                        name
+                    )
+                } else {
+                    XCTAssertThrowsError(
+                        try store.removeJournalAfterCheckpointConfirmation(
+                            transactionID: fixture.transactionID,
+                            expected: fixture.expectedBinding,
+                            confirmedTargetCheckpointObservation: targetObservation
+                        ),
+                        name
+                    ) { error in
+                        XCTAssertEqual(
+                            error as? ProfileHydrationTransactionStoreError,
+                            .profileVerificationFailed,
+                            name
+                        )
+                    }
+                    XCTAssertEqual(
+                        try evidenceURLs.map { try optionalData(at: $0) },
+                        evidenceBefore,
+                        name
+                    )
+                }
+                remove(root)
+            }
+        }
+    }
+
+    func testNoJournalFalseIsUnauthenticatedOnlyWhenNoEvidenceExists()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let predecessorObservation = try await checkpointObservation(
+            fixture: fixture
+        )
+        let target = fixture.expectedBinding
+        let wrongBinding = ProfileHydrationExpectedBinding(
+            cloudAccountID: target.cloudAccountID,
+            playerAccountIdentity: PlayerAccountIdentity("wrong-no-journal-player"),
+            accountKey: target.accountKey,
+            profileID: target.profileID,
+            configurationScopeFingerprint: target.configurationScopeFingerprint,
+            replicaEpoch: target.replicaEpoch
+        )
+        let fileSystem = FoundationProfileHydrationFileSystem()
+
+        for usesTargetCleanup in [false, true] {
+            for rejectedInput in ["transaction", "binding", "observation"] {
+                for evidenceMode in ["none", "quarantine", "invalid journal"] {
+                    let name = "\(usesTargetCleanup ? "target" : "abort") / "
+                        + "\(rejectedInput) / evidence=\(evidenceMode)"
+                    let root = try temporaryDirectory()
+                    let store = makeStore(root: root)
+                    try seedSourceProfile(fixture, locations: store.locations)
+                    let profileBefore = try [
+                        Data(contentsOf: store.locations.profilePrimaryURL),
+                        Data(contentsOf: store.locations.profileBackupURL),
+                    ]
+                    let quarantineURL = store.locations.quarantineSlotURL(0)
+                    let quarantineBytes = Data("unresolved-no-journal-evidence".utf8)
+                    let invalidJournalBytes = Data(
+                        "unresolved-invalid-journal-evidence".utf8
+                    )
+                    if evidenceMode == "quarantine" {
+                        try fileSystem.createDirectory(
+                            at: store.locations.quarantineDirectoryURL
+                        )
+                        try fileSystem.writeAtomicallyDurably(
+                            quarantineBytes,
+                            to: quarantineURL
+                        )
+                    } else if evidenceMode == "invalid journal" {
+                        try fileSystem.writeAtomicallyDurably(
+                            invalidJournalBytes,
+                            to: store.locations.journalPrimaryURL
+                        )
+                    }
+                    let transactionID = rejectedInput == "transaction"
+                        ? fixture.fixedUUID(994)
+                        : fixture.transactionID
+                    let expected = rejectedInput == "binding"
+                        ? wrongBinding
+                        : fixture.expectedBinding
+                    let cleanup: () throws -> Bool = {
+                        if usesTargetCleanup {
+                            return try store.removeJournalAfterCheckpointConfirmation(
+                                transactionID: transactionID,
+                                expected: expected,
+                                confirmedTargetCheckpointObservation:
+                                    rejectedInput == "observation"
+                                        ? predecessorObservation
+                                        : targetObservation
+                            )
+                        }
+                        return try store.abortHydrationAfterPredecessorConfirmation(
+                            transactionID: transactionID,
+                            expected: expected,
+                            confirmedPredecessorCheckpointObservation:
+                                rejectedInput == "observation"
+                                    ? targetObservation
+                                    : predecessorObservation
+                        )
+                    }
+
+                    if evidenceMode == "quarantine" {
+                        XCTAssertThrowsError(try cleanup(), name) { error in
+                            XCTAssertEqual(
+                                error as? ProfileHydrationTransactionStoreError,
+                                .unrecoverableJournalEvidence,
+                                name
+                            )
+                        }
+                        XCTAssertEqual(
+                            try Data(contentsOf: quarantineURL),
+                            quarantineBytes,
+                            name
+                        )
+                    } else if evidenceMode == "invalid journal" {
+                        XCTAssertThrowsError(try cleanup(), name) { error in
+                            XCTAssertEqual(
+                                error as? ProfileHydrationTransactionStoreError,
+                                .noValidJournalCopy,
+                                name
+                            )
+                        }
+                        XCTAssertEqual(
+                            try Data(contentsOf: store.locations.journalPrimaryURL),
+                            invalidJournalBytes,
+                            name
+                        )
+                    } else {
+                        XCTAssertFalse(try cleanup(), name)
+                        XCTAssertTrue(
+                            try store.quarantinedEvidenceURLs().isEmpty,
+                            name
+                        )
+                    }
+                    XCTAssertEqual(
+                        try [
+                            Data(contentsOf: store.locations.profilePrimaryURL),
+                            Data(contentsOf: store.locations.profileBackupURL),
+                        ],
+                        profileBefore,
+                        name
+                    )
+                    XCTAssertEqual(
+                        FileManager.default.fileExists(
+                            atPath: store.locations.journalPrimaryURL.path
+                        ),
+                        evidenceMode == "invalid journal",
+                        name
+                    )
+                    XCTAssertFalse(
+                        FileManager.default.fileExists(
+                            atPath: store.locations.journalBackupURL.path
+                        ),
+                        name
+                    )
+                    remove(root)
+                }
+            }
+        }
+    }
+
+    func testGenesisSourceOnlyAbortSucceedsAndNoBarrierRetryIsIdempotent()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let predecessorObservation = try await checkpointObservation(
+            fixture: fixture
+        )
+        let root = try temporaryDirectory()
+        defer { remove(root) }
+        let store = makeStore(root: root)
+        try seedSourceProfile(fixture, locations: store.locations)
+        _ = try store.beginHydration(fixture.journal)
+
+        XCTAssertTrue(
+            try store.abortHydrationAfterPredecessorConfirmation(
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                confirmedPredecessorCheckpointObservation: predecessorObservation
+            )
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.profilePrimaryURL),
+            fixture.sourceEnvelope
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.profileBackupURL),
+            fixture.sourceEnvelope
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: store.locations.journalPrimaryURL.path
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: store.locations.journalBackupURL.path
+            )
+        )
+        XCTAssertFalse(
+            try store.abortHydrationAfterPredecessorConfirmation(
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                confirmedPredecessorCheckpointObservation: predecessorObservation
+            )
+        )
+    }
+
+    func testNonGenesisSourceOnlyAbortRequiresAndAcceptsExactPredecessor()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let predecessorCheckpoint = try fixture.checkpoint(
+            generation: 1,
+            cursorByte: 1
+        )
+        let predecessorIdentity = ProfileHydrationCheckpointIdentityV1(
+            checkpoint: predecessorCheckpoint
+        )
+        let journal = try fixture.makeJournal(
+            predecessor: predecessorIdentity,
+            targetCheckpoint: try fixture.checkpoint(
+                generation: 2,
+                cursorByte: 2
+            )
+        )
+        let predecessorObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [predecessorCheckpoint]
+        )
+        let root = try temporaryDirectory()
+        defer { remove(root) }
+        let store = makeStore(root: root)
+        try seedSourceProfile(fixture, locations: store.locations)
+        _ = try store.beginHydration(journal)
+
+        XCTAssertTrue(
+            try store.abortHydrationAfterPredecessorConfirmation(
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                confirmedPredecessorCheckpointObservation: predecessorObservation
+            )
+        )
+        XCTAssertFalse(
+            try store.abortHydrationAfterPredecessorConfirmation(
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                confirmedPredecessorCheckpointObservation: predecessorObservation
+            )
+        )
+    }
+
+    func testNonGenesisSourceOnlyAbortRejectsTargetUnrelatedAndAbsentObservation()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let predecessorCheckpoint = try fixture.checkpoint(
+            generation: 1,
+            cursorByte: 1
+        )
+        let predecessorIdentity = ProfileHydrationCheckpointIdentityV1(
+            checkpoint: predecessorCheckpoint
+        )
+        let targetCheckpoint = try fixture.checkpoint(
+            generation: 2,
+            cursorByte: 2
+        )
+        let journal = try fixture.makeJournal(
+            predecessor: predecessorIdentity,
+            targetCheckpoint: targetCheckpoint
+        )
+        let unrelatedCheckpoint = try fixture.checkpoint(
+            generation: 1,
+            cursorByte: 9
+        )
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [predecessorCheckpoint, targetCheckpoint]
+        )
+        let unrelatedObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [unrelatedCheckpoint]
+        )
+        let absentObservation = try await checkpointObservation(
+            fixture: fixture
+        )
+        let root = try temporaryDirectory()
+        defer { remove(root) }
+        let store = makeStore(root: root)
+        try seedSourceProfile(fixture, locations: store.locations)
+        _ = try store.beginHydration(journal)
+        let evidenceURLs = [
+            store.locations.profilePrimaryURL,
+            store.locations.profileBackupURL,
+            store.locations.journalPrimaryURL,
+            store.locations.journalBackupURL,
+        ]
+        let evidenceBefore = try evidenceURLs.map { try Data(contentsOf: $0) }
+        let confirmations: [(
+            String,
+            CloudReplicaCheckpointObservationV1
+        )] = [
+            ("target", targetObservation),
+            ("unrelated", unrelatedObservation),
+            ("absent", absentObservation),
+        ]
+
+        for (name, confirmation) in confirmations {
+            XCTAssertThrowsError(
+                try store.abortHydrationAfterPredecessorConfirmation(
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    confirmedPredecessorCheckpointObservation: confirmation
+                ),
+                name
+            ) { error in
+                XCTAssertEqual(
+                    error as? ProfileHydrationTransactionStoreError,
+                    .checkpointConfirmationMismatch,
+                    name
+                )
+            }
+            XCTAssertEqual(
+                try evidenceURLs.map { try Data(contentsOf: $0) },
+                evidenceBefore,
+                name
+            )
+        }
+    }
+
+    func testSourceOnlyAbortRejectsEveryNonSourcePairWithoutChangingEvidence()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let predecessorObservation = try await checkpointObservation(
+            fixture: fixture
+        )
+        let unexpectedBytes = Data("unexpected-profile-bytes".utf8)
+        let limits = compactMatrixLimits(fixture: fixture)
+        let oversizedBytes = Data(
+            repeating: 0x6f,
+            count: limits.maximumProfileEnvelopeBytes + 1
+        )
+        let cases: [(
+            name: String,
+            primaryBytes: Data?,
+            backupBytes: Data?,
+            primaryState: ProfileHydrationProfileCopyState,
+            backupState: ProfileHydrationProfileCopyState
+        )] = [
+            (
+                "source/candidate",
+                fixture.sourceEnvelope,
+                fixture.candidateEnvelope,
+                .source,
+                .candidate
+            ),
+            (
+                "candidate/candidate",
+                fixture.candidateEnvelope,
+                fixture.candidateEnvelope,
+                .candidate,
+                .candidate
+            ),
+            (
+                "candidate/source",
+                fixture.candidateEnvelope,
+                fixture.sourceEnvelope,
+                .candidate,
+                .source
+            ),
+            (
+                "missing/source",
+                nil,
+                fixture.sourceEnvelope,
+                .missing,
+                .source
+            ),
+            (
+                "source/missing",
+                fixture.sourceEnvelope,
+                nil,
+                .source,
+                .missing
+            ),
+            (
+                "missing/missing",
+                nil,
+                nil,
+                .missing,
+                .missing
+            ),
+            (
+                "unexpected/source",
+                unexpectedBytes,
+                fixture.sourceEnvelope,
+                .unexpected(.envelopeBytes(unexpectedBytes)),
+                .source
+            ),
+            (
+                "source/unexpected",
+                fixture.sourceEnvelope,
+                unexpectedBytes,
+                .source,
+                .unexpected(.envelopeBytes(unexpectedBytes))
+            ),
+            (
+                "oversized/source",
+                oversizedBytes,
+                fixture.sourceEnvelope,
+                .oversized(oversizedBytes.count),
+                .source
+            ),
+            (
+                "source/oversized",
+                fixture.sourceEnvelope,
+                oversizedBytes,
+                .source,
+                .oversized(oversizedBytes.count)
+            ),
+        ]
+        let fileSystem = FoundationProfileHydrationFileSystem()
+
+        for testCase in cases {
+            let root = try temporaryDirectory()
+            let store = makeStore(root: root, limits: limits)
+            try seedSourceProfile(fixture, locations: store.locations)
+            _ = try store.beginHydration(fixture.journal)
+
+            if let primaryBytes = testCase.primaryBytes {
+                try fileSystem.writeAtomicallyDurably(
+                    primaryBytes,
+                    to: store.locations.profilePrimaryURL
+                )
+            } else {
+                try fileSystem.removeItemDurably(
+                    at: store.locations.profilePrimaryURL
+                )
+            }
+            if let backupBytes = testCase.backupBytes {
+                try fileSystem.writeAtomicallyDurably(
+                    backupBytes,
+                    to: store.locations.profileBackupURL
+                )
+            } else {
+                try fileSystem.removeItemDurably(
+                    at: store.locations.profileBackupURL
+                )
+            }
+            let quarantineURL = store.locations.quarantineSlotURL(0)
+            try fileSystem.createDirectory(
+                at: store.locations.quarantineDirectoryURL
+            )
+            try fileSystem.writeAtomicallyDurably(
+                Data("retained-\(testCase.name)".utf8),
+                to: quarantineURL
+            )
+            let evidenceURLs = [
+                store.locations.profilePrimaryURL,
+                store.locations.profileBackupURL,
+                store.locations.journalPrimaryURL,
+                store.locations.journalBackupURL,
+                quarantineURL,
+            ]
+            let evidenceBefore = try evidenceURLs.map {
+                try optionalData(at: $0)
+            }
+
+            XCTAssertThrowsError(
+                try store.abortHydrationAfterPredecessorConfirmation(
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    confirmedPredecessorCheckpointObservation: predecessorObservation
+                ),
+                testCase.name
+            ) { error in
+                XCTAssertEqual(
+                    error as? ProfileHydrationTransactionStoreError,
+                    .sourceOnlyAbortRejected(
+                        primary: testCase.primaryState,
+                        backup: testCase.backupState
+                    ),
+                    testCase.name
+                )
+            }
+            XCTAssertEqual(
+                try evidenceURLs.map { try optionalData(at: $0) },
+                evidenceBefore,
+                testCase.name
+            )
+            remove(root)
+        }
+    }
+
+    func testSourceOnlyAbortFullFiveByFiveRejectionMatrix() async throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let predecessorObservation = try await checkpointObservation(
+            fixture: fixture
+        )
+        let unexpectedBytes = Data("abort-matrix-unexpected".utf8)
+        let limits = compactMatrixLimits(fixture: fixture)
+        let oversizedBytes = Data(
+            repeating: 0x61,
+            count: limits.maximumProfileEnvelopeBytes + 1
+        )
+        let fileSystem = FoundationProfileHydrationFileSystem()
+
+        for primaryState in HydrationProfileMatrixState.allCases {
+            for backupState in HydrationProfileMatrixState.allCases {
+                guard primaryState != .source || backupState != .source else {
+                    continue
+                }
+                let name = "\(primaryState.rawValue)/\(backupState.rawValue)"
+                let root = try temporaryDirectory()
+                let store = makeStore(root: root, limits: limits)
+                try seedSourceProfile(fixture, locations: store.locations)
+                _ = try store.beginHydration(fixture.journal)
+                try applyMatrixState(
+                    primaryState,
+                    to: store.locations.profilePrimaryURL,
+                    fixture: fixture,
+                    unexpectedBytes: unexpectedBytes,
+                    oversizedBytes: oversizedBytes
+                )
+                try applyMatrixState(
+                    backupState,
+                    to: store.locations.profileBackupURL,
+                    fixture: fixture,
+                    unexpectedBytes: unexpectedBytes,
+                    oversizedBytes: oversizedBytes
+                )
+                let quarantineURL = store.locations.quarantineSlotURL(0)
+                try fileSystem.createDirectory(
+                    at: store.locations.quarantineDirectoryURL
+                )
+                try fileSystem.writeAtomicallyDurably(
+                    Data("abort-matrix-evidence".utf8),
+                    to: quarantineURL
+                )
+                let evidenceURLs = [
+                    store.locations.profilePrimaryURL,
+                    store.locations.profileBackupURL,
+                    store.locations.journalPrimaryURL,
+                    store.locations.journalBackupURL,
+                    quarantineURL,
+                ]
+                let evidenceBefore = try evidenceURLs.map {
+                    try optionalData(at: $0)
+                }
+
+                XCTAssertThrowsError(
+                    try store.abortHydrationAfterPredecessorConfirmation(
+                        transactionID: fixture.transactionID,
+                        expected: fixture.expectedBinding,
+                        confirmedPredecessorCheckpointObservation: predecessorObservation
+                    ),
+                    name
+                ) { error in
+                    XCTAssertEqual(
+                        error as? ProfileHydrationTransactionStoreError,
+                        .sourceOnlyAbortRejected(
+                            primary: expectedCopyState(
+                                for: primaryState,
+                                unexpectedBytes: unexpectedBytes,
+                                oversizedBytes: oversizedBytes
+                            ),
+                            backup: expectedCopyState(
+                                for: backupState,
+                                unexpectedBytes: unexpectedBytes,
+                                oversizedBytes: oversizedBytes
+                            )
+                        ),
+                        name
+                    )
+                }
+                XCTAssertEqual(
+                    try evidenceURLs.map { try optionalData(at: $0) },
+                    evidenceBefore,
+                    name
+                )
+                remove(root)
+            }
+        }
+    }
+
+    func testInterruptedSourceOnlyAbortCleanupDirectlyRetriesRemainingBarrier()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let predecessorObservation = try await checkpointObservation(
+            fixture: fixture
+        )
+        let root = try temporaryDirectory()
+        defer { remove(root) }
+        let fault = FaultInjectingProfileHydrationFileSystem()
+        let store = makeStore(root: root, fileSystem: fault)
+        try seedSourceProfile(fixture, locations: store.locations)
+        _ = try store.beginHydration(fixture.journal)
+        let fileSystem = FoundationProfileHydrationFileSystem()
+        try fileSystem.createDirectory(
+            at: store.locations.quarantineDirectoryURL
+        )
+        try fileSystem.writeAtomicallyDurably(
+            Data("obsolete-invalid-copy-evidence".utf8),
+            to: store.locations.quarantineSlotURL(0)
+        )
+        fault.failNext(.beforeRemove("profile-hydration-journal.json"))
+
+        XCTAssertThrowsError(
+            try store.abortHydrationAfterPredecessorConfirmation(
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                confirmedPredecessorCheckpointObservation: predecessorObservation
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: store.locations.quarantineSlotURL(0).path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: store.locations.journalPrimaryURL.path
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: store.locations.journalBackupURL.path
+            )
+        )
+
+        let noRepairFault = FaultInjectingProfileHydrationFileSystem()
+        noRepairFault.failNext(
+            .beforeWrite("profile-hydration-journal.backup.json")
+        )
+        let recovered = makeStore(root: root, fileSystem: noRepairFault)
+        XCTAssertTrue(
+            try recovered.abortHydrationAfterPredecessorConfirmation(
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                confirmedPredecessorCheckpointObservation: predecessorObservation
+            )
+        )
+        XCTAssertFalse(
+            try recovered.abortHydrationAfterPredecessorConfirmation(
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                confirmedPredecessorCheckpointObservation: predecessorObservation
+            )
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.profilePrimaryURL),
+            fixture.sourceEnvelope
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.profileBackupURL),
+            fixture.sourceEnvelope
+        )
+    }
+
+    func testCleanupRemovalFaultMatrixRetainsProfilesAndDurablyRetriesAbsence()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let predecessorObservation = try await checkpointObservation(
+            fixture: fixture
+        )
+        let failures: [(
+            name: String,
+            failure: FaultInjectingProfileHydrationFileSystem.Failure,
+            finalRemovalMayHaveCompleted: Bool
+        )] = [
+            (
+                "before quarantine removal",
+                .beforeRemove("journal-evidence-0.json"),
+                false
+            ),
+            (
+                "after quarantine removal",
+                .afterRemove("journal-evidence-0.json"),
+                false
+            ),
+            (
+                "before journal backup removal",
+                .beforeRemove("profile-hydration-journal.backup.json"),
+                false
+            ),
+            (
+                "after journal backup removal",
+                .afterRemove("profile-hydration-journal.backup.json"),
+                false
+            ),
+            (
+                "before journal primary removal",
+                .beforeRemove("profile-hydration-journal.json"),
+                false
+            ),
+            (
+                "after journal primary removal",
+                .afterRemove("profile-hydration-journal.json"),
+                true
+            ),
+        ]
+
+        for usesTargetCleanup in [false, true] {
+            for testCase in failures {
+                let name = usesTargetCleanup
+                    ? "target / \(testCase.name)"
+                    : "abort / \(testCase.name)"
+                let root = try temporaryDirectory()
+                let fault = FaultInjectingProfileHydrationFileSystem()
+                let store = makeStore(root: root, fileSystem: fault)
+                try seedSourceProfile(fixture, locations: store.locations)
+                _ = try store.beginHydration(fixture.journal)
+                if usesTargetCleanup {
+                    _ = try store.installCandidate(
+                        transactionID: fixture.transactionID,
+                        expected: fixture.expectedBinding,
+                        confirmedTargetCheckpointObservation: targetObservation
+                    )
+                }
+                let fileSystem = FoundationProfileHydrationFileSystem()
+                try fileSystem.createDirectory(
+                    at: store.locations.quarantineDirectoryURL
+                )
+                try fileSystem.writeAtomicallyDurably(
+                    Data("authorized-obsolete-evidence".utf8),
+                    to: store.locations.quarantineSlotURL(0)
+                )
+                let expectedProfile = usesTargetCleanup
+                    ? fixture.candidateEnvelope
+                    : fixture.sourceEnvelope
+                fault.failNext(testCase.failure)
+
+                XCTAssertThrowsError(
+                    try performCleanup(
+                        store: store,
+                        fixture: fixture,
+                        usesTargetCleanup: usesTargetCleanup,
+                        targetObservation: targetObservation,
+                        predecessorObservation: predecessorObservation
+                    ),
+                    name
+                ) { error in
+                    XCTAssertEqual(
+                        error as? ProfileHydrationTransactionStoreError,
+                        .ioFailure,
+                        name
+                    )
+                }
+                XCTAssertEqual(
+                    try Data(contentsOf: store.locations.profilePrimaryURL),
+                    expectedProfile,
+                    name
+                )
+                XCTAssertEqual(
+                    try Data(contentsOf: store.locations.profileBackupURL),
+                    expectedProfile,
+                    name
+                )
+                let pendingComponent: String?
+                switch testCase.failure {
+                case let .afterRemove(component):
+                    pendingComponent = component
+                    XCTAssertTrue(
+                        fault.hasPendingRemovalDurability(for: component),
+                        name
+                    )
+                default:
+                    pendingComponent = nil
+                }
+
+                let retryStore = makeStore(root: root, fileSystem: fault)
+                if testCase.finalRemovalMayHaveCompleted {
+                    fault.failNext(
+                        .beforeRemove("profile-hydration-journal.backup.json")
+                    )
+                    XCTAssertThrowsError(
+                        try performCleanup(
+                            store: retryStore,
+                            fixture: fixture,
+                            usesTargetCleanup: usesTargetCleanup,
+                            targetObservation: targetObservation,
+                            predecessorObservation: predecessorObservation
+                        ),
+                        "\(name) must execute the absence barrier"
+                    ) { error in
+                        XCTAssertEqual(
+                            error as? ProfileHydrationTransactionStoreError,
+                            .ioFailure,
+                            name
+                        )
+                    }
+                    if let pendingComponent {
+                        XCTAssertTrue(
+                            fault.hasPendingRemovalDurability(
+                                for: pendingComponent
+                            ),
+                            "\(name) returned before reconciling the final removal"
+                        )
+                    }
+                    XCTAssertFalse(
+                        try performCleanup(
+                            store: retryStore,
+                            fixture: fixture,
+                            usesTargetCleanup: usesTargetCleanup,
+                            targetObservation: targetObservation,
+                            predecessorObservation: predecessorObservation
+                        ),
+                        name
+                    )
+                } else {
+                    fault.failNext(
+                        .beforeWrite("profile-hydration-journal.backup.json")
+                    )
+                    XCTAssertTrue(
+                        try performCleanup(
+                            store: retryStore,
+                            fixture: fixture,
+                            usesTargetCleanup: usesTargetCleanup,
+                            targetObservation: targetObservation,
+                            predecessorObservation: predecessorObservation
+                        ),
+                        name
+                    )
+                }
+                if let pendingComponent {
+                    XCTAssertFalse(
+                        fault.hasPendingRemovalDurability(for: pendingComponent),
+                        "\(name) did not reconcile the missing entry"
+                    )
+                }
+                XCTAssertFalse(
+                    FileManager.default.fileExists(
+                        atPath: store.locations.journalPrimaryURL.path
+                    ),
+                    name
+                )
+                XCTAssertFalse(
+                    FileManager.default.fileExists(
+                        atPath: store.locations.journalBackupURL.path
+                    ),
+                    name
+                )
+                XCTAssertTrue(
+                    try retryStore.quarantinedEvidenceURLs().isEmpty,
+                    name
+                )
+                remove(root)
+            }
+        }
+    }
+
+    func testAuthorizedCleanupDirectlyRemovesInvalidOrMissingJournalPeer()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let predecessorObservation = try await checkpointObservation(
+            fixture: fixture
+        )
+        let fileSystem = FoundationProfileHydrationFileSystem()
+
+        let peerCases: [(name: String, isPrimary: Bool, isMissing: Bool)] = [
+            ("invalid backup", false, false),
+            ("invalid primary", true, false),
+            ("missing backup", false, true),
+            ("missing primary", true, true),
+        ]
+
+        for usesTargetCleanup in [false, true] {
+            for peerCase in peerCases {
+                let root = try temporaryDirectory()
+                let fault = FaultInjectingProfileHydrationFileSystem()
+                let store = makeStore(root: root, fileSystem: fault)
+                try seedSourceProfile(fixture, locations: store.locations)
+                _ = try store.beginHydration(fixture.journal)
+                if usesTargetCleanup {
+                    _ = try store.installCandidate(
+                        transactionID: fixture.transactionID,
+                        expected: fixture.expectedBinding,
+                        confirmedTargetCheckpointObservation: targetObservation
+                    )
+                }
+                let peerURL = peerCase.isPrimary
+                    ? store.locations.journalPrimaryURL
+                    : store.locations.journalBackupURL
+                if peerCase.isMissing {
+                    try fileSystem.removeItemDurably(at: peerURL)
+                } else {
+                    try fileSystem.writeAtomicallyDurably(
+                        Data("authorized-invalid-journal-peer".utf8),
+                        to: peerURL
+                    )
+                }
+                fault.failNext(
+                    .beforeWrite(peerURL.lastPathComponent)
+                )
+
+                XCTAssertTrue(
+                    try performCleanup(
+                        store: store,
+                        fixture: fixture,
+                        usesTargetCleanup: usesTargetCleanup,
+                        targetObservation: targetObservation,
+                        predecessorObservation: predecessorObservation
+                    ),
+                    peerCase.name
+                )
+                XCTAssertTrue(
+                    try store.quarantinedEvidenceURLs().isEmpty,
+                    peerCase.name
+                )
+                XCTAssertFalse(
+                    FileManager.default.fileExists(
+                        atPath: store.locations.journalPrimaryURL.path
+                    ),
+                    peerCase.name
+                )
+                XCTAssertFalse(
+                    FileManager.default.fileExists(
+                        atPath: store.locations.journalBackupURL.path
+                    ),
+                    peerCase.name
+                )
+                remove(root)
+            }
+        }
+    }
+
+    func testBackupOnlyCleanupInterruptionRetainsValidBarrierAndRetries()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let predecessorObservation = try await checkpointObservation(
+            fixture: fixture
+        )
+        let fileSystem = FoundationProfileHydrationFileSystem()
+
+        for usesTargetCleanup in [false, true] {
+            let root = try temporaryDirectory()
+            let fault = FaultInjectingProfileHydrationFileSystem()
+            let store = makeStore(root: root, fileSystem: fault)
+            try seedSourceProfile(fixture, locations: store.locations)
+            _ = try store.beginHydration(fixture.journal)
+            if usesTargetCleanup {
+                _ = try store.installCandidate(
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    confirmedTargetCheckpointObservation: targetObservation
+                )
+            }
+            let exactBackup = try Data(
+                contentsOf: store.locations.journalBackupURL
+            )
+            try fileSystem.writeAtomicallyDurably(
+                Data("invalid-primary-before-cleanup".utf8),
+                to: store.locations.journalPrimaryURL
+            )
+            fault.failNext(
+                .beforeRemove("profile-hydration-journal.backup.json")
+            )
+
+            XCTAssertThrowsError(
+                try performCleanup(
+                    store: store,
+                    fixture: fixture,
+                    usesTargetCleanup: usesTargetCleanup,
+                    targetObservation: targetObservation,
+                    predecessorObservation: predecessorObservation
+                )
+            )
+            XCTAssertFalse(
+                FileManager.default.fileExists(
+                    atPath: store.locations.journalPrimaryURL.path
+                )
+            )
+            XCTAssertEqual(
+                try Data(contentsOf: store.locations.journalBackupURL),
+                exactBackup
+            )
+
+            let noRepairFault = FaultInjectingProfileHydrationFileSystem()
+            noRepairFault.failNext(
+                .beforeWrite("profile-hydration-journal.json")
+            )
+            XCTAssertTrue(
+                try performCleanup(
+                    store: makeStore(root: root, fileSystem: noRepairFault),
+                    fixture: fixture,
+                    usesTargetCleanup: usesTargetCleanup,
+                    targetObservation: targetObservation,
+                    predecessorObservation: predecessorObservation
+                )
+            )
+            remove(root)
+        }
+    }
+
+    func testCleanupReceiptRejectionsDoNotRepairOrQuarantineInvalidPeer()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let wrongCheckpoint = try fixture.checkpoint(
+            generation: 1,
+            cursorByte: 9
+        )
+        let wrongObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [wrongCheckpoint]
+        )
+        let invalidPeer = Data("rejected-invalid-journal-peer".utf8)
+        let fileSystem = FoundationProfileHydrationFileSystem()
+
+        for usesTargetCleanup in [false, true] {
+            let root = try temporaryDirectory()
+            let store = makeStore(root: root)
+            try seedSourceProfile(fixture, locations: store.locations)
+            _ = try store.beginHydration(fixture.journal)
+            if usesTargetCleanup {
+                _ = try store.installCandidate(
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    confirmedTargetCheckpointObservation: targetObservation
+                )
+            }
+            try fileSystem.writeAtomicallyDurably(
+                invalidPeer,
+                to: store.locations.journalBackupURL
+            )
+            let evidenceURLs = [
+                store.locations.profilePrimaryURL,
+                store.locations.profileBackupURL,
+                store.locations.journalPrimaryURL,
+                store.locations.journalBackupURL,
+            ]
+            let evidenceBefore = try evidenceURLs.map {
+                try optionalData(at: $0)
+            }
+
+            let rejectedCleanup: () throws -> Bool = {
+                if usesTargetCleanup {
+                    return try store.removeJournalAfterCheckpointConfirmation(
+                        transactionID: fixture.transactionID,
+                        expected: fixture.expectedBinding,
+                        confirmedTargetCheckpointObservation: wrongObservation
+                    )
+                }
+                return try store.abortHydrationAfterPredecessorConfirmation(
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    confirmedPredecessorCheckpointObservation: targetObservation
+                )
+            }
+            XCTAssertThrowsError(try rejectedCleanup()) { error in
+                XCTAssertEqual(
+                    error as? ProfileHydrationTransactionStoreError,
+                    .checkpointConfirmationMismatch
+                )
+            }
+            XCTAssertEqual(
+                try evidenceURLs.map { try optionalData(at: $0) },
+                evidenceBefore
+            )
+            XCTAssertTrue(try store.quarantinedEvidenceURLs().isEmpty)
+            remove(root)
+        }
+    }
+
+    func testCleanupWrongTransactionAndBindingPreserveInvalidPeer()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let targetObservation = try await checkpointObservation(
+            fixture: fixture,
+            checkpoints: [fixture.targetCheckpoint]
+        )
+        let predecessorObservation = try await checkpointObservation(
+            fixture: fixture
+        )
+        let target = fixture.expectedBinding
+        let wrongBinding = ProfileHydrationExpectedBinding(
+            cloudAccountID: target.cloudAccountID,
+            playerAccountIdentity: target.playerAccountIdentity,
+            accountKey: ServiceAccountKey("cleanup-wrong-account-key"),
+            profileID: target.profileID,
+            configurationScopeFingerprint: target.configurationScopeFingerprint,
+            replicaEpoch: target.replicaEpoch
+        )
+        let invalidPeer = Data("rejected-invalid-cleanup-peer".utf8)
+        let fileSystem = FoundationProfileHydrationFileSystem()
+
+        for usesTargetCleanup in [false, true] {
+            for rejection in ["transaction", "binding"] {
+                let name = "\(usesTargetCleanup ? "target" : "abort") / \(rejection)"
+                let root = try temporaryDirectory()
+                let store = makeStore(root: root)
+                try seedSourceProfile(fixture, locations: store.locations)
+                _ = try store.beginHydration(fixture.journal)
+                if usesTargetCleanup {
+                    _ = try store.installCandidate(
+                        transactionID: fixture.transactionID,
+                        expected: fixture.expectedBinding,
+                        confirmedTargetCheckpointObservation: targetObservation
+                    )
+                }
+                try fileSystem.writeAtomicallyDurably(
+                    invalidPeer,
+                    to: store.locations.journalBackupURL
+                )
+                let evidenceURLs = [
+                    store.locations.profilePrimaryURL,
+                    store.locations.profileBackupURL,
+                    store.locations.journalPrimaryURL,
+                    store.locations.journalBackupURL,
+                ]
+                let evidenceBefore = try evidenceURLs.map {
+                    try optionalData(at: $0)
+                }
+                let cleanup: () throws -> Bool = {
+                    if usesTargetCleanup {
+                        return try store.removeJournalAfterCheckpointConfirmation(
+                            transactionID: rejection == "transaction"
+                                ? fixture.fixedUUID(993)
+                                : fixture.transactionID,
+                            expected: rejection == "binding"
+                                ? wrongBinding
+                                : fixture.expectedBinding,
+                            confirmedTargetCheckpointObservation: targetObservation
+                        )
+                    }
+                    return try store.abortHydrationAfterPredecessorConfirmation(
+                        transactionID: rejection == "transaction"
+                            ? fixture.fixedUUID(993)
+                            : fixture.transactionID,
+                        expected: rejection == "binding"
+                            ? wrongBinding
+                            : fixture.expectedBinding,
+                        confirmedPredecessorCheckpointObservation: predecessorObservation
+                    )
+                }
+
+                XCTAssertThrowsError(try cleanup(), name) { error in
+                    XCTAssertEqual(
+                        error as? ProfileHydrationTransactionStoreError,
+                        rejection == "transaction"
+                            ? .transactionMismatch
+                            : .bindingMismatch(.accountKey),
+                        name
+                    )
+                }
+                XCTAssertEqual(
+                    try evidenceURLs.map { try optionalData(at: $0) },
+                    evidenceBefore,
+                    name
+                )
+                XCTAssertTrue(
+                    try store.quarantinedEvidenceURLs().isEmpty,
+                    name
+                )
+                remove(root)
+            }
+        }
+    }
+
+    func testBothCorruptJournalsRemainInPlaceAcrossReadOnlyInspection() throws {
         let fixture = try ProfileHydrationTestFixture()
         let root = try temporaryDirectory()
         defer { remove(root) }
@@ -850,6 +2580,15 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
 
         XCTAssertThrowsError(
+            try store.beginHydration(fixture.journal)
+        ) { error in
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .noValidJournalCopy
+            )
+        }
+        XCTAssertTrue(try store.quarantinedEvidenceURLs().isEmpty)
+        XCTAssertThrowsError(
             try store.inspectRecovery(expected: fixture.expectedBinding)
         ) { error in
             XCTAssertEqual(
@@ -857,18 +2596,17 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 .noValidJournalCopy
             )
         }
-        XCTAssertEqual(try store.quarantinedEvidenceURLs().count, 2)
-        XCTAssertThrowsError(
-            try store.inspectRecovery(expected: fixture.expectedBinding)
-        ) { error in
-            XCTAssertEqual(
-                error as? ProfileHydrationTransactionStoreError,
-                .unrecoverableJournalEvidence
-            )
-        }
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.journalPrimaryURL),
+            Data("corrupt-primary".utf8)
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.journalBackupURL),
+            Data("corrupt-backup".utf8)
+        )
     }
 
-    func testQuarantineByteBoundNeverOverwritesOrMovesOversizedEvidence() throws {
+    func testInspectionNeverMovesOversizedInvalidJournalEvidence() throws {
         let fixture = try ProfileHydrationTestFixture()
         let root = try temporaryDirectory()
         defer { remove(root) }
@@ -888,7 +2626,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         ) { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
-                .quarantineCapacityExceeded
+                .noValidJournalCopy
             )
         }
         XCTAssertEqual(try Data(contentsOf: store.locations.journalPrimaryURL), bytes)
@@ -917,7 +2655,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         try fileSystem.writeAtomicallyDurably(corrupt, to: store.locations.journalBackupURL)
 
         XCTAssertThrowsError(
-            try store.inspectRecovery(expected: fixture.expectedBinding)
+            try store.beginHydration(fixture.journal)
         ) { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
@@ -1126,6 +2864,58 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
     }
 
+    private func checkpointObservation(
+        fixture: ProfileHydrationTestFixture,
+        accountID: CloudAccountID? = nil,
+        scope: CloudReplicaScopeFingerprint? = nil,
+        replicaEpoch: UUID? = nil,
+        checkpoints: [CloudReplicaCheckpointV1] = []
+    ) async throws -> CloudReplicaCheckpointObservationV1 {
+        let accountID = accountID ?? fixture.cloudAccountID
+        let scope = scope ?? fixture.scope
+        let replicaEpoch = replicaEpoch ?? fixture.replicaEpoch
+        let root = try temporaryDirectory()
+        defer { remove(root) }
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        )
+        try await store.activate(
+            replicaEpoch: replicaEpoch,
+            configurationScopeFingerprint: scope,
+            for: accountID
+        )
+        for checkpoint in checkpoints {
+            try await store.save(checkpoint, at: fixture.date)
+        }
+        return try await store.observeCurrentCheckpoint(
+            for: accountID,
+            configurationScopeFingerprint: scope,
+            replicaEpoch: replicaEpoch,
+            at: fixture.date
+        )
+    }
+
+    private func performCleanup(
+        store: ProfileHydrationFileTransactionStore,
+        fixture: ProfileHydrationTestFixture,
+        usesTargetCleanup: Bool,
+        targetObservation: CloudReplicaCheckpointObservationV1,
+        predecessorObservation: CloudReplicaCheckpointObservationV1
+    ) throws -> Bool {
+        if usesTargetCleanup {
+            return try store.removeJournalAfterCheckpointConfirmation(
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                confirmedTargetCheckpointObservation: targetObservation
+            )
+        }
+        return try store.abortHydrationAfterPredecessorConfirmation(
+            transactionID: fixture.transactionID,
+            expected: fixture.expectedBinding,
+            confirmedPredecessorCheckpointObservation: predecessorObservation
+        )
+    }
+
     private func seedSourceProfile(
         _ fixture: ProfileHydrationTestFixture,
         locations: ProfileHydrationTransactionLocations
@@ -1158,6 +2948,83 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             backup,
             to: locations.profileBackupURL
         )
+    }
+
+    private func applyMatrixState(
+        _ state: HydrationProfileMatrixState,
+        to url: URL,
+        fixture: ProfileHydrationTestFixture,
+        unexpectedBytes: Data,
+        oversizedBytes: Data
+    ) throws {
+        let fileSystem = FoundationProfileHydrationFileSystem()
+        guard let bytes = matrixBytes(
+            for: state,
+            fixture: fixture,
+            unexpectedBytes: unexpectedBytes,
+            oversizedBytes: oversizedBytes
+        ) else {
+            try fileSystem.removeItemDurably(at: url)
+            return
+        }
+        try fileSystem.writeAtomicallyDurably(bytes, to: url)
+    }
+
+    private func compactMatrixLimits(
+        fixture: ProfileHydrationTestFixture
+    ) -> ProfileHydrationLimits {
+        fixture.limits(
+            maximumProfileEnvelopeBytes: max(
+                fixture.sourceEnvelope.count,
+                fixture.candidateEnvelope.count
+            ) + 64
+        )
+    }
+
+    private func matrixBytes(
+        for state: HydrationProfileMatrixState,
+        fixture: ProfileHydrationTestFixture,
+        unexpectedBytes: Data,
+        oversizedBytes: Data
+    ) -> Data? {
+        switch state {
+        case .source:
+            return fixture.sourceEnvelope
+        case .candidate:
+            return fixture.candidateEnvelope
+        case .missing:
+            return nil
+        case .unexpected:
+            return unexpectedBytes
+        case .oversized:
+            return oversizedBytes
+        }
+    }
+
+    private func expectedCopyState(
+        for state: HydrationProfileMatrixState,
+        unexpectedBytes: Data,
+        oversizedBytes: Data
+    ) -> ProfileHydrationProfileCopyState {
+        switch state {
+        case .source:
+            return .source
+        case .candidate:
+            return .candidate
+        case .missing:
+            return .missing
+        case .unexpected:
+            return .unexpected(.envelopeBytes(unexpectedBytes))
+        case .oversized:
+            return .oversized(oversizedBytes.count)
+        }
+    }
+
+    private func optionalData(at url: URL) throws -> Data? {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        return try Data(contentsOf: url)
     }
 
     private func assertJournalCopiesEqual(
@@ -1208,11 +3075,18 @@ private final class FaultInjectingProfileHydrationFileSystem:
     private let base = FoundationProfileHydrationFileSystem()
     private let stateLock = NSLock()
     private var nextFailure: Failure?
+    private var pendingRemovalDurability: Set<String> = []
 
     func failNext(_ failure: Failure) {
         stateLock.lock()
         nextFailure = failure
         stateLock.unlock()
+    }
+
+    func hasPendingRemovalDurability(for lastPathComponent: String) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return pendingRemovalDurability.contains(lastPathComponent)
     }
 
     func createDirectory(at url: URL) throws {
@@ -1252,12 +3126,18 @@ private final class FaultInjectingProfileHydrationFileSystem:
     }
 
     func removeItemDurably(at url: URL) throws {
-        if consume(.beforeRemove(url.lastPathComponent)) {
+        let lastPathComponent = url.lastPathComponent
+        if consume(.beforeRemove(lastPathComponent)) {
             throw ProfileHydrationFileSystemError.ioFailure
         }
+        let wasAlreadyMissing = try base.itemStatus(at: url) == .missing
         try base.removeItemDurably(at: url)
-        if consume(.afterRemove(url.lastPathComponent)) {
+        if consume(.afterRemove(lastPathComponent)) {
+            markPendingRemovalDurability(for: lastPathComponent)
             throw ProfileHydrationFileSystemError.ioFailure
+        }
+        if wasAlreadyMissing {
+            clearPendingRemovalDurability(for: lastPathComponent)
         }
     }
 
@@ -1274,5 +3154,17 @@ private final class FaultInjectingProfileHydrationFileSystem:
         guard nextFailure == candidate else { return false }
         nextFailure = nil
         return true
+    }
+
+    private func markPendingRemovalDurability(for lastPathComponent: String) {
+        stateLock.lock()
+        pendingRemovalDurability.insert(lastPathComponent)
+        stateLock.unlock()
+    }
+
+    private func clearPendingRemovalDurability(for lastPathComponent: String) {
+        stateLock.lock()
+        pendingRemovalDurability.remove(lastPathComponent)
+        stateLock.unlock()
     }
 }

@@ -582,6 +582,29 @@ struct CloudReplicaStagedAccumulator: Sendable {
         )
     }
 
+    /// Reconstructs a complete replica from a nil-cursor CloudKit full-snapshot
+    /// fetch after the local cache was lost while durable accepted history
+    /// remains. The caller must fetch with `.requireExisting`; this is never an
+    /// initial-bootstrap create path.
+    init(
+        reconstructingFullSnapshotFrom acceptedHistory: CloudReplicaAcceptedHistoryV1,
+        limits: CloudReplicaResourceLimits = .production
+    ) {
+        accountID = acceptedHistory.accountID
+        configurationScopeFingerprint =
+            acceptedHistory.configurationScopeFingerprint
+        replicaEpoch = acceptedHistory.replicaEpoch
+        startingGeneration = acceptedHistory.generation
+        self.limits = limits
+        candidate = Candidate(
+            cursor: nil,
+            recordsByLogicalID: [:],
+            providerLocatorByLogicalID: [:],
+            logicalIDByProviderLocator: [:],
+            tombstonesByProviderLocator: [:]
+        )
+    }
+
     /// Returns nil while more pages are required. Exact replay within the same
     /// staging session is idempotent; reuse of a cursor for different content
     /// is rejected.
@@ -932,20 +955,95 @@ struct CloudReplicaCheckpointLoadResult: Equatable, Sendable {
     let quarantinedFileCount: Int
 }
 
+/// A sealed durable high-watermark token minted only by the checkpoint store.
+/// Possession requires recovery from CloudKit with `.requireExisting`; callers
+/// must never use this token to bootstrap an empty cloud replica.
+struct CloudReplicaAcceptedHistoryV1: Equatable, Sendable {
+    let accountID: CloudAccountID
+    let configurationScopeFingerprint: CloudReplicaScopeFingerprint
+    let replicaEpoch: UUID
+    let generation: UInt64
+    let checkpointDigest: Data
+
+    fileprivate init(
+        accountID: CloudAccountID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint,
+        replicaEpoch: UUID,
+        generation: UInt64,
+        checkpointDigest: Data
+    ) {
+        self.accountID = accountID
+        self.configurationScopeFingerprint = configurationScopeFingerprint
+        self.replicaEpoch = replicaEpoch
+        self.generation = generation
+        self.checkpointDigest = checkpointDigest
+    }
+}
+
+struct CloudReplicaEpochResumeResult: Equatable, Sendable {
+    let replicaEpoch: UUID
+    let acceptedHistory: CloudReplicaAcceptedHistoryV1?
+    let hasDurableCheckpointIntent: Bool
+
+    var hasAcceptedCheckpoint: Bool {
+        acceptedHistory != nil
+    }
+}
+
+enum CloudReplicaCheckpointObservationStateV1: Equatable, Sendable {
+    case absent
+    case checkpoint(ProfileHydrationCheckpointIdentityV1)
+}
+
+struct CloudReplicaCheckpointObservationV1: Equatable, Sendable {
+    let accountID: CloudAccountID
+    let configurationScopeFingerprint: CloudReplicaScopeFingerprint
+    let replicaEpoch: UUID
+    let state: CloudReplicaCheckpointObservationStateV1
+
+    fileprivate init(
+        accountID: CloudAccountID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint,
+        replicaEpoch: UUID,
+        state: CloudReplicaCheckpointObservationStateV1
+    ) {
+        self.accountID = accountID
+        self.configurationScopeFingerprint = configurationScopeFingerprint
+        self.replicaEpoch = replicaEpoch
+        self.state = state
+    }
+}
+
 enum CloudReplicaCheckpointStoreError: Error, Equatable, Sendable {
     case invalidCheckpoint
     case encodingFailure
     case ioFailure
+    /// A rename or removal completed, but synchronizing the affected directory
+    /// failed. Durable state must be reread before the caller decides whether
+    /// to retry or advance.
+    case durabilityOutcomeUnknown
     case replicaEpochNotActive
     case replicaEpochRevoked
     case replicaEpochMismatch
+    case configurationScopeMismatch
+    case checkpointPublicationPending
+    case acceptedHistoryMismatch
+    case acceptedCheckpointStillAvailable
     case staleGeneration
     case generationGap
     case generationCollision
 }
 
 protocol CloudReplicaCheckpointStoring: Sendable {
-    func activate(replicaEpoch: UUID, for accountID: CloudAccountID) async throws
+    func activate(
+        replicaEpoch: UUID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint,
+        for accountID: CloudAccountID
+    ) async throws
+    func resumeActiveReplicaEpoch(
+        for accountID: CloudAccountID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint
+    ) async throws -> CloudReplicaEpochResumeResult?
 
     func load(
         for accountID: CloudAccountID,
@@ -953,13 +1051,33 @@ protocol CloudReplicaCheckpointStoring: Sendable {
         at date: Date
     ) async throws -> CloudReplicaCheckpointLoadResult
 
+    func observeCurrentCheckpoint(
+        for accountID: CloudAccountID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint,
+        replicaEpoch: UUID,
+        at date: Date
+    ) async throws -> CloudReplicaCheckpointObservationV1
+
     func save(_ checkpoint: CloudReplicaCheckpointV1, at date: Date) async throws
+    func saveReconstructedFullSnapshot(
+        _ checkpoint: CloudReplicaCheckpointV1,
+        replacing acceptedHistory: CloudReplicaAcceptedHistoryV1,
+        at date: Date
+    ) async throws
     func remove(for accountID: CloudAccountID, revoking replicaEpoch: UUID) async throws
+}
+
+enum CloudReplicaCheckpointFileItemStatus: Equatable, Sendable {
+    case missing
+    case present
 }
 
 protocol CloudReplicaCheckpointFileSystem: Sendable {
     func createDirectory(at url: URL) throws
-    func fileExists(at url: URL) -> Bool
+    func itemStatus(at url: URL) throws -> CloudReplicaCheckpointFileItemStatus
+    func reconcileDurableItem(
+        at url: URL
+    ) throws -> CloudReplicaCheckpointFileItemStatus
     func fileSize(at url: URL) throws -> Int
     func read(from url: URL) throws -> Data
     func writeAtomically(_ data: Data, to url: URL) throws
@@ -969,43 +1087,279 @@ protocol CloudReplicaCheckpointFileSystem: Sendable {
 }
 
 struct FoundationCloudReplicaCheckpointFileSystem: CloudReplicaCheckpointFileSystem {
-    func createDirectory(at url: URL) throws {
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    typealias RecursiveDirectoryRemoval = @Sendable (URL) throws -> Void
+
+    private let recursivelyRemoveDirectory: RecursiveDirectoryRemoval
+    private let durabilityBoundaryURL: URL
+
+    init(
+        recursivelyRemoveDirectory: @escaping RecursiveDirectoryRemoval = { url in
+            try FileManager.default.removeItem(at: url)
+        },
+        durabilityBoundaryURL: URL = URL(
+            fileURLWithPath: NSHomeDirectory(),
+            isDirectory: true
+        )
+    ) {
+        self.recursivelyRemoveDirectory = recursivelyRemoveDirectory
+        self.durabilityBoundaryURL = durabilityBoundaryURL
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
     }
 
-    func fileExists(at url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path)
+    func createDirectory(at url: URL) throws {
+        let standardizedURL = try standardizedURLWithinDurabilityBoundary(url)
+        let creationWasNeeded = try itemStatus(at: standardizedURL) == .missing
+        do {
+            try FileManager.default.createDirectory(
+                at: standardizedURL,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
+            )
+            guard try reconcileDurableItem(at: standardizedURL) == .present else {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+        } catch let error as CloudReplicaCheckpointStoreError {
+            if creationWasNeeded {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            throw error
+        } catch {
+            if creationWasNeeded {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+    }
+
+    func itemStatus(at url: URL) throws -> CloudReplicaCheckpointFileItemStatus {
+        var metadata = stat()
+        let result = url.path.withCString { Darwin.lstat($0, &metadata) }
+        if result == 0 {
+            return .present
+        }
+        if errno == ENOENT {
+            return .missing
+        }
+        throw CloudReplicaCheckpointStoreError.ioFailure
+    }
+
+    func reconcileDurableItem(
+        at url: URL
+    ) throws -> CloudReplicaCheckpointFileItemStatus {
+        let standardizedURL = try standardizedURLWithinDurabilityBoundary(url)
+        switch try itemStatus(at: standardizedURL) {
+        case .present:
+            try synchronizeItem(standardizedURL)
+            if standardizedURL != durabilityBoundaryURL {
+                try synchronizeExistingDirectoryChain(
+                    startingAt: standardizedURL.deletingLastPathComponent()
+                )
+            }
+            guard try itemStatus(at: standardizedURL) == .present else {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            return .present
+        case .missing:
+            guard standardizedURL != durabilityBoundaryURL else {
+                throw CloudReplicaCheckpointStoreError.ioFailure
+            }
+            var nearestExistingAncestor = standardizedURL.deletingLastPathComponent()
+            while try itemStatus(at: nearestExistingAncestor) == .missing {
+                guard nearestExistingAncestor != durabilityBoundaryURL else {
+                    throw CloudReplicaCheckpointStoreError.ioFailure
+                }
+                let parent = nearestExistingAncestor.deletingLastPathComponent()
+                guard parent != nearestExistingAncestor else {
+                    throw CloudReplicaCheckpointStoreError.ioFailure
+                }
+                nearestExistingAncestor = parent
+            }
+            try synchronizeExistingDirectoryChain(
+                startingAt: nearestExistingAncestor
+            )
+            guard try itemStatus(at: standardizedURL) == .missing else {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            return .missing
+        }
     }
 
     func fileSize(at url: URL) throws -> Int {
-        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-        guard let size = attributes[.size] as? NSNumber else {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            guard let size = attributes[.size] as? NSNumber,
+                  size.int64Value >= 0,
+                  UInt64(size.int64Value) <= UInt64(Int.max) else {
+                throw CloudReplicaCheckpointStoreError.ioFailure
+            }
+            return Int(size.int64Value)
+        } catch let error as CloudReplicaCheckpointStoreError {
+            throw error
+        } catch {
             throw CloudReplicaCheckpointStoreError.ioFailure
         }
-        return size.intValue
     }
 
     func read(from url: URL) throws -> Data {
-        try Data(contentsOf: url)
+        do {
+            return try Data(contentsOf: url, options: [.mappedIfSafe])
+        } catch {
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
     }
 
     func writeAtomically(_ data: Data, to url: URL) throws {
-        try data.write(to: url, options: .atomic)
+        let directory = url.deletingLastPathComponent()
+        try createDirectory(at: directory)
+        let temporaryURL = directory.appendingPathComponent(
+            ".pocket-vector-checkpoint-write.tmp",
+            isDirectory: false
+        )
+        try removeItem(at: temporaryURL)
+        var temporaryExists = false
+        var destinationWasRenamed = false
+
+        let descriptor = temporaryURL.path.withCString {
+            Darwin.open($0, O_CREAT | O_EXCL | O_WRONLY, S_IRUSR | S_IWUSR)
+        }
+        guard descriptor >= 0 else {
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+        temporaryExists = true
+        var descriptorIsOpen = true
+        defer {
+            if descriptorIsOpen {
+                _ = Darwin.close(descriptor)
+            }
+        }
+
+        do {
+            try writeAll(data, to: descriptor)
+            try synchronizeFile(descriptor)
+            guard Darwin.close(descriptor) == 0 else {
+                descriptorIsOpen = false
+                throw CloudReplicaCheckpointStoreError.ioFailure
+            }
+            descriptorIsOpen = false
+            guard temporaryURL.path.withCString({ source in
+                url.path.withCString { destination in
+                    Darwin.rename(source, destination)
+                }
+            }) == 0 else {
+                throw CloudReplicaCheckpointStoreError.ioFailure
+            }
+            temporaryExists = false
+            destinationWasRenamed = true
+            guard try reconcileDurableItem(at: url) == .present else {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+        } catch let error as CloudReplicaCheckpointStoreError {
+            if destinationWasRenamed {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            if temporaryExists {
+                do {
+                    try removeItem(at: temporaryURL)
+                    temporaryExists = false
+                } catch {
+                    throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+                }
+            }
+            throw error
+        } catch {
+            if destinationWasRenamed {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            if temporaryExists {
+                do {
+                    try removeItem(at: temporaryURL)
+                    temporaryExists = false
+                } catch {
+                    throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+                }
+            }
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
     }
 
     func moveItem(at sourceURL: URL, to destinationURL: URL) throws {
-        try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+        let destinationDirectory = destinationURL.deletingLastPathComponent()
+        try createDirectory(at: destinationDirectory)
+        guard try reconcileDurableItem(at: sourceURL) == .present,
+              try reconcileDurableItem(at: destinationURL) == .missing else {
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+        var itemWasMoved = false
+        do {
+            let result = sourceURL.path.withCString { source in
+                destinationURL.path.withCString { destination in
+                    Darwin.rename(source, destination)
+                }
+            }
+            guard result == 0 else {
+                if errno == EXDEV {
+                    throw CloudReplicaCheckpointStoreError.ioFailure
+                }
+                throw CloudReplicaCheckpointStoreError.ioFailure
+            }
+            itemWasMoved = true
+            guard try reconcileDurableItem(at: destinationURL) == .present,
+                  try reconcileDurableItem(at: sourceURL) == .missing else {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+        } catch let error as CloudReplicaCheckpointStoreError {
+            if itemWasMoved {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            throw error
+        } catch {
+            if itemWasMoved {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
     }
 
     func removeItem(at url: URL) throws {
-        try FileManager.default.removeItem(at: url)
+        guard try reconcileDurableItem(at: url) == .present else {
+            try removeStaleRemovalTombstone(for: url)
+            return
+        }
+        if try isDirectory(at: url) {
+            try removeDirectory(at: url)
+            return
+        }
+        var itemWasRemoved = false
+        do {
+            guard url.path.withCString({ Darwin.unlink($0) }) == 0 else {
+                if errno == ENOENT {
+                    guard try reconcileDurableItem(at: url) == .missing else {
+                        throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+                    }
+                    return
+                }
+                throw CloudReplicaCheckpointStoreError.ioFailure
+            }
+            itemWasRemoved = true
+            guard try reconcileDurableItem(at: url) == .missing else {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+        } catch let error as CloudReplicaCheckpointStoreError {
+            if itemWasRemoved {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            throw error
+        } catch {
+            if itemWasRemoved {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
     }
 
     func withExclusiveLock(at url: URL, perform: () throws -> Void) throws {
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
+        try createDirectory(at: url.deletingLastPathComponent())
         let descriptor = url.path.withCString {
             Darwin.open($0, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
         }
@@ -1021,6 +1375,157 @@ struct FoundationCloudReplicaCheckpointFileSystem: CloudReplicaCheckpointFileSys
             throw CloudReplicaCheckpointStoreError.ioFailure
         }
         try perform()
+    }
+
+    private func writeAll(_ data: Data, to descriptor: Int32) throws {
+        try data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            var offset = 0
+            while offset < rawBuffer.count {
+                let written = Darwin.write(
+                    descriptor,
+                    baseAddress.advanced(by: offset),
+                    rawBuffer.count - offset
+                )
+                if written < 0, errno == EINTR {
+                    continue
+                }
+                guard written > 0 else {
+                    throw CloudReplicaCheckpointStoreError.ioFailure
+                }
+                offset += written
+            }
+        }
+    }
+
+    private func synchronizeFile(_ descriptor: Int32) throws {
+        if Darwin.fcntl(descriptor, F_FULLFSYNC) == 0 {
+            return
+        }
+        guard Darwin.fsync(descriptor) == 0 else {
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+    }
+
+    private func synchronizeItem(_ url: URL) throws {
+        let descriptor = url.path.withCString {
+            Darwin.open($0, O_RDONLY | O_NOFOLLOW)
+        }
+        guard descriptor >= 0 else {
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+        defer { _ = Darwin.close(descriptor) }
+        try synchronizeFile(descriptor)
+    }
+
+    private func standardizedURLWithinDurabilityBoundary(_ url: URL) throws -> URL {
+        guard try itemStatus(at: durabilityBoundaryURL) == .present,
+              try isDirectory(at: durabilityBoundaryURL) else {
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+        let standardizedURL = url.resolvingSymlinksInPath().standardizedFileURL
+        guard standardizedURL.pathComponents.starts(
+            with: durabilityBoundaryURL.pathComponents
+        ) else {
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+        return standardizedURL
+    }
+
+    private func synchronizeExistingDirectoryChain(startingAt directory: URL) throws {
+        var current = try standardizedURLWithinDurabilityBoundary(directory)
+        while true {
+            guard try itemStatus(at: current) == .present else {
+                throw CloudReplicaCheckpointStoreError.ioFailure
+            }
+            try synchronizeItem(current)
+            if current == durabilityBoundaryURL {
+                return
+            }
+            let parent = current.deletingLastPathComponent()
+            guard parent != current else {
+                throw CloudReplicaCheckpointStoreError.ioFailure
+            }
+            current = parent
+        }
+    }
+
+    private func isDirectory(at url: URL) throws -> Bool {
+        var metadata = stat()
+        guard url.path.withCString({ Darwin.lstat($0, &metadata) }) == 0 else {
+            if errno == ENOENT { return false }
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+        return metadata.st_mode & S_IFMT == S_IFDIR
+    }
+
+    private func removeDirectory(at url: URL) throws {
+        let tombstone = removalTombstoneURL(for: url)
+        try removeStaleRemovalTombstone(for: url)
+
+        var directoryWasRenamed = false
+        do {
+            let result = url.path.withCString { source in
+                tombstone.path.withCString { destination in
+                    Darwin.rename(source, destination)
+                }
+            }
+            guard result == 0 else {
+                if errno == ENOENT,
+                   try reconcileDurableItem(at: url) == .missing {
+                    return
+                }
+                throw CloudReplicaCheckpointStoreError.ioFailure
+            }
+            directoryWasRenamed = true
+            guard try reconcileDurableItem(at: tombstone) == .present,
+                  try reconcileDurableItem(at: url) == .missing else {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+        } catch let error as CloudReplicaCheckpointStoreError {
+            if directoryWasRenamed {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            throw error
+        } catch {
+            if directoryWasRenamed {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+
+        // The durable tombstone bounds crash residue to one fixed sibling. Its
+        // recursive cleanup is opportunistic and never changes target absence.
+        do {
+            try recursivelyRemoveDirectory(tombstone)
+            _ = try reconcileDurableItem(at: tombstone)
+        } catch {
+            // A later removal, including owner rotation's missing-target retry,
+            // retries this fixed slot.
+        }
+    }
+
+    private func removalTombstoneURL(for url: URL) -> URL {
+        let digest = SHA256.hash(data: Data(url.standardizedFileURL.path.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return url.deletingLastPathComponent().appendingPathComponent(
+            ".pocket-vector-checkpoint-remove-\(digest).tmp",
+            isDirectory: true
+        )
+    }
+
+    private func removeStaleRemovalTombstone(for url: URL) throws {
+        let tombstone = removalTombstoneURL(for: url)
+        guard try reconcileDurableItem(at: tombstone) == .present else { return }
+        do {
+            try recursivelyRemoveDirectory(tombstone)
+            guard try reconcileDurableItem(at: tombstone) == .missing else {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+        } catch {
+            throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+        }
     }
 }
 
@@ -1083,6 +1588,25 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             checkpointDigest = CloudReplicaCheckpointDigest.make(checkpoint)
         }
 
+        var acceptedHistory: CloudReplicaAcceptedHistoryV1 {
+            CloudReplicaAcceptedHistoryV1(
+                accountID: accountID,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                replicaEpoch: replicaEpoch,
+                generation: generation,
+                checkpointDigest: checkpointDigest
+            )
+        }
+
+        func matches(_ acceptedHistory: CloudReplicaAcceptedHistoryV1) -> Bool {
+            accountID == acceptedHistory.accountID
+                && configurationScopeFingerprint
+                    == acceptedHistory.configurationScopeFingerprint
+                && replicaEpoch == acceptedHistory.replicaEpoch
+                && generation == acceptedHistory.generation
+                && checkpointDigest == acceptedHistory.checkpointDigest
+        }
+
         private enum CodingKeys: String, CodingKey {
             case formatVersion
             case accountID
@@ -1132,8 +1656,8 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
     /// A single fixed-size authority record owns the current replica epoch for
     /// an account. The bounded revoked-epoch filter has no false negatives;
     /// saturation can only reject a fresh epoch, never resurrect an old one.
-    private struct ReplicaEpochAuthorityV1: Codable, Equatable {
-        static let formatVersion = 1
+    private struct ReplicaEpochAuthorityV2: Codable, Equatable {
+        static let formatVersion = 2
         static let revokedEpochFilterByteCount = 32 * 1_024
         static let revokedEpochHashCount = 7
 
@@ -1144,15 +1668,21 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
 
         let accountID: CloudAccountID
         let replicaEpoch: UUID
+        let configurationScopeFingerprint: CloudReplicaScopeFingerprint?
         let revision: UInt64
         let state: State
         let revokedEpochFilter: Data
         let checkpointHighWatermark: WatermarkV1?
         let pendingCheckpointHighWatermark: WatermarkV1?
 
-        init(active replicaEpoch: UUID, for accountID: CloudAccountID) {
+        init(
+            active replicaEpoch: UUID,
+            configurationScopeFingerprint: CloudReplicaScopeFingerprint,
+            for accountID: CloudAccountID
+        ) {
             self.accountID = accountID
             self.replicaEpoch = replicaEpoch
+            self.configurationScopeFingerprint = configurationScopeFingerprint
             revision = 1
             state = .active
             revokedEpochFilter = Data(
@@ -1163,9 +1693,32 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             pendingCheckpointHighWatermark = nil
         }
 
+        init(revoked replicaEpoch: UUID, for accountID: CloudAccountID) {
+            self.accountID = accountID
+            self.replicaEpoch = replicaEpoch
+            configurationScopeFingerprint = nil
+            revision = 1
+            state = .revoked
+            var filter = Data(
+                repeating: 0,
+                count: Self.revokedEpochFilterByteCount
+            )
+            for position in Self.filterPositions(
+                accountID: accountID,
+                epoch: replicaEpoch
+            ) {
+                let byteIndex = filter.startIndex + position / 8
+                filter[byteIndex] |= UInt8(1 << (position % 8))
+            }
+            revokedEpochFilter = filter
+            checkpointHighWatermark = nil
+            pendingCheckpointHighWatermark = nil
+        }
+
         private init(
             accountID: CloudAccountID,
             replicaEpoch: UUID,
+            configurationScopeFingerprint: CloudReplicaScopeFingerprint?,
             revision: UInt64,
             state: State,
             revokedEpochFilter: Data,
@@ -1174,6 +1727,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         ) {
             self.accountID = accountID
             self.replicaEpoch = replicaEpoch
+            self.configurationScopeFingerprint = configurationScopeFingerprint
             self.revision = revision
             self.state = state
             self.revokedEpochFilter = revokedEpochFilter
@@ -1185,6 +1739,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             case formatVersion
             case accountID
             case replicaEpoch
+            case configurationScopeFingerprint
             case revision
             case state
             case revokedEpochFilter
@@ -1200,6 +1755,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             }
             accountID = try container.decode(CloudAccountID.self, forKey: .accountID)
             replicaEpoch = try container.decode(UUID.self, forKey: .replicaEpoch)
+            configurationScopeFingerprint = try container.decodeIfPresent(
+                CloudReplicaScopeFingerprint.self,
+                forKey: .configurationScopeFingerprint
+            )
             revision = try container.decode(UInt64.self, forKey: .revision)
             state = try container.decode(State.self, forKey: .state)
             revokedEpochFilter = try container.decode(
@@ -1223,6 +1782,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             try container.encode(Self.formatVersion, forKey: .formatVersion)
             try container.encode(accountID, forKey: .accountID)
             try container.encode(replicaEpoch, forKey: .replicaEpoch)
+            try container.encodeIfPresent(
+                configurationScopeFingerprint,
+                forKey: .configurationScopeFingerprint
+            )
             try container.encode(revision, forKey: .revision)
             try container.encode(state, forKey: .state)
             try container.encode(revokedEpochFilter, forKey: .revokedEpochFilter)
@@ -1243,13 +1806,19 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 throw CloudReplicaCheckpointStoreError.invalidCheckpoint
             }
             if let checkpointHighWatermark {
-                guard checkpointHighWatermark.accountID == accountID,
+                guard let configurationScopeFingerprint,
+                      checkpointHighWatermark.accountID == accountID,
+                      checkpointHighWatermark.configurationScopeFingerprint
+                        == configurationScopeFingerprint,
                       checkpointHighWatermark.replicaEpoch == replicaEpoch else {
                     throw CloudReplicaCheckpointStoreError.invalidCheckpoint
                 }
             }
             if let pendingCheckpointHighWatermark {
-                guard pendingCheckpointHighWatermark.accountID == accountID,
+                guard let configurationScopeFingerprint,
+                      pendingCheckpointHighWatermark.accountID == accountID,
+                      pendingCheckpointHighWatermark.configurationScopeFingerprint
+                        == configurationScopeFingerprint,
                       pendingCheckpointHighWatermark.replicaEpoch == replicaEpoch else {
                     throw CloudReplicaCheckpointStoreError.invalidCheckpoint
                 }
@@ -1268,11 +1837,15 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             }
             switch state {
             case .active:
-                guard !containsRevoked(replicaEpoch) else {
+                guard configurationScopeFingerprint != nil,
+                      !containsRevoked(replicaEpoch) else {
                     throw CloudReplicaCheckpointStoreError.invalidCheckpoint
                 }
             case .revoked:
-                guard containsRevoked(replicaEpoch) else {
+                guard configurationScopeFingerprint == nil,
+                      checkpointHighWatermark == nil,
+                      pendingCheckpointHighWatermark == nil,
+                      containsRevoked(replicaEpoch) else {
                     throw CloudReplicaCheckpointStoreError.invalidCheckpoint
                 }
             }
@@ -1301,6 +1874,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             return Self(
                 accountID: accountID,
                 replicaEpoch: replicaEpoch,
+                configurationScopeFingerprint: nil,
                 revision: nextRevision,
                 state: .revoked,
                 revokedEpochFilter: filter,
@@ -1309,13 +1883,17 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             )
         }
 
-        func activating(_ newEpoch: UUID) throws -> Self {
+        func activating(
+            _ newEpoch: UUID,
+            configurationScopeFingerprint: CloudReplicaScopeFingerprint
+        ) throws -> Self {
             guard state == .revoked, !containsRevoked(newEpoch) else {
                 throw CloudReplicaCheckpointStoreError.replicaEpochRevoked
             }
             return Self(
                 accountID: accountID,
                 replicaEpoch: newEpoch,
+                configurationScopeFingerprint: configurationScopeFingerprint,
                 revision: try incrementedRevision(),
                 state: .active,
                 revokedEpochFilter: revokedEpochFilter,
@@ -1331,6 +1909,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                   watermark.accountID == accountID,
                   watermark.replicaEpoch == replicaEpoch else {
                 throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
+            }
+            guard watermark.configurationScopeFingerprint
+                == configurationScopeFingerprint else {
+                throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
             }
             if let pendingCheckpointHighWatermark {
                 guard pendingCheckpointHighWatermark == watermark else {
@@ -1353,6 +1935,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             return Self(
                 accountID: accountID,
                 replicaEpoch: replicaEpoch,
+                configurationScopeFingerprint: configurationScopeFingerprint,
                 revision: try incrementedRevision(),
                 state: state,
                 revokedEpochFilter: revokedEpochFilter,
@@ -1368,6 +1951,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                   watermark.accountID == accountID,
                   watermark.replicaEpoch == replicaEpoch else {
                 throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
+            }
+            guard watermark.configurationScopeFingerprint
+                == configurationScopeFingerprint else {
+                throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
             }
             if pendingCheckpointHighWatermark == nil,
                checkpointHighWatermark == watermark {
@@ -1385,6 +1972,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             return Self(
                 accountID: accountID,
                 replicaEpoch: replicaEpoch,
+                configurationScopeFingerprint: configurationScopeFingerprint,
                 revision: try incrementedRevision(),
                 state: state,
                 revokedEpochFilter: revokedEpochFilter,
@@ -1403,6 +1991,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             return Self(
                 accountID: accountID,
                 replicaEpoch: replicaEpoch,
+                configurationScopeFingerprint: configurationScopeFingerprint,
                 revision: try incrementedRevision(),
                 state: state,
                 revokedEpochFilter: revokedEpochFilter,
@@ -1423,6 +2012,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                   watermark.replicaEpoch == replicaEpoch else {
                 throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
             }
+            guard watermark.configurationScopeFingerprint
+                == configurationScopeFingerprint else {
+                throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
+            }
             if let pendingCheckpointHighWatermark {
                 guard pendingCheckpointHighWatermark == watermark else {
                     throw CloudReplicaCheckpointStoreError.generationCollision
@@ -1438,6 +2031,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             return Self(
                 accountID: accountID,
                 replicaEpoch: replicaEpoch,
+                configurationScopeFingerprint: configurationScopeFingerprint,
                 revision: try incrementedRevision(),
                 state: state,
                 revokedEpochFilter: revokedEpochFilter,
@@ -1517,14 +2111,18 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         self.limits = limits
     }
 
-    func activate(replicaEpoch: UUID, for accountID: CloudAccountID) throws {
+    func activate(
+        replicaEpoch: UUID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint,
+        for accountID: CloudAccountID
+    ) throws {
         let locations = locations(for: accountID)
         try withAccountLock(locations: locations) {
             let existing = try readAuthority(
                 for: accountID,
                 locations: locations
             )
-            let activated: ReplicaEpochAuthorityV1
+            let activated: ReplicaEpochAuthorityV2
             if let existing {
                 if existing.containsRevoked(replicaEpoch) {
                     throw CloudReplicaCheckpointStoreError.replicaEpochRevoked
@@ -1532,6 +2130,11 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 if existing.replicaEpoch == replicaEpoch {
                     guard existing.state == .active else {
                         throw CloudReplicaCheckpointStoreError.replicaEpochRevoked
+                    }
+                    guard existing.configurationScopeFingerprint
+                        == configurationScopeFingerprint else {
+                        throw CloudReplicaCheckpointStoreError
+                            .configurationScopeMismatch
                     }
                     activated = existing
                 } else {
@@ -1541,7 +2144,11 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                     // A completed revocation owns the old account directory.
                     // Clear it before publishing authority for the next epoch.
                     try removeAccountDirectoryIfPresent(locations)
-                    activated = try existing.activating(replicaEpoch)
+                    activated = try existing.activating(
+                        replicaEpoch,
+                        configurationScopeFingerprint:
+                            configurationScopeFingerprint
+                    )
                     try writeAuthority(activated, locations: locations)
                 }
             } else {
@@ -1549,8 +2156,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 // trusted owner. Clear that recoverable cache before publishing
                 // a new epoch, so a crash cannot bind new authority to old data.
                 try removeAccountDirectoryIfPresent(locations)
-                activated = ReplicaEpochAuthorityV1(
+                activated = ReplicaEpochAuthorityV2(
                     active: replicaEpoch,
+                    configurationScopeFingerprint:
+                        configurationScopeFingerprint,
                     for: accountID
                 )
                 try writeAuthority(activated, locations: locations)
@@ -1561,6 +2170,51 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 throw CloudReplicaCheckpointStoreError.invalidCheckpoint
             }
             activeEpochByAccount[accountID] = replicaEpoch
+        }
+    }
+
+    func resumeActiveReplicaEpoch(
+        for accountID: CloudAccountID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint
+    ) throws -> CloudReplicaEpochResumeResult? {
+        let locations = locations(for: accountID)
+        return try withAccountLock(locations: locations) {
+            let authority = try readAuthority(
+                for: accountID,
+                locations: locations
+            )
+            if let rememberedEpoch = activeEpochByAccount[accountID] {
+                guard let authority else {
+                    throw CloudReplicaCheckpointStoreError.replicaEpochNotActive
+                }
+                if authority.containsRevoked(rememberedEpoch) {
+                    throw CloudReplicaCheckpointStoreError.replicaEpochRevoked
+                }
+                guard authority.state == .active,
+                      authority.replicaEpoch == rememberedEpoch else {
+                    throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
+                }
+                guard authority.configurationScopeFingerprint
+                    == configurationScopeFingerprint else {
+                    throw CloudReplicaCheckpointStoreError
+                        .configurationScopeMismatch
+                }
+            }
+            guard let authority, authority.state == .active else {
+                return nil
+            }
+            guard authority.configurationScopeFingerprint
+                == configurationScopeFingerprint else {
+                throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
+            }
+            activeEpochByAccount[accountID] = authority.replicaEpoch
+            return CloudReplicaEpochResumeResult(
+                replicaEpoch: authority.replicaEpoch,
+                acceptedHistory:
+                    authority.checkpointHighWatermark?.acceptedHistory,
+                hasDurableCheckpointIntent:
+                    authority.pendingCheckpointHighWatermark != nil
+            )
         }
     }
 
@@ -1589,19 +2243,26 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                         throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
                     }
                 }
+                if let authority, authority.state == .active {
+                    guard authority.configurationScopeFingerprint
+                        == configurationScopeFingerprint else {
+                        throw CloudReplicaCheckpointStoreError
+                            .configurationScopeMismatch
+                    }
+                }
                 // Discovery remains available to a fresh store with no
                 // remembered epoch. A stale activated store fails above before
                 // it can create, quarantine, or repair account-local files.
                 try fileSystem.createDirectory(at: locations.accountDirectory)
                 var quarantinedCount = 0
-                let watermarkState = validatedWatermark(
+                let watermarkState = try validatedWatermark(
                     at: locations.watermark,
                     accountID: accountID,
                     fingerprint: configurationScopeFingerprint,
                     locations: locations,
                     quarantinedCount: &quarantinedCount
                 )
-                let primary = validatedCopy(
+                let primary = try validatedCopy(
                     at: locations.primary,
                     source: .primary,
                     accountID: accountID,
@@ -1609,7 +2270,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                     locations: locations,
                     quarantinedCount: &quarantinedCount
                 )
-                let backup = validatedCopy(
+                let backup = try validatedCopy(
                     at: locations.backup,
                     source: .backup,
                     accountID: accountID,
@@ -1629,7 +2290,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 case let .valid(observedWatermark):
                     if let durableHighWatermark,
                        observedWatermark != durableHighWatermark {
-                        if quarantine(locations.watermark, locations: locations) {
+                        if try quarantine(locations.watermark, locations: locations) {
                             quarantinedCount += 1
                         }
                         resolutionWatermark = durableHighWatermark
@@ -1651,7 +2312,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                     resolutionWatermark = durableHighWatermark
                 }
 
-                var winner = resolve(
+                var winner = try resolve(
                     primary: primary,
                     backup: backup,
                     watermark: resolutionWatermark,
@@ -1666,7 +2327,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                    let authority,
                    let pendingHighWatermark,
                    let acceptedHighWatermark,
-                   let acceptedWinner = resolve(
+                   let acceptedWinner = try resolve(
                        primary: primary,
                        backup: backup,
                        watermark: acceptedHighWatermark,
@@ -1722,7 +2383,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
 
                 let checkpoint = winner.envelope.checkpoint
                 let authorityRejectsCheckpoint = resolvedAuthority.map {
-                    $0.state != .active || $0.replicaEpoch != checkpoint.replicaEpoch
+                    $0.state != .active
+                        || $0.replicaEpoch != checkpoint.replicaEpoch
+                        || $0.configurationScopeFingerprint
+                            != checkpoint.configurationScopeFingerprint
                 } ?? false
                 let isWrongActiveEpoch = activeEpochByAccount[accountID].map {
                     $0 != checkpoint.replicaEpoch
@@ -1736,12 +2400,12 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                             quarantinedFileCount: quarantinedCount
                         )
                     }
-                    quarantineAll(
+                    try quarantineAll(
                         [primary, backup].compactMap { $0 },
                         locations: locations,
                         quarantinedCount: &quarantinedCount
                     )
-                    if quarantine(locations.watermark, locations: locations) {
+                    if try quarantine(locations.watermark, locations: locations) {
                         quarantinedCount += 1
                     }
                     return CloudReplicaCheckpointLoadResult(
@@ -1752,8 +2416,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 }
 
                 let baseAuthority = resolvedAuthority
-                    ?? ReplicaEpochAuthorityV1(
+                    ?? ReplicaEpochAuthorityV2(
                         active: checkpoint.replicaEpoch,
+                        configurationScopeFingerprint:
+                            checkpoint.configurationScopeFingerprint,
                         for: accountID
                     )
                 let canonicalWatermark = WatermarkV1(checkpoint: checkpoint)
@@ -1771,9 +2437,9 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 }
 
                 let watermarkData = try encode(canonicalWatermark)
-                try fileSystem.writeAtomically(watermarkData, to: locations.watermark)
-                try fileSystem.writeAtomically(winner.data, to: locations.primary)
-                try fileSystem.writeAtomically(winner.data, to: locations.backup)
+                try writeExactData(watermarkData, to: locations.watermark)
+                try writeExactData(winner.data, to: locations.primary)
+                try writeExactData(winner.data, to: locations.backup)
                 return CloudReplicaCheckpointLoadResult(
                     checkpoint: checkpoint,
                     source: winner.source,
@@ -1784,6 +2450,95 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             } catch {
                 throw CloudReplicaCheckpointStoreError.ioFailure
             }
+        }
+    }
+
+    func observeCurrentCheckpoint(
+        for accountID: CloudAccountID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint,
+        replicaEpoch: UUID,
+        at date: Date
+    ) throws -> CloudReplicaCheckpointObservationV1 {
+        let locations = locations(for: accountID)
+        try withAccountLock(locations: locations) {
+            guard let authority = try readAuthority(
+                for: accountID,
+                locations: locations
+            ) else {
+                throw CloudReplicaCheckpointStoreError.replicaEpochNotActive
+            }
+            if authority.containsRevoked(replicaEpoch) {
+                throw CloudReplicaCheckpointStoreError.replicaEpochRevoked
+            }
+            guard authority.state == .active,
+                  authority.replicaEpoch == replicaEpoch else {
+                throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
+            }
+            guard authority.configurationScopeFingerprint
+                == configurationScopeFingerprint else {
+                throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
+            }
+        }
+        let loaded = try load(
+            for: accountID,
+            configurationScopeFingerprint: configurationScopeFingerprint,
+            at: date
+        )
+        return try withAccountLock(locations: locations) {
+            guard let authority = try readAuthority(
+                for: accountID,
+                locations: locations
+            ) else {
+                throw CloudReplicaCheckpointStoreError.replicaEpochNotActive
+            }
+            if authority.containsRevoked(replicaEpoch) {
+                throw CloudReplicaCheckpointStoreError.replicaEpochRevoked
+            }
+            guard authority.state == .active,
+                  authority.replicaEpoch == replicaEpoch else {
+                throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
+            }
+            guard authority.configurationScopeFingerprint
+                == configurationScopeFingerprint else {
+                throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
+            }
+            guard authority.pendingCheckpointHighWatermark == nil else {
+                throw CloudReplicaCheckpointStoreError.checkpointPublicationPending
+            }
+
+            let state: CloudReplicaCheckpointObservationStateV1
+            if let checkpoint = loaded.checkpoint {
+                guard checkpoint.accountID == accountID,
+                      checkpoint.configurationScopeFingerprint
+                        == configurationScopeFingerprint,
+                      checkpoint.replicaEpoch == replicaEpoch else {
+                    throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+                }
+                let exactWatermark = WatermarkV1(checkpoint: checkpoint)
+                guard authority.checkpointHighWatermark == exactWatermark else {
+                    throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+                }
+                state = .checkpoint(
+                    ProfileHydrationCheckpointIdentityV1(checkpoint: checkpoint)
+                )
+            } else {
+                guard authority.checkpointHighWatermark == nil,
+                      try fileSystem.reconcileDurableItem(at: locations.watermark)
+                        == .missing,
+                      try fileSystem.reconcileDurableItem(at: locations.primary)
+                        == .missing,
+                      try fileSystem.reconcileDurableItem(at: locations.backup)
+                        == .missing else {
+                    throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+                }
+                state = .absent
+            }
+            return CloudReplicaCheckpointObservationV1(
+                accountID: accountID,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                replicaEpoch: replicaEpoch,
+                state: state
+            )
         }
     }
 
@@ -1815,17 +2570,22 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                       durableAuthority.replicaEpoch == checkpoint.replicaEpoch else {
                     throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
                 }
+                guard durableAuthority.configurationScopeFingerprint
+                    == checkpoint.configurationScopeFingerprint else {
+                    throw CloudReplicaCheckpointStoreError
+                        .configurationScopeMismatch
+                }
 
                 try fileSystem.createDirectory(at: locations.accountDirectory)
                 var quarantinedCount = 0
-                var watermarkState = validatedWatermark(
+                var watermarkState = try validatedWatermark(
                     at: locations.watermark,
                     accountID: checkpoint.accountID,
                     fingerprint: checkpoint.configurationScopeFingerprint,
                     locations: locations,
                     quarantinedCount: &quarantinedCount
                 )
-                var primary = validatedCopy(
+                var primary = try validatedCopy(
                     at: locations.primary,
                     source: .primary,
                     accountID: checkpoint.accountID,
@@ -1833,7 +2593,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                     locations: locations,
                     quarantinedCount: &quarantinedCount
                 )
-                var backup = validatedCopy(
+                var backup = try validatedCopy(
                     at: locations.backup,
                     source: .backup,
                     accountID: checkpoint.accountID,
@@ -1850,7 +2610,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
 
                 if sameGenerationDiverges(primary, backup) {
                     if durableHighWatermark != nil {
-                        quarantineAll(
+                        try quarantineAll(
                             [primary, backup].compactMap { $0 },
                             locations: locations,
                             quarantinedCount: &quarantinedCount
@@ -1870,7 +2630,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 case let .valid(observedWatermark):
                     if let durableHighWatermark,
                        observedWatermark != durableHighWatermark {
-                        _ = quarantine(locations.watermark, locations: locations)
+                        _ = try quarantine(locations.watermark, locations: locations)
                         resolutionWatermark = durableHighWatermark
                     } else {
                         resolutionWatermark = observedWatermark
@@ -1886,7 +2646,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                     }
                 }
 
-                var current = resolve(
+                var current = try resolve(
                     primary: primary,
                     backup: backup,
                     watermark: resolutionWatermark,
@@ -1988,9 +2748,9 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 }
 
                 try fileSystem.createDirectory(at: locations.accountDirectory)
-                try fileSystem.writeAtomically(watermarkData, to: locations.watermark)
-                try fileSystem.writeAtomically(envelopeData, to: locations.primary)
-                try fileSystem.writeAtomically(envelopeData, to: locations.backup)
+                try writeExactData(watermarkData, to: locations.watermark)
+                try writeExactData(envelopeData, to: locations.primary)
+                try writeExactData(envelopeData, to: locations.backup)
 
                 // At least one matching replica has now been durably written;
                 // only then may pending become the accepted high watermark.
@@ -2017,6 +2777,149 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         }
     }
 
+    /// Publishes generation N+1 reconstructed from a nil-cursor CloudKit full
+    /// snapshot when the sealed token proves generation N was durably accepted
+    /// but no usable local generation-N cache remains. The upstream fetch must
+    /// use `.requireExisting`; this method is never a bootstrap-create path.
+    func saveReconstructedFullSnapshot(
+        _ checkpoint: CloudReplicaCheckpointV1,
+        replacing acceptedHistory: CloudReplicaAcceptedHistoryV1,
+        at date: Date
+    ) throws {
+        do {
+            try checkpoint.validate(limits: limits)
+        } catch {
+            throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+        }
+        guard checkpoint.accountID == acceptedHistory.accountID,
+              checkpoint.configurationScopeFingerprint
+                == acceptedHistory.configurationScopeFingerprint,
+              checkpoint.replicaEpoch == acceptedHistory.replicaEpoch else {
+            throw CloudReplicaCheckpointStoreError.acceptedHistoryMismatch
+        }
+        let (expectedGeneration, generationOverflow) = acceptedHistory.generation
+            .addingReportingOverflow(1)
+        guard !generationOverflow,
+              checkpoint.generation == expectedGeneration else {
+            throw CloudReplicaCheckpointStoreError.generationGap
+        }
+
+        let locations = locations(for: checkpoint.accountID)
+        try withAccountLock(locations: locations) {
+            do {
+                guard let activeEpoch = activeEpochByAccount[checkpoint.accountID] else {
+                    throw CloudReplicaCheckpointStoreError.replicaEpochNotActive
+                }
+                guard activeEpoch == checkpoint.replicaEpoch else {
+                    throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
+                }
+                guard let authority = try readAuthority(
+                    for: checkpoint.accountID,
+                    locations: locations
+                ) else {
+                    throw CloudReplicaCheckpointStoreError.replicaEpochNotActive
+                }
+                if authority.containsRevoked(checkpoint.replicaEpoch) {
+                    throw CloudReplicaCheckpointStoreError.replicaEpochRevoked
+                }
+                guard authority.state == .active,
+                      authority.replicaEpoch == checkpoint.replicaEpoch else {
+                    throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
+                }
+                guard authority.configurationScopeFingerprint
+                    == checkpoint.configurationScopeFingerprint else {
+                    throw CloudReplicaCheckpointStoreError
+                        .configurationScopeMismatch
+                }
+                guard let acceptedWatermark = authority.checkpointHighWatermark,
+                      acceptedWatermark.matches(acceptedHistory) else {
+                    throw CloudReplicaCheckpointStoreError.acceptedHistoryMismatch
+                }
+
+                let candidateWatermark = WatermarkV1(checkpoint: checkpoint)
+                if let pending = authority.pendingCheckpointHighWatermark,
+                   pending != candidateWatermark {
+                    throw CloudReplicaCheckpointStoreError
+                        .checkpointPublicationPending
+                }
+
+                try fileSystem.createDirectory(at: locations.accountDirectory)
+                var quarantinedCount = 0
+                let primary = try validatedCopy(
+                    at: locations.primary,
+                    source: .primary,
+                    accountID: checkpoint.accountID,
+                    fingerprint: checkpoint.configurationScopeFingerprint,
+                    locations: locations,
+                    quarantinedCount: &quarantinedCount
+                )
+                let backup = try validatedCopy(
+                    at: locations.backup,
+                    source: .backup,
+                    accountID: checkpoint.accountID,
+                    fingerprint: checkpoint.configurationScopeFingerprint,
+                    locations: locations,
+                    quarantinedCount: &quarantinedCount
+                )
+                let usableAcceptedCheckpoint = try resolve(
+                    primary: primary,
+                    backup: backup,
+                    watermark: acceptedWatermark,
+                    preserving: authority.pendingCheckpointHighWatermark,
+                    locations: locations,
+                    quarantinedCount: &quarantinedCount
+                )
+                guard usableAcceptedCheckpoint == nil else {
+                    throw CloudReplicaCheckpointStoreError
+                        .acceptedCheckpointStillAvailable
+                }
+
+                let envelopeData: Data
+                let watermarkData: Data
+                do {
+                    envelopeData = try encode(
+                        EnvelopeV1(savedAt: date, checkpoint: checkpoint)
+                    )
+                    watermarkData = try encode(candidateWatermark)
+                } catch {
+                    throw CloudReplicaCheckpointStoreError.encodingFailure
+                }
+
+                let publishingAuthority = try authority
+                    .beginningCheckpointPublication(candidateWatermark)
+                if publishingAuthority != authority {
+                    try writeAuthority(publishingAuthority, locations: locations)
+                }
+                guard try readAuthority(
+                    for: checkpoint.accountID,
+                    locations: locations
+                ) == publishingAuthority else {
+                    throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+                }
+
+                try writeExactData(watermarkData, to: locations.watermark)
+                try writeExactData(envelopeData, to: locations.primary)
+                try writeExactData(envelopeData, to: locations.backup)
+
+                let committedAuthority = try publishingAuthority
+                    .acceptingPublishedCheckpoint(candidateWatermark)
+                if committedAuthority != publishingAuthority {
+                    try writeAuthority(committedAuthority, locations: locations)
+                }
+                guard try readAuthority(
+                    for: checkpoint.accountID,
+                    locations: locations
+                ) == committedAuthority else {
+                    throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
+                }
+            } catch let error as CloudReplicaCheckpointStoreError {
+                throw error
+            } catch {
+                throw CloudReplicaCheckpointStoreError.ioFailure
+            }
+        }
+    }
+
     func remove(for accountID: CloudAccountID, revoking replicaEpoch: UUID) throws {
         let accountLocations = locations(for: accountID)
         try withAccountLock(locations: accountLocations) {
@@ -2024,7 +2927,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 for: accountID,
                 locations: accountLocations
             )
-            let revoked: ReplicaEpochAuthorityV1
+            let revoked: ReplicaEpochAuthorityV2
             if let existing {
                 guard existing.replicaEpoch == replicaEpoch else {
                     if existing.containsRevoked(replicaEpoch) {
@@ -2034,10 +2937,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 }
                 revoked = try existing.revokingCurrentEpoch()
             } else {
-                revoked = try ReplicaEpochAuthorityV1(
-                    active: replicaEpoch,
+                revoked = ReplicaEpochAuthorityV2(
+                    revoked: replicaEpoch,
                     for: accountID
-                ).revokingCurrentEpoch()
+                )
             }
 
             if existing != revoked {
@@ -2123,14 +3026,17 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
     private func readAuthority(
         for accountID: CloudAccountID,
         locations: Locations
-    ) throws -> ReplicaEpochAuthorityV1? {
-        guard fileSystem.fileExists(at: locations.authority) else { return nil }
+    ) throws -> ReplicaEpochAuthorityV2? {
+        guard try fileSystem.reconcileDurableItem(at: locations.authority)
+            == .present else {
+            return nil
+        }
         do {
             guard try fileSystem.fileSize(at: locations.authority) <= 64 * 1_024 else {
                 throw CloudReplicaCheckpointStoreError.invalidCheckpoint
             }
             let authority = try JSONDecoder().decode(
-                ReplicaEpochAuthorityV1.self,
+                ReplicaEpochAuthorityV2.self,
                 from: fileSystem.read(from: locations.authority)
             )
             guard authority.accountID == accountID else {
@@ -2145,7 +3051,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
     }
 
     private func writeAuthority(
-        _ authority: ReplicaEpochAuthorityV1,
+        _ authority: ReplicaEpochAuthorityV2,
         locations: Locations
     ) throws {
         let data: Data
@@ -2158,12 +3064,14 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             throw CloudReplicaCheckpointStoreError.invalidCheckpoint
         }
         try fileSystem.createDirectory(at: locations.authorityDirectory)
-        try fileSystem.writeAtomically(data, to: locations.authority)
+        try writeExactData(data, to: locations.authority)
     }
 
     private func removeAccountDirectoryIfPresent(_ locations: Locations) throws {
-        guard fileSystem.fileExists(at: locations.accountDirectory) else { return }
-        try fileSystem.removeItem(at: locations.accountDirectory)
+        // `removeItem` is intentionally called even when the target is absent:
+        // its target-bound tombstone retry must clear residue left after a
+        // prior durable rename and interrupted recursive cleanup.
+        try removeDurablyReconciling(at: locations.accountDirectory)
     }
 
     private func validatedCopy(
@@ -2173,15 +3081,17 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         fingerprint: CloudReplicaScopeFingerprint,
         locations: Locations,
         quarantinedCount: inout Int
-    ) -> StoredCopy? {
-        guard fileSystem.fileExists(at: url) else { return nil }
+    ) throws -> StoredCopy? {
+        guard try fileSystem.reconcileDurableItem(at: url) == .present else {
+            return nil
+        }
         do {
             let size = try fileSystem.fileSize(at: url)
             guard size >= 0 else {
                 throw CloudReplicaCheckpointStoreError.invalidCheckpoint
             }
             if size > maximumEncodedCheckpointFileSize {
-                _ = discard(url)
+                _ = try discard(url)
                 return nil
             }
             let data = try fileSystem.read(from: url)
@@ -2198,8 +3108,19 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 envelope: envelope,
                 checkpointDigest: CloudReplicaCheckpointDigest.make(envelope.checkpoint)
             )
+        } catch let error as CloudReplicaCheckpointStoreError {
+            switch error {
+            case .ioFailure, .durabilityOutcomeUnknown:
+                throw error
+            default:
+                break
+            }
+            if try quarantine(url, locations: locations) {
+                quarantinedCount += 1
+            }
+            return nil
         } catch {
-            if quarantine(url, locations: locations) {
+            if try quarantine(url, locations: locations) {
                 quarantinedCount += 1
             }
             return nil
@@ -2212,11 +3133,12 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         fingerprint: CloudReplicaScopeFingerprint,
         locations: Locations,
         quarantinedCount: inout Int
-    ) -> WatermarkReadState {
-        guard fileSystem.fileExists(at: url) else {
+    ) throws -> WatermarkReadState {
+        guard try fileSystem.reconcileDurableItem(at: url) == .present else {
             let priorInvalidWatermark = locations.quarantineDirectory
                 .appendingPathComponent("checkpoint-watermark-corrupt.json")
-            return fileSystem.fileExists(at: priorInvalidWatermark)
+            return try fileSystem.reconcileDurableItem(at: priorInvalidWatermark)
+                == .present
                 ? .invalid
                 : .absent
         }
@@ -2226,7 +3148,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 throw CloudReplicaCheckpointStoreError.invalidCheckpoint
             }
             if size > 64 * 1_024 {
-                _ = discard(url)
+                _ = try discard(url)
                 return .invalid
             }
             let watermark = try JSONDecoder().decode(
@@ -2238,8 +3160,19 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 throw CloudReplicaCheckpointStoreError.invalidCheckpoint
             }
             return .valid(watermark)
+        } catch let error as CloudReplicaCheckpointStoreError {
+            switch error {
+            case .ioFailure, .durabilityOutcomeUnknown:
+                throw error
+            default:
+                break
+            }
+            if try quarantine(url, locations: locations) {
+                quarantinedCount += 1
+            }
+            return .invalid
         } catch {
-            if quarantine(url, locations: locations) {
+            if try quarantine(url, locations: locations) {
                 quarantinedCount += 1
             }
             return .invalid
@@ -2249,9 +3182,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
     private func removeWatermarkEvidence(_ locations: Locations) throws {
         let corruptWatermark = locations.quarantineDirectory
             .appendingPathComponent("checkpoint-watermark-corrupt.json")
-        for url in [locations.watermark, corruptWatermark]
-            where fileSystem.fileExists(at: url) {
-            try fileSystem.removeItem(at: url)
+        for url in [locations.watermark, corruptWatermark] {
+            if try fileSystem.reconcileDurableItem(at: url) == .present {
+                try removeDurablyReconciling(at: url)
+            }
         }
     }
 
@@ -2262,9 +3196,9 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         preserving preservedWatermark: WatermarkV1? = nil,
         locations: Locations,
         quarantinedCount: inout Int
-    ) -> StoredCopy? {
+    ) throws -> StoredCopy? {
         if sameGenerationDiverges(primary, backup) {
-            quarantineAll(
+            try quarantineAll(
                 [primary, backup].compactMap { $0 },
                 locations: locations,
                 quarantinedCount: &quarantinedCount
@@ -2274,7 +3208,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
 
         guard let watermark else {
             guard let primary, let backup else {
-                quarantineAll(
+                try quarantineAll(
                     [primary, backup].compactMap { $0 },
                     locations: locations,
                     quarantinedCount: &quarantinedCount
@@ -2284,7 +3218,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             let primaryCheckpoint = primary.envelope.checkpoint
             let backupCheckpoint = backup.envelope.checkpoint
             guard primaryCheckpoint.replicaEpoch == backupCheckpoint.replicaEpoch else {
-                quarantineAll(
+                try quarantineAll(
                     [primary, backup],
                     locations: locations,
                     quarantinedCount: &quarantinedCount
@@ -2301,13 +3235,13 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                     winner = backup
                     stale = primary
                 }
-                if quarantine(stale.url, locations: locations) {
+                if try quarantine(stale.url, locations: locations) {
                     quarantinedCount += 1
                 }
                 return winner
             }
             guard primaryCheckpoint == backupCheckpoint else {
-                quarantineAll(
+                try quarantineAll(
                     [primary, backup],
                     locations: locations,
                     quarantinedCount: &quarantinedCount
@@ -2327,13 +3261,13 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 // accepted copies in place. Retain them so an exact retry can
                 // complete without destroying the last accepted generation.
                 continue
-            } else if quarantine(storedCopy.url, locations: locations) {
+            } else if try quarantine(storedCopy.url, locations: locations) {
                 quarantinedCount += 1
             }
         }
         if eligible.count == 2,
            eligible[0].envelope.checkpoint != eligible[1].envelope.checkpoint {
-            quarantineAll(
+            try quarantineAll(
                 eligible,
                 locations: locations,
                 quarantinedCount: &quarantinedCount
@@ -2369,9 +3303,12 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         _ copies: [StoredCopy],
         locations: Locations,
         quarantinedCount: inout Int
-    ) {
-        for copy in copies where fileSystem.fileExists(at: copy.url) {
-            if quarantine(copy.url, locations: locations) {
+    ) throws {
+        for copy in copies {
+            guard try fileSystem.reconcileDurableItem(at: copy.url) == .present else {
+                continue
+            }
+            if try quarantine(copy.url, locations: locations) {
                 quarantinedCount += 1
             }
         }
@@ -2380,33 +3317,43 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
     /// Quarantine is deliberately best-effort. Fixed source-specific slots cap
     /// retained payloads at primary, backup, and watermark regardless of how
     /// often corruption is encountered.
-    private func quarantine(_ url: URL, locations: Locations) -> Bool {
+    private func quarantine(_ url: URL, locations: Locations) throws -> Bool {
+        guard try fileSystem.reconcileDurableItem(at: url) == .present else {
+            return false
+        }
+        let slot: String
+        if url == locations.primary {
+            slot = "checkpoint-primary-corrupt.json"
+        } else if url == locations.backup {
+            slot = "checkpoint-backup-corrupt.json"
+        } else {
+            slot = "checkpoint-watermark-corrupt.json"
+        }
+        let destination = locations.quarantineDirectory.appendingPathComponent(slot)
+        let destinationStatus = try fileSystem.reconcileDurableItem(at: destination)
         do {
             try fileSystem.createDirectory(at: locations.quarantineDirectory)
-            let slot: String
-            if url == locations.primary {
-                slot = "checkpoint-primary-corrupt.json"
-            } else if url == locations.backup {
-                slot = "checkpoint-backup-corrupt.json"
-            } else {
-                slot = "checkpoint-watermark-corrupt.json"
+            if destinationStatus == .present {
+                try removeDurablyReconciling(at: destination)
             }
-            let destination = locations.quarantineDirectory.appendingPathComponent(slot)
-            if fileSystem.fileExists(at: destination) {
-                try fileSystem.removeItem(at: destination)
-            }
-            try fileSystem.moveItem(at: url, to: destination)
+            try moveDurablyReconciling(at: url, to: destination)
             return true
+        } catch CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown {
+            throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
         } catch {
             return false
         }
     }
 
-    private func discard(_ url: URL) -> Bool {
+    private func discard(_ url: URL) throws -> Bool {
+        guard try fileSystem.reconcileDurableItem(at: url) == .present else {
+            return false
+        }
         do {
-            guard fileSystem.fileExists(at: url) else { return false }
-            try fileSystem.removeItem(at: url)
+            try removeDurablyReconciling(at: url)
             return true
+        } catch CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown {
+            throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
         } catch {
             return false
         }
@@ -2415,6 +3362,62 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
     private var maximumEncodedCheckpointFileSize: Int {
         let (maximum, overflow) = limits.maxTotalBytes.multipliedReportingOverflow(by: 8)
         return overflow ? Int.max : maximum
+    }
+
+    private func writeExactData(_ data: Data, to url: URL) throws {
+        do {
+            try fileSystem.writeAtomically(data, to: url)
+        } catch CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown {
+            guard try confirmsExactData(data, at: url) else {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            return
+        }
+        guard try confirmsExactData(data, at: url) else {
+            throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+        }
+    }
+
+    private func confirmsExactData(_ expected: Data, at url: URL) throws -> Bool {
+        guard try fileSystem.reconcileDurableItem(at: url) == .present,
+              try fileSystem.fileSize(at: url) == expected.count else {
+            return false
+        }
+        return try fileSystem.read(from: url) == expected
+    }
+
+    private func removeDurablyReconciling(at url: URL) throws {
+        do {
+            try fileSystem.removeItem(at: url)
+        } catch CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown {
+            guard try fileSystem.reconcileDurableItem(at: url) == .missing else {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            return
+        }
+        guard try fileSystem.reconcileDurableItem(at: url) == .missing else {
+            throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+        }
+    }
+
+    private func moveDurablyReconciling(
+        at sourceURL: URL,
+        to destinationURL: URL
+    ) throws {
+        do {
+            try fileSystem.moveItem(at: sourceURL, to: destinationURL)
+        } catch CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown {
+            guard try fileSystem.reconcileDurableItem(at: sourceURL) == .missing,
+                  try fileSystem.reconcileDurableItem(at: destinationURL)
+                    == .present else {
+                throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+            }
+            return
+        }
+        guard try fileSystem.reconcileDurableItem(at: sourceURL) == .missing,
+              try fileSystem.reconcileDurableItem(at: destinationURL) == .present else {
+            throw CloudReplicaCheckpointStoreError.durabilityOutcomeUnknown
+        }
     }
 
     private func encode<T: Encodable>(_ value: T) throws -> Data {

@@ -161,10 +161,16 @@ struct FoundationProfileHydrationFileSystem: ProfileHydrationFileSystem {
     }
 
     func removeItemDurably(at url: URL) throws {
-        guard try itemStatus(at: url) == .present else { return }
+        let directory = url.deletingLastPathComponent()
         do {
-            try FileManager.default.removeItem(at: url)
-            try synchronizeDirectory(url.deletingLastPathComponent())
+            if try itemStatus(at: url) == .present {
+                try FileManager.default.removeItem(at: url)
+            }
+            // Re-sync even an already-absent entry. A prior removal may have
+            // completed before its directory sync reported failure, and only a
+            // fresh parent sync can turn that ambiguous outcome into a durable
+            // absence observation.
+            try synchronizeDirectory(directory)
         } catch let error as ProfileHydrationFileSystemError {
             throw error
         } catch {
@@ -302,6 +308,10 @@ enum ProfileHydrationTransactionStoreError: Error, Equatable, Sendable {
     case bindingMismatch(ProfileHydrationBindingMismatch)
     case transactionMismatch
     case checkpointConfirmationMismatch
+    case sourceOnlyAbortRejected(
+        primary: ProfileHydrationProfileCopyState,
+        backup: ProfileHydrationProfileCopyState
+    )
     case sourceProfileCASMismatch(ProfileHydrationProfileCopyState)
     case backupNormalizationRejected(ProfileHydrationProfileCopyState)
     case profileCopiesMissing
@@ -389,10 +399,23 @@ struct ProfileHydrationFileTransactionStore: Sendable {
     ) throws -> ProfileHydrationJournalWriteResult {
         try withLock {
             let canonicalData = try validatedCanonicalData(for: journal)
-            let existing = try resolveJournal(expected: nil, repair: true)
-            if let existing {
-                guard existing.data == canonicalData else {
+            let preflight = try resolveJournal(expected: nil, repair: false)
+            if let preflight {
+                guard preflight.data == canonicalData else {
                     throw ProfileHydrationTransactionStoreError.journalAlreadyExists
+                }
+                let preflightInspection = try inspect(
+                    journal: preflight.journal,
+                    repair: preflight.repair
+                )
+                try ensureInstallable(preflightInspection)
+
+                guard let existing = try resolveJournal(
+                    expected: nil,
+                    repair: true
+                ), existing.data == preflight.data else {
+                    throw ProfileHydrationTransactionStoreError
+                        .journalCopiesDisagree
                 }
                 let inspection = try inspect(
                     journal: existing.journal,
@@ -448,7 +471,10 @@ struct ProfileHydrationFileTransactionStore: Sendable {
         expected: ProfileHydrationExpectedBinding
     ) throws -> ProfileHydrationRecoveryInspection? {
         try withLock {
-            guard let resolved = try resolveJournal(expected: expected, repair: true) else {
+            guard let resolved = try resolveJournal(
+                expected: expected,
+                repair: false
+            ) else {
                 return nil
             }
             return try inspect(journal: resolved.journal, repair: resolved.repair)
@@ -457,16 +483,51 @@ struct ProfileHydrationFileTransactionStore: Sendable {
 
     func installCandidate(
         transactionID: UUID,
-        expected: ProfileHydrationExpectedBinding
+        expected: ProfileHydrationExpectedBinding,
+        confirmedTargetCheckpointObservation: CloudReplicaCheckpointObservationV1
     ) throws -> ProfileHydrationCandidateInstallResult {
         try withLock {
-            guard let resolved = try resolveJournal(expected: expected, repair: true) else {
+            guard let preflight = try resolveJournal(
+                expected: expected,
+                repair: false
+            ) else {
                 throw ProfileHydrationTransactionStoreError.noValidJournalCopy
+            }
+            guard preflight.journal.transactionID == transactionID else {
+                throw ProfileHydrationTransactionStoreError.transactionMismatch
+            }
+            guard preflight.journal.checkpointRelationship(
+                to: confirmedTargetCheckpointObservation
+            ) == .target else {
+                throw ProfileHydrationTransactionStoreError
+                    .checkpointConfirmationMismatch
+            }
+            let preflightInspection = try inspect(
+                journal: preflight.journal,
+                repair: preflight.repair
+            )
+            try ensureInstallable(preflightInspection)
+
+            guard let resolved = try resolveJournal(
+                expected: expected,
+                repair: true
+            ), resolved.data == preflight.data else {
+                throw ProfileHydrationTransactionStoreError
+                    .journalCopiesDisagree
             }
             guard resolved.journal.transactionID == transactionID else {
                 throw ProfileHydrationTransactionStoreError.transactionMismatch
             }
-            let before = try inspect(journal: resolved.journal, repair: resolved.repair)
+            guard resolved.journal.checkpointRelationship(
+                to: confirmedTargetCheckpointObservation
+            ) == .target else {
+                throw ProfileHydrationTransactionStoreError
+                    .checkpointConfirmationMismatch
+            }
+            let before = try inspect(
+                journal: resolved.journal,
+                repair: resolved.repair
+            )
             try ensureInstallable(before)
             if before.installationState == .candidate {
                 return ProfileHydrationCandidateInstallResult(
@@ -513,24 +574,85 @@ struct ProfileHydrationFileTransactionStore: Sendable {
         }
     }
 
-    /// The caller supplies the identity it independently observed as committed
-    /// by the checkpoint store. No cleanup occurs unless it exactly matches the
-    /// immutable target bound into the journal.
+    /// Abandons a prepared hydration only while the independently confirmed
+    /// checkpoint is still the journal's exact predecessor and both profile
+    /// copies remain the exact source bytes. No missing or divergent profile
+    /// copy is repaired: ambiguous state retains the complete barrier.
+    /// When no journal or quarantine evidence exists, `false` is an
+    /// unauthenticated, non-destructive durable-absence reconciliation; there
+    /// is no journal against which transaction, binding, or observation inputs
+    /// could be authenticated.
     @discardableResult
-    func removeJournalAfterCheckpointConfirmation(
+    func abortHydrationAfterPredecessorConfirmation(
         transactionID: UUID,
         expected: ProfileHydrationExpectedBinding,
-        committedCheckpointIdentity: ProfileHydrationCheckpointIdentityV1
+        confirmedPredecessorCheckpointObservation: CloudReplicaCheckpointObservationV1
     ) throws -> Bool {
         try withLock {
-            guard let resolved = try resolveJournal(expected: expected, repair: true) else {
+            guard let resolved = try resolveJournal(
+                expected: expected,
+                repair: false
+            ) else {
+                try removeDurableBarrier()
                 return false
             }
             guard resolved.journal.transactionID == transactionID else {
                 throw ProfileHydrationTransactionStoreError.transactionMismatch
             }
-            guard resolved.journal.targetCheckpointIdentity
-                == committedCheckpointIdentity else {
+            guard resolved.journal.checkpointRelationship(
+                to: confirmedPredecessorCheckpointObservation
+            ) == .predecessor else {
+                throw ProfileHydrationTransactionStoreError
+                    .checkpointConfirmationMismatch
+            }
+
+            let primary = try profileCopyState(
+                at: locations.profilePrimaryURL,
+                journal: resolved.journal
+            )
+            let backup = try profileCopyState(
+                at: locations.profileBackupURL,
+                journal: resolved.journal
+            )
+            guard primary == .source, backup == .source else {
+                throw ProfileHydrationTransactionStoreError.sourceOnlyAbortRejected(
+                    primary: primary,
+                    backup: backup
+                )
+            }
+
+            try removeDurableBarrier(preserving: resolved.data)
+            return true
+        }
+    }
+
+    /// The caller supplies a sealed observation independently minted by the
+    /// checkpoint store. No cleanup occurs unless it confirms the exact target
+    /// bound into the journal.
+    /// When no journal or quarantine evidence exists, `false` is an
+    /// unauthenticated, non-destructive durable-absence reconciliation; there
+    /// is no journal against which transaction, binding, or observation inputs
+    /// could be authenticated.
+    @discardableResult
+    func removeJournalAfterCheckpointConfirmation(
+        transactionID: UUID,
+        expected: ProfileHydrationExpectedBinding,
+        confirmedTargetCheckpointObservation: CloudReplicaCheckpointObservationV1
+    ) throws -> Bool {
+        try withLock {
+            guard let resolved = try resolveJournal(
+                expected: expected,
+                repair: false
+            ) else {
+                try removeDurableBarrier()
+                return false
+            }
+            guard resolved.journal.transactionID == transactionID else {
+                throw ProfileHydrationTransactionStoreError.transactionMismatch
+            }
+            guard resolved.journal.checkpointRelationship(
+                to: confirmedTargetCheckpointObservation
+            ) == .target else {
                 throw ProfileHydrationTransactionStoreError.checkpointConfirmationMismatch
             }
             let inspection = try inspect(journal: resolved.journal, repair: resolved.repair)
@@ -538,21 +660,7 @@ struct ProfileHydrationFileTransactionStore: Sendable {
                 throw ProfileHydrationTransactionStoreError.profileVerificationFailed
             }
 
-            // Once the exact target checkpoint is confirmed, invalid-copy
-            // evidence from an earlier successful repair is no longer needed.
-            // Evidence is removed first so an interrupted cleanup always leaves
-            // at least one live journal copy describing the installed profile.
-            try removeAllQuarantineEvidence()
-            try fileSystem.removeItemDurably(at: locations.journalBackupURL)
-            guard try fileSystem.itemStatus(at: locations.journalBackupURL)
-                == .missing else {
-                throw ProfileHydrationTransactionStoreError.ioFailure
-            }
-            try fileSystem.removeItemDurably(at: locations.journalPrimaryURL)
-            guard try fileSystem.itemStatus(at: locations.journalPrimaryURL)
-                == .missing else {
-                throw ProfileHydrationTransactionStoreError.ioFailure
-            }
+            try removeDurableBarrier(preserving: resolved.data)
             return true
         }
     }
@@ -1041,12 +1149,72 @@ struct ProfileHydrationFileTransactionStore: Sendable {
     }
 
     private func removeAllQuarantineEvidence() throws {
-        for url in try quarantineEvidenceURLs() {
-            do {
-                try fileSystem.removeItemDurably(at: url)
-            } catch {
-                throw mapped(error)
+        for index in 0 ..< limits.maximumQuarantineFiles {
+            // Visit every bounded slot, including slots already observed as
+            // missing. This re-syncs the quarantine directory after an earlier
+            // removal whose durability outcome was ambiguous.
+            try removeAndVerifyMissing(
+                at: locations.quarantineSlotURL(index)
+            )
+        }
+    }
+
+    /// Evidence is removed first and an exact journal copy last, so a usable
+    /// barrier remains until the final removal attempt. A retry with no journal
+    /// still executes this complete durable-absence sequence.
+    private func removeDurableBarrier(
+        preserving journalData: Data? = nil
+    ) throws {
+        try fileSystem.createDirectory(at: locations.journalDirectoryURL)
+        try fileSystem.createDirectory(at: locations.quarantineDirectoryURL)
+        try removeAllQuarantineEvidence()
+
+        // Normally the backup is removed first and the primary remains as the
+        // last valid barrier. If recovery was authorized from the backup alone,
+        // remove the invalid/missing primary first so the one valid journal is
+        // still retained until the final removal attempt.
+        if let journalData,
+           try exactJournalCopyMatches(
+               journalData,
+               at: locations.journalBackupURL
+           ),
+           try !exactJournalCopyMatches(
+               journalData,
+               at: locations.journalPrimaryURL
+           ) {
+            try removeAndVerifyMissing(at: locations.journalPrimaryURL)
+            try removeAndVerifyMissing(at: locations.journalBackupURL)
+        } else {
+            try removeAndVerifyMissing(at: locations.journalBackupURL)
+            try removeAndVerifyMissing(at: locations.journalPrimaryURL)
+        }
+    }
+
+    private func exactJournalCopyMatches(
+        _ expectedData: Data,
+        at url: URL
+    ) throws -> Bool {
+        do {
+            guard try fileSystem.itemStatus(at: url) == .present,
+                  try fileSystem.fileSize(at: url) == expectedData.count else {
+                return false
             }
+            return try fileSystem.read(from: url) == expectedData
+        } catch {
+            throw mapped(error)
+        }
+    }
+
+    private func removeAndVerifyMissing(at url: URL) throws {
+        do {
+            try fileSystem.removeItemDurably(at: url)
+            guard try fileSystem.itemStatus(at: url) == .missing else {
+                throw ProfileHydrationTransactionStoreError.ioFailure
+            }
+        } catch let error as ProfileHydrationTransactionStoreError {
+            throw error
+        } catch {
+            throw mapped(error)
         }
     }
 
