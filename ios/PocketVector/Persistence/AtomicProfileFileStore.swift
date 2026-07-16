@@ -199,6 +199,64 @@ struct AtomicProfileFileStore: Sendable {
     ) throws -> ExactProfileReplacementAttemptResultV1 {
         return try attempt(intent, catalog: catalog)
     }
+
+    /// Reads one candidate installed by the hydration transaction store without
+    /// normalizing, repairing, or publishing it. The journal is validated before
+    /// file-system I/O; under the shared hydration lock, every durable barrier
+    /// must be absent and both profile copies must be its exact candidate bytes.
+    func readExactInstalledCandidate(
+        _ journal: ProfileHydrationJournalV1,
+        catalog: LaunchCatalog
+    ) throws -> CanonicalProfileEnvelopeArtifactV1 {
+        do {
+            try journal.validate(
+                migrator: migrator,
+                catalog: catalog,
+                limits: limits
+            )
+        } catch let error as ProfileHydrationJournalValidationError {
+            throw AtomicProfileFileStoreError.invalidHydrationJournal(error)
+        }
+        let candidate: CanonicalProfileEnvelopeArtifactV1
+        do {
+            let decoded = try migrator.decodeArtifact(
+                journal.candidateProfileEnvelope
+            )
+            candidate = try migrator.canonicalArtifact(
+                for: decoded.document,
+                savedAt: decoded.savedAt
+            )
+            try validateCanonicalArtifact(candidate, catalog: catalog)
+        } catch {
+            throw AtomicProfileFileStoreError.invalidHydrationJournal(
+                .invalidCandidateEnvelope
+            )
+        }
+        guard candidate.exactBytes == journal.candidateProfileEnvelope,
+              candidate.digest == journal.candidateProfileEnvelopeDigest else {
+            throw AtomicProfileFileStoreError.invalidReplacementIntent
+        }
+
+        return try withLock {
+            try assertHydrationRecoveryIsClear()
+            let primary = try hydrationCopyState(
+                at: locations.primaryURL,
+                journal: journal
+            )
+            let backup = try hydrationCopyState(
+                at: locations.backupURL,
+                journal: journal
+            )
+            guard primary == .candidate, backup == .candidate else {
+                throw AtomicProfileFileStoreError
+                    .hydrationCandidateNotExactlyInstalled(
+                        primary: primary,
+                        backup: backup
+                    )
+            }
+            return candidate
+        }
+    }
 }
 
 private extension AtomicProfileFileStore {
@@ -387,6 +445,29 @@ private extension AtomicProfileFileStore {
             return .state(.oversized(data.count))
         }
         return .data(data)
+    }
+
+    func hydrationCopyState(
+        at url: URL,
+        journal: ProfileHydrationJournalV1
+    ) throws -> ProfileHydrationProfileCopyState {
+        switch try readProfileData(from: url) {
+        case let .data(data):
+            if data == journal.candidateProfileEnvelope {
+                return .candidate
+            }
+            if data == journal.sourceProfileEnvelope {
+                return .source
+            }
+            return .unexpected(.envelopeBytes(data))
+
+        case .state(.missing):
+            return .missing
+        case let .state(.oversized(size)):
+            return .oversized(size)
+        case let .state(.unexpected(digest)):
+            return .unexpected(digest)
+        }
     }
 
     /// Validates both copies before any normalization. A valid divergent backup

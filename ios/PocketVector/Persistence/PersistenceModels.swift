@@ -334,6 +334,7 @@ enum ProfileEnvelopeCopyState: Equatable, Sendable {
 
 enum AtomicProfileFileStoreError: Error, Equatable, Sendable {
     case hydrationRecoveryRequired
+    case invalidHydrationJournal(ProfileHydrationJournalValidationError)
     case profileAlreadyExists
     case profileEnvelopeTooLarge(actual: Int, maximum: Int)
     case invalidReplacementIntent
@@ -344,6 +345,10 @@ enum AtomicProfileFileStoreError: Error, Equatable, Sendable {
     case sourceEnvelopeCASMismatch(
         expected: ProfileHydrationDigest,
         actual: ProfileEnvelopeCopyState
+    )
+    case hydrationCandidateNotExactlyInstalled(
+        primary: ProfileHydrationProfileCopyState,
+        backup: ProfileHydrationProfileCopyState
     )
     case lockContended
     case ioFailure
@@ -400,6 +405,7 @@ enum LocalPlayerRepositoryError: Error, Equatable {
     )
     case sessionInvalidated
     case sessionMismatch
+    case hydrationAdoptionSourceMismatch
     case invalidRun(CompletedRunValidationError)
     case runIDConflict(RunID)
     case ledgerIDConflict(LedgerEntryID)

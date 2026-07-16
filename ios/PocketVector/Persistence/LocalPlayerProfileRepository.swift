@@ -96,6 +96,58 @@ actor LocalPlayerProfileRepository {
         )
     }
 
+    /// Adopts only a hydration candidate that has already completed its durable
+    /// file transaction. This method does not rotate the profile session or
+    /// publish application state; a coordinator must revalidate its account
+    /// generation before forwarding the returned snapshot.
+    @discardableResult
+    func adoptCommittedHydration(
+        _ journal: ProfileHydrationJournalV1,
+        session: ProfileSessionToken
+    ) throws -> LocalPlayerProfileSnapshot {
+        guard sessionIsActive else {
+            throw document == nil
+                ? LocalPlayerRepositoryError.notLoaded
+                : LocalPlayerRepositoryError.sessionInvalidated
+        }
+        guard let current = document,
+              let sourceArtifact = persistedArtifact else {
+            throw LocalPlayerRepositoryError.notLoaded
+        }
+        try validateSession(session, against: current)
+        guard pendingReplacementIntent == nil else {
+            throw LocalPlayerRepositoryError.profileWriteOutcomeUnknown
+        }
+        guard sourceArtifact.document == current,
+              sourceArtifact.exactBytes == journal.sourceProfileEnvelope,
+              sourceArtifact.digest == journal.sourceProfileEnvelopeDigest,
+              journal.source.accountIdentity == session.accountIdentity,
+              journal.source.sessionNonce == session.nonce,
+              journal.source.profileID == session.profileID,
+              journal.source.playerRevision == current.player.revision,
+              journal.source.economyRevision == current.economyRevision else {
+            throw LocalPlayerRepositoryError.hydrationAdoptionSourceMismatch
+        }
+
+        let candidate = try fileStore.readExactInstalledCandidate(
+            journal,
+            catalog: catalog
+        )
+        guard candidate.document.accountIdentity == accountIdentity else {
+            throw LocalPlayerRepositoryError.accountIdentityMismatch(
+                expected: accountIdentity,
+                actual: candidate.document.accountIdentity
+            )
+        }
+        guard candidate.document.player.profileID == session.profileID else {
+            throw LocalPlayerRepositoryError.hydrationAdoptionSourceMismatch
+        }
+        let snapshot = try makeSnapshot(for: candidate.document)
+        document = candidate.document
+        persistedArtifact = candidate
+        return snapshot
+    }
+
     func settlementReceipt(
         for runID: RunID,
         session: ProfileSessionToken

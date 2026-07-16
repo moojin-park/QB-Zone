@@ -461,6 +461,696 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(decoded.document.player.profileID, loaded.player.profileID)
     }
 
+    func testCommittedHydrationSeamInstallsCleansAndAdoptsWithoutRotatingSession()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        let checkpointDirectory = makeTemporaryDirectory()
+        defer {
+            removeTemporaryDirectory(directory)
+            removeTemporaryDirectory(checkpointDirectory)
+        }
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture
+        )
+        let loaded = try await repository.load(at: fixture.date)
+        let loadReport = await repository.lastLoadReport
+        XCTAssertEqual(loaded.session, fixture.sourceSession)
+
+        let transactionStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: directory
+        )
+        _ = try transactionStore.beginHydration(fixture.journal)
+        let checkpointStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: checkpointDirectory
+        )
+        try await checkpointStore.activate(
+            replicaEpoch: fixture.replicaEpoch,
+            configurationScopeFingerprint: fixture.scope,
+            for: fixture.cloudAccountID
+        )
+        try await checkpointStore.save(fixture.targetCheckpoint, at: fixture.date)
+        let observation = try await checkpointStore.observeCurrentCheckpoint(
+            for: fixture.cloudAccountID,
+            configurationScopeFingerprint: fixture.scope,
+            replicaEpoch: fixture.replicaEpoch,
+            at: fixture.date
+        )
+        _ = try transactionStore.installCandidate(
+            transactionID: fixture.transactionID,
+            expected: fixture.expectedBinding,
+            confirmedTargetCheckpointObservation: observation
+        )
+
+        do {
+            _ = try await repository.adoptCommittedHydration(
+                fixture.journal,
+                session: loaded.session
+            )
+            XCTFail("The durable journal barrier must block early adoption")
+        } catch {
+            XCTAssertEqual(
+                error as? AtomicProfileFileStoreError,
+                .hydrationRecoveryRequired
+            )
+        }
+
+        XCTAssertTrue(
+            try transactionStore.removeJournalAfterCheckpointConfirmation(
+                transactionID: fixture.transactionID,
+                expected: fixture.expectedBinding,
+                confirmedTargetCheckpointObservation: observation
+            )
+        )
+        let adopted = try await repository.adoptCommittedHydration(
+            fixture.journal,
+            session: loaded.session
+        )
+        let expected = try PlayerProfileProjection.snapshot(
+            for: fixture.candidateDocument,
+            session: loaded.session
+        )
+
+        XCTAssertEqual(adopted, expected)
+        XCTAssertEqual(adopted.session, loaded.session)
+        let adoptedSnapshot = try await repository.snapshot()
+        let adoptedLoadReport = await repository.lastLoadReport
+        XCTAssertEqual(adoptedSnapshot, expected)
+        XCTAssertEqual(adoptedLoadReport, loadReport)
+        let adoptedSource = try await repository.hydrationSource(
+            session: loaded.session
+        )
+        XCTAssertEqual(adoptedSource.exactEnvelopeBytes, fixture.candidateEnvelope)
+        XCTAssertEqual(
+            try Data(contentsOf: transactionStore.locations.profilePrimaryURL),
+            fixture.candidateEnvelope
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: transactionStore.locations.profileBackupURL),
+            fixture.candidateEnvelope
+        )
+    }
+
+    func testHydrationAdoptionRequiresCandidateInBothCopiesAcrossFullStateMatrix()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let maximumEnvelopeBytes = max(
+            fixture.sourceEnvelope.count,
+            fixture.candidateEnvelope.count
+        ) + 64
+        let limits = profileLimits(maximumEnvelopeBytes: maximumEnvelopeBytes)
+        let unexpected = Data("not-a-profile-envelope".utf8)
+        let oversized = Data(
+            repeating: 0x7f,
+            count: maximumEnvelopeBytes + 1
+        )
+        let states: [(
+            name: String,
+            data: Data?,
+            state: ProfileHydrationProfileCopyState
+        )] = [
+            ("source", fixture.sourceEnvelope, .source),
+            ("candidate", fixture.candidateEnvelope, .candidate),
+            ("missing", nil, .missing),
+            ("unexpected", unexpected, .unexpected(.envelopeBytes(unexpected))),
+            ("oversized", oversized, .oversized(oversized.count)),
+        ]
+
+        for primary in states {
+            for backup in states {
+                let name = "\(primary.name)/\(backup.name)"
+                let directory = makeTemporaryDirectory()
+                defer { removeTemporaryDirectory(directory) }
+                try writeExactProfileCopies(
+                    primary: fixture.sourceEnvelope,
+                    backup: fixture.sourceEnvelope,
+                    to: directory
+                )
+                let repository = makeHydrationAdoptionRepository(
+                    directory: directory,
+                    fixture: fixture,
+                    limits: limits
+                )
+                let loaded = try await repository.load(at: fixture.date)
+                try writeExactProfileCopies(
+                    primary: primary.data,
+                    backup: backup.data,
+                    to: directory
+                )
+                let locations = ProfileStorageLocations(directoryURL: directory)
+                let primaryBefore = try optionalProfileData(at: locations.primaryURL)
+                let backupBefore = try optionalProfileData(at: locations.backupURL)
+
+                if primary.state == .candidate, backup.state == .candidate {
+                    let adopted = try await repository.adoptCommittedHydration(
+                        fixture.journal,
+                        session: loaded.session
+                    )
+                    XCTAssertEqual(
+                        adopted.player.revision,
+                        fixture.candidateDocument.player.revision,
+                        name
+                    )
+                    XCTAssertEqual(
+                        adopted.economyRevision,
+                        fixture.candidateDocument.economyRevision,
+                        name
+                    )
+                } else {
+                    do {
+                        _ = try await repository.adoptCommittedHydration(
+                            fixture.journal,
+                            session: loaded.session
+                        )
+                        XCTFail("Only candidate/candidate may be adopted: \(name)")
+                    } catch {
+                        XCTAssertEqual(
+                            error as? AtomicProfileFileStoreError,
+                            .hydrationCandidateNotExactlyInstalled(
+                                primary: primary.state,
+                                backup: backup.state
+                            ),
+                            name
+                        )
+                    }
+                    let unchangedSnapshot = try await repository.snapshot()
+                    XCTAssertEqual(unchangedSnapshot, loaded, name)
+                }
+
+                XCTAssertEqual(
+                    try optionalProfileData(at: locations.primaryURL),
+                    primaryBefore,
+                    name
+                )
+                XCTAssertEqual(
+                    try optionalProfileData(at: locations.backupURL),
+                    backupBefore,
+                    name
+                )
+            }
+        }
+    }
+
+    func testHydrationAdoptionRejectsEveryDurableRecoveryBarrierWithoutMutation()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let barrierKinds = [
+            "journal-primary",
+            "journal-backup",
+            "quarantine-first",
+            "quarantine-last",
+        ]
+
+        for barrierKind in barrierKinds {
+            let directory = makeTemporaryDirectory()
+            defer { removeTemporaryDirectory(directory) }
+            try writeExactProfileCopies(
+                primary: fixture.sourceEnvelope,
+                backup: fixture.sourceEnvelope,
+                to: directory
+            )
+            let repository = makeHydrationAdoptionRepository(
+                directory: directory,
+                fixture: fixture
+            )
+            let loaded = try await repository.load(at: fixture.date)
+            try writeExactProfileCopies(
+                primary: fixture.candidateEnvelope,
+                backup: fixture.candidateEnvelope,
+                to: directory
+            )
+            let transactionLocations = ProfileHydrationTransactionLocations(
+                profileDirectoryURL: directory
+            )
+            let evidenceURL: URL
+            switch barrierKind {
+            case "journal-primary":
+                evidenceURL = transactionLocations.journalPrimaryURL
+            case "journal-backup":
+                evidenceURL = transactionLocations.journalBackupURL
+            case "quarantine-first":
+                evidenceURL = transactionLocations.quarantineSlotURL(0)
+            default:
+                evidenceURL = transactionLocations.quarantineSlotURL(
+                    ProfileHydrationLimits.production.maximumQuarantineFiles - 1
+                )
+            }
+            try FileManager.default.createDirectory(
+                at: evidenceURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let evidence = Data("durable-recovery-evidence".utf8)
+            try evidence.write(to: evidenceURL, options: .atomic)
+
+            do {
+                _ = try await repository.adoptCommittedHydration(
+                    fixture.journal,
+                    session: loaded.session
+                )
+                XCTFail("Recovery evidence must block adoption: \(barrierKind)")
+            } catch {
+                XCTAssertEqual(
+                    error as? AtomicProfileFileStoreError,
+                    .hydrationRecoveryRequired,
+                    barrierKind
+                )
+            }
+            XCTAssertEqual(try Data(contentsOf: evidenceURL), evidence, barrierKind)
+            let locations = ProfileStorageLocations(directoryURL: directory)
+            XCTAssertEqual(
+                try Data(contentsOf: locations.primaryURL),
+                fixture.candidateEnvelope,
+                barrierKind
+            )
+            XCTAssertEqual(
+                try Data(contentsOf: locations.backupURL),
+                fixture.candidateEnvelope,
+                barrierKind
+            )
+            let unchangedSnapshot = try await repository.snapshot()
+            XCTAssertEqual(unchangedSnapshot, loaded, barrierKind)
+        }
+    }
+
+    func testHydrationAdoptionChecksSessionBeforeReadingCandidate() async throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture,
+            fileSystem: fileSystem
+        )
+        let loaded = try await repository.load(at: fixture.date)
+        try writeExactProfileCopies(
+            primary: fixture.candidateEnvelope,
+            backup: fixture.candidateEnvelope,
+            to: directory
+        )
+        fileSystem.failNext(.beforeRead("player-profile.json"))
+        let staleSession = ProfileSessionToken(
+            accountIdentity: loaded.session.accountIdentity,
+            nonce: UUID(),
+            profileID: loaded.session.profileID
+        )
+
+        do {
+            _ = try await repository.adoptCommittedHydration(
+                fixture.journal,
+                session: staleSession
+            )
+            XCTFail("A stale session must be rejected")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .sessionMismatch)
+        }
+        do {
+            _ = try await repository.adoptCommittedHydration(
+                fixture.journal,
+                session: loaded.session
+            )
+            XCTFail("The unconsumed read fault must reach the valid caller")
+        } catch {
+            XCTAssertEqual(error as? AtomicProfileFileStoreError, .ioFailure)
+        }
+        let unchangedSnapshot = try await repository.snapshot()
+        XCTAssertEqual(unchangedSnapshot, loaded)
+    }
+
+    func testHydrationAdoptionBindsJournalSourceNonceIndependentlyOfCallerSession()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture
+        )
+        let loaded = try await repository.load(at: fixture.date)
+        let wrongJournal = try fixture.makeJournal(
+            sourceSession: ProfileSessionToken(
+                accountIdentity: loaded.session.accountIdentity,
+                nonce: UUID(),
+                profileID: loaded.session.profileID
+            )
+        )
+        try writeExactProfileCopies(
+            primary: fixture.candidateEnvelope,
+            backup: fixture.candidateEnvelope,
+            to: directory
+        )
+        let locations = ProfileStorageLocations(directoryURL: directory)
+
+        do {
+            _ = try await repository.adoptCommittedHydration(
+                wrongJournal,
+                session: loaded.session
+            )
+            XCTFail("A journal from another source session must be rejected")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .hydrationAdoptionSourceMismatch)
+        }
+        let unchangedSnapshot = try await repository.snapshot()
+        XCTAssertEqual(unchangedSnapshot, loaded)
+        XCTAssertEqual(
+            try Data(contentsOf: locations.primaryURL),
+            fixture.candidateEnvelope
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: locations.backupURL),
+            fixture.candidateEnvelope
+        )
+    }
+
+    func testHydrationAdoptionOrderingRejectsStaleSourceAndAdvancesAfterAdoption()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+
+        do {
+            let directory = makeTemporaryDirectory()
+            defer { removeTemporaryDirectory(directory) }
+            try writeExactProfileCopies(
+                primary: fixture.sourceEnvelope,
+                backup: fixture.sourceEnvelope,
+                to: directory
+            )
+            let repository = makeHydrationAdoptionRepository(
+                directory: directory,
+                fixture: fixture
+            )
+            let loaded = try await repository.load(at: fixture.date)
+            let locallyAdvanced = try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: loaded.session,
+                at: fixture.date.addingTimeInterval(2)
+            )
+            try writeExactProfileCopies(
+                primary: fixture.candidateEnvelope,
+                backup: fixture.candidateEnvelope,
+                to: directory
+            )
+
+            do {
+                _ = try await repository.adoptCommittedHydration(
+                    fixture.journal,
+                    session: loaded.session
+                )
+                XCTFail("A locally advanced source must make the journal stale")
+            } catch let error as LocalPlayerRepositoryError {
+                XCTAssertEqual(error, .hydrationAdoptionSourceMismatch)
+            }
+            let unchangedSnapshot = try await repository.snapshot()
+            XCTAssertEqual(unchangedSnapshot, locallyAdvanced)
+        }
+
+        do {
+            let directory = makeTemporaryDirectory()
+            defer { removeTemporaryDirectory(directory) }
+            try writeExactProfileCopies(
+                primary: fixture.sourceEnvelope,
+                backup: fixture.sourceEnvelope,
+                to: directory
+            )
+            let repository = makeHydrationAdoptionRepository(
+                directory: directory,
+                fixture: fixture
+            )
+            let loaded = try await repository.load(at: fixture.date)
+            try writeExactProfileCopies(
+                primary: fixture.candidateEnvelope,
+                backup: fixture.candidateEnvelope,
+                to: directory
+            )
+            let adopted = try await repository.adoptCommittedHydration(
+                fixture.journal,
+                session: loaded.session
+            )
+            let next = try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: loaded.session,
+                at: fixture.date.addingTimeInterval(3)
+            )
+
+            XCTAssertEqual(next.player.revision, adopted.player.revision + 1)
+            XCTAssertEqual(next.economyRevision, adopted.economyRevision)
+            XCTAssertTrue(next.player.settings.isMuted)
+        }
+    }
+
+    func testInvalidatedRepositoryCannotAdoptCommittedHydration() async throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture
+        )
+        let loaded = try await repository.load(at: fixture.date)
+        try writeExactProfileCopies(
+            primary: fixture.candidateEnvelope,
+            backup: fixture.candidateEnvelope,
+            to: directory
+        )
+        await repository.invalidateForAccountSwitch()
+
+        do {
+            _ = try await repository.adoptCommittedHydration(
+                fixture.journal,
+                session: loaded.session
+            )
+            XCTFail("An invalidated repository must reject adoption")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .sessionInvalidated)
+        }
+    }
+
+    func testHydrationAdoptionRejectsPendingLocalReplacementBeforeDiskRead()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture,
+            fileSystem: fileSystem
+        )
+        let loaded = try await repository.load(at: fixture.date)
+        fileSystem.failNext(.afterWrite("player-profile.json"))
+        do {
+            _ = try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: loaded.session,
+                at: fixture.date.addingTimeInterval(2)
+            )
+            XCTFail("The local replacement must enter exact reconciliation")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .profileWriteOutcomeUnknown)
+        }
+        try writeExactProfileCopies(
+            primary: fixture.candidateEnvelope,
+            backup: fixture.candidateEnvelope,
+            to: directory
+        )
+        fileSystem.failNext(.beforeRead("player-profile.json"))
+
+        for _ in 0 ..< 2 {
+            do {
+                _ = try await repository.adoptCommittedHydration(
+                    fixture.journal,
+                    session: loaded.session
+                )
+                XCTFail("Hydration must not clear an uncertain local replacement")
+            } catch let error as LocalPlayerRepositoryError {
+                XCTAssertEqual(error, .profileWriteOutcomeUnknown)
+            }
+        }
+
+        let store = AtomicProfileFileStore(
+            directoryURL: directory,
+            fileSystem: fileSystem
+        )
+        XCTAssertThrowsError(
+            try store.readExactInstalledCandidate(
+                fixture.journal,
+                catalog: .approved
+            )
+        ) {
+            XCTAssertEqual($0 as? AtomicProfileFileStoreError, .ioFailure)
+        }
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        XCTAssertEqual(
+            try Data(contentsOf: locations.primaryURL),
+            fixture.candidateEnvelope
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: locations.backupURL),
+            fixture.candidateEnvelope
+        )
+    }
+
+    func testNeverLoadedRepositoryCannotAdoptCommittedHydration() async throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try writeExactProfileCopies(
+            primary: fixture.candidateEnvelope,
+            backup: fixture.candidateEnvelope,
+            to: directory
+        )
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture
+        )
+
+        do {
+            _ = try await repository.adoptCommittedHydration(
+                fixture.journal,
+                session: fixture.sourceSession
+            )
+            XCTFail("An unloaded actor has no exact cached source authority")
+        } catch let error as LocalPlayerRepositoryError {
+            XCTAssertEqual(error, .notLoaded)
+        }
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        XCTAssertEqual(
+            try Data(contentsOf: locations.primaryURL),
+            fixture.candidateEnvelope
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: locations.backupURL),
+            fixture.candidateEnvelope
+        )
+    }
+
+    func testExactCandidateReadRejectsInvalidJournalBeforeFileSystemIO() throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try writeExactProfileCopies(
+            primary: fixture.candidateEnvelope,
+            backup: fixture.candidateEnvelope,
+            to: directory
+        )
+        let encoded = try ProfileHydrationCanonicalCodec.encode(fixture.journal)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object["mergePolicyVersion"] = 999
+        let invalidData = try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+        let invalidJournal = try ProfileHydrationCanonicalCodec.decode(
+            ProfileHydrationJournalV1.self,
+            from: invalidData
+        )
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        fileSystem.failNext(.beforeStatus("profile-hydration-journal.json"))
+        let store = AtomicProfileFileStore(
+            directoryURL: directory,
+            fileSystem: fileSystem
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: store.transactionLocations.lockURL.path
+            )
+        )
+
+        XCTAssertThrowsError(
+            try store.readExactInstalledCandidate(
+                invalidJournal,
+                catalog: .approved
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? AtomicProfileFileStoreError,
+                .invalidHydrationJournal(.unsupportedMergePolicyVersion(999))
+            )
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: store.transactionLocations.lockURL.path
+            )
+        )
+        XCTAssertThrowsError(
+            try store.readExactInstalledCandidate(
+                fixture.journal,
+                catalog: .approved
+            )
+        ) {
+            XCTAssertEqual($0 as? AtomicProfileFileStoreError, .ioFailure)
+        }
+    }
+
+    func testExactCandidateReadRejectsContendedSharedLockWithoutMutation() throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try writeExactProfileCopies(
+            primary: fixture.candidateEnvelope,
+            backup: fixture.candidateEnvelope,
+            to: directory
+        )
+        let store = AtomicProfileFileStore(directoryURL: directory)
+        let contender = FoundationProfileHydrationFileSystem()
+
+        try contender.withExclusiveLock(at: store.transactionLocations.lockURL) {
+            XCTAssertThrowsError(
+                try store.readExactInstalledCandidate(
+                    fixture.journal,
+                    catalog: .approved
+                )
+            ) {
+                XCTAssertEqual(
+                    $0 as? AtomicProfileFileStoreError,
+                    .lockContended
+                )
+            }
+        }
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        XCTAssertEqual(
+            try Data(contentsOf: locations.primaryURL),
+            fixture.candidateEnvelope
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: locations.backupURL),
+            fixture.candidateEnvelope
+        )
+    }
+
     func testTwoLoadedRepositoriesRejectStaleWriterWithoutChangingActorOrDisk()
         async throws
     {
@@ -3282,6 +3972,50 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let locations = ProfileStorageLocations(directoryURL: directory)
         try data.write(to: locations.primaryURL, options: .atomic)
         try data.write(to: locations.backupURL, options: .atomic)
+    }
+
+    private func writeExactProfileCopies(
+        primary: Data?,
+        backup: Data?,
+        to directory: URL
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        for (data, url) in [
+            (primary, locations.primaryURL),
+            (backup, locations.backupURL),
+        ] {
+            if let data {
+                try data.write(to: url, options: .atomic)
+            } else if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
+    private func optionalProfileData(at url: URL) throws -> Data? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try Data(contentsOf: url)
+    }
+
+    private func makeHydrationAdoptionRepository(
+        directory: URL,
+        fixture: ProfileHydrationTestFixture,
+        limits: ProfileHydrationLimits = .production,
+        fileSystem: any ProfileHydrationFileSystem = FoundationProfileHydrationFileSystem()
+    ) -> LocalPlayerProfileRepository {
+        LocalPlayerProfileRepository(
+            directoryURL: directory,
+            deviceID: "hydration-adoption-device",
+            accountIdentity: fixture.sourceAccount,
+            sessionNonce: fixture.sourceSession.nonce,
+            economyMutationPolicy: .allowLocalTesting,
+            limits: limits,
+            fileSystem: fileSystem
+        )
     }
 
     private func assertDivergentBackupFailsClosed(
