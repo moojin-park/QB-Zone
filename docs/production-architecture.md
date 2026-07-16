@@ -239,6 +239,15 @@ candidate digest can never install. The local repository uses deterministic
 account-derived identities for cloud profiles; switching iCloud accounts opens
 a separate profile and never silently merges identities.
 
+The exact repository-adoption seam is implemented but dormant. It validates the
+journal before file-system I/O, requires no journal or quarantine barrier,
+requires both profile copies to equal the exact candidate, and then swaps only
+the actor's document and canonical persisted artifact without rotating the
+profile session or publishing UI state. Live composition still requires an
+account-generation commit gate and a checkpoint freshness lease spanning
+cleanup, adoption, generation revalidation, and publication; a previously
+minted checkpoint observation is not itself freshness authority.
+
 Material hydration advances local player and economy revisions exactly once
 without copying a remote root revision. A no-op merge does not advance either
 revision. Validated cloud state must be installable without erasing valid
