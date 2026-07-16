@@ -11,11 +11,11 @@ tracks execution, evidence, dependencies, and owner decisions.
 
 The native foundation, launch rules, durable local repository, production app
 shell, first-run tutorial, fail-closed release information, eight-team shipping
-visuals, durable cloud-first economy coordinator, and Apple diagnostics adapters
-are versioned through commit `a38c3f8` (`Complete Wave 5 production hardening`).
-The iOS-only repository cleanup is versioned at `24cd2c7` (`Remove legacy
-browser project from iOS repository`). The cleanup tree passed all 231 simulator
-tests and produced an unsigned generic-iOS Release archive.
+visuals, durable cloud-first economy coordinator, retained production runtime,
+and Apple-only diagnostics composition are versioned through commit `59de4a7`
+(`Add retained production runtime and fail-closed services`). The iOS-only
+repository cleanup is versioned at `24cd2c7` (`Remove legacy browser project
+from iOS repository`).
 
 The final Wave 5 simulator pass traversed the main menu, all eight offense
 choices, the locker and both cosmetic types, the four-step tutorial, gameplay,
@@ -25,12 +25,15 @@ uniform and football presentation, randomized opponent presentation, visible
 texture readiness, and an explicit release-blocking state when support or
 privacy destinations are missing.
 
-CloudKit, Game Center, StoreKit 2, and diagnostics now have substantial native
-adapters and deterministic tests, but the Release composition remains local
-only. A fresh device cannot yet discover and reconstruct the complete CloudKit
-profile and ledger history, so sync cannot honestly become current and
-commerce must remain disabled. The successful archive is therefore an
-engineering gate, not a release-readiness claim.
+The runtime wave passed 296 simulator tests and produced an unsigned generic-iOS
+Release archive. It now owns process-scoped profile and diagnostics tasks,
+restartable authoritative projections, fail-closed typed service configuration,
+UIKit GameKit presentation, coarse replay telemetry, and persistence recovery
+signals. CloudKit, Game Center, and StoreKit 2 still remain unavailable in the
+Release composition. A fresh device cannot yet discover and reconstruct the
+complete CloudKit profile and ledger history, so sync cannot honestly become
+current and commerce must remain disabled. The successful archive is therefore
+an engineering gate, not a release-readiness claim.
 
 ## Delivery board
 
@@ -42,9 +45,10 @@ engineering gate, not a release-readiness claim.
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
 | Account-independent service seams               | In progress         | GameKit, CloudKit, StoreKit 2, diagnostics, durable economy, and deterministic ad contracts pass; live ad SDK/verifier remain          |
 | Production app shell and menus                  | Complete            | Home, teams, locker, store, leaderboard, achievements, settings, tutorial, privacy/support, gameplay, and results all ship             |
+| Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Eight-team presentation system                  | Complete            | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, HUD palettes, raster recoloring, and preload readiness ship     |
-| Live Apple and advertising services             | In progress         | Runtime orchestration and CloudKit hydration are next; permanent IDs, capabilities, products, Game Center records, and ads need owner setup |
+| Live Apple and advertising services             | In progress         | Runtime/configuration/UIKit foundations are complete; CloudKit hydration, permanent IDs, products, Game Center records, and ads remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
 | TestFlight release candidate                    | Queued              | Device, accessibility, sandbox, sync, replay, crash, and economy gates pass                                                           |
 | App Store submission                            | Queued              | Signed archive, privacy report, metadata, review notes, screenshots, and owner approval complete                                      |
@@ -84,6 +88,9 @@ or runtime ownership boundaries.
 | 2026-07-15 | `24cd2c7` | Exact native-resource inventory                   | 1 focused test passed; 58 declared assets exactly match 58 physical resources, 6,168,312 bytes |
 | 2026-07-15 | `24cd2c7` | iOS-only cleanup full simulator suite             | 231 passed, 0 failed, 0 skipped                                |
 | 2026-07-15 | `24cd2c7` | iOS-only cleanup unsigned Release archive         | Passed; 58 runtime assets plus manifest; no browser, source-art, or asset-tool content bundled |
+| 2026-07-15 | `59de4a7` | Runtime, config, diagnostics, and UIKit focused gates | 99 passed, 0 failed, 0 skipped across four focused bundles     |
+| 2026-07-15 | `59de4a7` | Retained-runtime full native simulator suite      | 296 passed, 0 failed, 0 skipped                                |
+| 2026-07-15 | `59de4a7` | Unsigned generic-iOS Release archive              | Passed; arm64, iPhone/iPad, landscape-only, iOS 17 minimum     |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -91,9 +98,9 @@ Release behavior. A wave is not complete merely because its files exist.
 
 ## Next engineering dependency order
 
-1. Add a retained production runtime, typed fail-closed service configuration,
-   lifecycle cancellation, UIKit presentation handoff, and an authoritative
-   state stream. Compose Apple-only diagnostics in this layer.
+1. **Complete:** retain the production runtime, typed fail-closed service
+   configuration, lifecycle cancellation, UIKit presentation handoff,
+   authoritative state subscriptions, and Apple-only diagnostics.
 2. Add CloudKit account/profile bootstrap, remote record discovery, cursor
    persistence, complete profile hydration, and deterministic two-device merge.
    A device must verify the full ledger accumulator before sync becomes current.
@@ -139,13 +146,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the Wave 5 audited scope; full release audit remains |
+| Known P0/P1 defects                  |      0 | 0 open in the retained-runtime audited scope; full release audit remains |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Crash-free sessions                  | 99.5%+ | Instrumentation decision open                   |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local, cloud-head, purchase, unlock, and verified-ad coordinator tests pass; live hydration/composition pending |
-| Clean-checkout archive               |   Pass | Passing through iOS-only cleanup revision `24cd2c7` |
+| Clean-checkout archive               |   Pass | Unsigned Release archive passes at `59de4a7`; final detached RC proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner

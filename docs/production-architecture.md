@@ -12,21 +12,25 @@ remain available offline.
 ## Runtime ownership
 
 ```text
-SwiftUI AppCoordinator
-  -> PlayerRepository actor
-       -> atomic local profile store
-       -> CloudKit private-zone adapter
-       -> Game Center queue
-       -> StoreKit transaction coordinator
-       -> rewarded-ad verification coordinator
-       -> telemetry and diagnostics clients
-  -> GameplaySessionController
-       -> one GameScene for one RunConfiguration
-       <- one CompletedRun callback
+ProductionAppRuntime (one retained process graph)
+  -> owned AppCoordinator task
+       -> ProductionAppComposition
+            -> LocalPlayerProfileRepository actor
+                 -> atomic local profile store
+                 -> future CloudKit hydration and durable economy composition
+       -> GameplaySessionController
+            -> one GameScene for one RunConfiguration
+            <- one CompletedRun callback
+  -> owned AppleDiagnosticsRuntime task
+       -> privacy-safe OSLog and MetricKit adapters
+  -> UIKit GameKit presentation handoff
 ```
 
 - SwiftUI owns launch, navigation, menus, settings, locker, store, results, and
   service presentation.
+- `ProductionAppRuntime` retains the composition graph and owns the only
+  long-lived coordinator and diagnostics tasks. View teardown never leaves an
+  unowned state-stream consumer behind; runtime teardown cancels both tasks.
 - `PlayerRepository` is the only production authority allowed to mutate player
   ownership, selections, records, coins, ledger entries, achievement progress,
   or pending service queues.
@@ -37,6 +41,22 @@ SwiftUI AppCoordinator
   navigation.
 - SDK adapters never mutate a balance directly. They report verified outcomes
   to the repository, which applies an idempotent ledger mutation.
+
+## Authoritative presentation state
+
+The coordinator accepts only complete `AuthoritativeAppStateSnapshot` values.
+Every snapshot is bound to an immutable profile session and carries both player
+and economy revisions. Same-session updates must be componentwise monotonic.
+An unchanged player revision cannot carry changed player fields, and an
+unchanged economy revision cannot carry changed balances, inventory ownership,
+ledger state, or rewarded-ad eligibility. Inventory and rewarded-ad state
+intentionally belong to both partitions because production mutations couple
+them to durable economy operations.
+
+The presentation channel creates a fresh subscription for each consumer and
+replays its latest complete snapshot. It may coalesce complete projections, but
+it must never carry transaction receipts, StoreKit deliveries, CloudKit deltas,
+or ledger operations. Those remain lossless repository/service concerns.
 
 ## App flow
 
@@ -181,8 +201,9 @@ keeping all scoring and cosmetic purchases free of gameplay advantage.
 - Telemetry: coarse, deduplicated product events with no player aliases, raw
   profile identifiers, provider transaction identifiers, exact balances, or
   detailed play history.
-- Diagnostics: privacy-safe `OSLog` categories and Apple MetricKit delivery;
-  third-party crash reporting remains an explicit release decision.
+- Diagnostics: one process-owned, restartable FIFO input mailbox feeding
+  privacy-safe `OSLog` categories and Apple MetricKit delivery; third-party
+  crash reporting remains an explicit release decision.
 
 Real adapters and in-memory fakes implement the same contracts. Menus and tests
 must support loading, unavailable, offline, pending, restricted, declined, and
