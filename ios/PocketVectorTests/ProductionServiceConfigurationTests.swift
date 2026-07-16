@@ -208,6 +208,11 @@ final class ProductionServiceConfigurationTests: XCTestCase {
             $0["OperationRecordType"] = "operation-marker"
             $0["EconomyRecordType"] = "economy record"
             $0["EconomyPayloadFieldName"] = "payload.value"
+            $0["ProfileRootRecordType"] = "1profile"
+            $0["ProfileSettingsRecordType"] = "profile-settings"
+            $0["ProfileSelectionRecordType"] = "profile selection"
+            $0["ProfileRunRecordType"] = "profile.run"
+            $0["ProfilePayloadFieldName"] = "profile-payload"
         }
 
         let configuration = ProductionServiceConfiguration.parse(infoDictionary: info)
@@ -219,8 +224,67 @@ final class ProductionServiceConfigurationTests: XCTestCase {
                 .invalid(.cloudKit, .cloudOperationRecordType),
                 .invalid(.cloudKit, .economyRecordType),
                 .invalid(.cloudKit, .economyPayloadFieldName),
+                .invalid(.cloudKit, .profileRootRecordType),
+                .invalid(.cloudKit, .profileSettingsRecordType),
+                .invalid(.cloudKit, .profileSelectionRecordType),
+                .invalid(.cloudKit, .profileRunRecordType),
+                .invalid(.cloudKit, .profilePayloadFieldName),
             ]
         )
+    }
+
+    func testCloudRecordTypeOverlapsFailClosedForEveryCollidingLeaf() {
+        let info = updatingService("CloudKit", in: validInfoDictionary()) {
+            $0["OperationRecordType"] = "SharedHead"
+            $0["EconomyRecordType"] = "SharedHead"
+            $0["ProfileRootRecordType"] = "SharedHead"
+            $0["ProfileSettingsRecordType"] = "SharedProfile"
+            $0["ProfileSelectionRecordType"] = "SharedProfile"
+        }
+
+        let configuration = ProductionServiceConfiguration.parse(
+            infoDictionary: info
+        )
+
+        XCTAssertEqual(
+            unavailableIssues(configuration.cloudWrite),
+            [
+                .invalid(.cloudKit, .cloudOperationRecordType),
+                .invalid(.cloudKit, .economyRecordType),
+                .invalid(.cloudKit, .profileRootRecordType),
+                .invalid(.cloudKit, .profileSettingsRecordType),
+                .invalid(.cloudKit, .profileSelectionRecordType),
+            ]
+        )
+    }
+
+    func testCloudWriteValueCannotBypassRecordTypeCollisionInvariant() throws {
+        let parsed = ProductionServiceConfiguration.parse(
+            infoDictionary: validInfoDictionary()
+        )
+        guard case let .validated(base) = parsed.cloudWrite else {
+            return XCTFail("The complete fixture must validate")
+        }
+        let collidingProfile = try CloudProfileSchemaConfiguration(
+            rootRecordType: base.transport.operationRecordType,
+            settingsRecordType: "ProfileSettingsOther",
+            selectionRecordType: "ProfileSelectionOther",
+            runRecordType: "ProfileRunOther",
+            payloadFieldName: "profilePayloadOther"
+        )
+
+        XCTAssertThrowsError(
+            try ProductionCloudWriteConfiguration(
+                transport: base.transport,
+                economy: base.economy,
+                profile: collidingProfile
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProductionCloudWriteConfigurationError,
+                .recordTypeCollision(base.transport.operationRecordType)
+            )
+        }
     }
 
     func testDuplicateProviderValuesFailClosedAfterNormalization() {
@@ -347,6 +411,11 @@ final class ProductionServiceConfigurationTests: XCTestCase {
         XCTAssertEqual(cloudWrite.economy.recordID, CloudRecordID("economy-head-v1"))
         XCTAssertEqual(cloudWrite.economy.recordType, "EconomyHead")
         XCTAssertEqual(cloudWrite.economy.payloadFieldName, "economyPayload")
+        XCTAssertEqual(cloudWrite.profile.rootRecordType, "ProfileRoot")
+        XCTAssertEqual(cloudWrite.profile.settingsRecordType, "ProfileSettings")
+        XCTAssertEqual(cloudWrite.profile.selectionRecordType, "ProfileSelection")
+        XCTAssertEqual(cloudWrite.profile.runRecordType, "ProfileRun")
+        XCTAssertEqual(cloudWrite.profile.payloadFieldName, "profilePayload")
 
         guard case let .validated(storeKit) = configuration.storeKit else {
             return XCTFail("The exact launch StoreKit map should validate")
@@ -449,6 +518,11 @@ private extension ProductionServiceConfigurationTests {
             .economyRecordID,
             .economyRecordType,
             .economyPayloadFieldName,
+            .profileRootRecordType,
+            .profileSettingsRecordType,
+            .profileSelectionRecordType,
+            .profileRunRecordType,
+            .profilePayloadFieldName,
         ]
     }
 
@@ -492,6 +566,11 @@ private extension ProductionServiceConfigurationTests {
                     "EconomyRecordID": "economy-head-v1",
                     "EconomyRecordType": "EconomyHead",
                     "EconomyPayloadFieldName": "economyPayload",
+                    "ProfileRootRecordType": "ProfileRoot",
+                    "ProfileSettingsRecordType": "ProfileSettings",
+                    "ProfileSelectionRecordType": "ProfileSelection",
+                    "ProfileRunRecordType": "ProfileRun",
+                    "ProfilePayloadFieldName": "profilePayload",
                 ] as [String: Any],
                 "StoreKit": [
                     "ProductIdentifiers": productIdentifiers,

@@ -100,6 +100,8 @@ struct CloudReplicaResourceLimits: Equatable, Sendable {
 /// gives meaning to a replica. A checkpoint from another scope is never safe
 /// to reuse, even when it belongs to the same provider account.
 struct CloudReplicaScopeFingerprint: RawRepresentable, Codable, Equatable, Hashable, Sendable {
+    static let scopeDomain = "pocket-vector-cloud-replica-scope-v2"
+
     let rawValue: String
 
     init(rawValue: String) {
@@ -127,34 +129,30 @@ struct CloudReplicaScopeFingerprint: RawRepresentable, Codable, Equatable, Hasha
         try container.encode(rawValue)
     }
 
-    /// Payload schema v2 is deliberately part of this digest. Changing either
-    /// the CloudKit addressing configuration or the payload interpretation
-    /// invalidates the prior cursor and replica as one unit.
+    /// Transport, economy, and profile contracts form one indivisible scope.
+    /// Any schema or address change invalidates the prior cursor and replica.
     static func make(for configuration: ProductionCloudWriteConfiguration) -> Self {
         var hasher = SHA256()
-        append("pocket-vector-cloud-replica-scope-v1", to: &hasher)
-        append("payload-schema-v2", to: &hasher)
-        append("containerIdentifier", to: &hasher)
-        append(configuration.transport.containerIdentifier, to: &hasher)
-        append("zoneName", to: &hasher)
-        append(configuration.transport.zoneName, to: &hasher)
-        append("payloadFieldName", to: &hasher)
-        append(configuration.transport.payloadFieldName, to: &hasher)
-        append("operationRecordType", to: &hasher)
-        append(configuration.transport.operationRecordType, to: &hasher)
-        append("accountIdentifierNamespace", to: &hasher)
-        append(configuration.transport.accountIdentifierNamespace, to: &hasher)
-        append("recordNameNamespace", to: &hasher)
-        append(configuration.transport.recordNameNamespace, to: &hasher)
-        append("economyRecordID", to: &hasher)
-        append(configuration.economy.recordID.rawValue, to: &hasher)
-        append("economyRecordType", to: &hasher)
-        append(configuration.economy.recordType, to: &hasher)
-        append("economyPayloadFieldName", to: &hasher)
-        append(configuration.economy.payloadFieldName, to: &hasher)
+        for value in orderedMaterial(for: configuration) {
+            append(value, to: &hasher)
+        }
         return Self(
             rawValue: hasher.finalize().map { String(format: "%02x", $0) }.joined()
         )
+    }
+
+    static func orderedMaterial(
+        for configuration: ProductionCloudWriteConfiguration
+    ) -> [String] {
+        let transport = configuration.transport.fingerprintMaterial
+        let economy = configuration.economy.fingerprintMaterial
+        let profile = configuration.profile.fingerprintMaterial
+        return [scopeDomain, "transport", String(transport.count)]
+            + transport
+            + ["economy", String(economy.count)]
+            + economy
+            + ["profile", String(profile.count)]
+            + profile
     }
 
     private static func append(_ value: String, to hasher: inout SHA256) {

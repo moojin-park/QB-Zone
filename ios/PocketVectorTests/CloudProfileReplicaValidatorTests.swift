@@ -647,8 +647,8 @@ final class CloudProfileReplicaValidatorTests: XCTestCase, @unchecked Sendable {
         let fixture = try makeFixture()
         var records = fixture.records
         let marker = fixture.gameplayMarker(for: fixture.run)
-        let markerID = CloudProfileEconomyMarkerRecordID.ledger(
-            marker.record.entry.id,
+        let markerID = DurableEconomyCloudSchema.ledgerMarkerRecordID(
+            for: marker.record.entry.id,
             headRecordID: fixture.economyConfiguration.recordID
         )
         records[markerID] = fixture.economyRecord(id: markerID, payload: marker)
@@ -767,15 +767,15 @@ final class CloudProfileReplicaValidatorTests: XCTestCase, @unchecked Sendable {
             for: offerID
         )
         XCTAssertEqual(
-            CloudProfileEconomyMarkerRecordID.ledger(
-                ledgerEntryID,
+            DurableEconomyCloudSchema.ledgerMarkerRecordID(
+                for: ledgerEntryID,
                 headRecordID: fixture.economyConfiguration.recordID
             ),
             writerLedgerID
         )
         XCTAssertEqual(
-            CloudProfileEconomyMarkerRecordID.rewardOffer(
-                offerID,
+            DurableEconomyCloudSchema.rewardOfferMarkerRecordID(
+                for: offerID,
                 headRecordID: fixture.economyConfiguration.recordID
             ),
             writerOfferID

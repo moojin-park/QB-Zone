@@ -591,8 +591,8 @@ private extension CloudProfileReplicaValidator {
                     entryID
                 )
             }
-            let expectedID = CloudProfileEconomyMarkerRecordID.ledger(
-                entryID,
+            let expectedID = DurableEconomyCloudSchema.ledgerMarkerRecordID(
+                for: entryID,
                 headRecordID: economyConfiguration.recordID
             )
             guard record.id == expectedID else {
@@ -614,8 +614,8 @@ private extension CloudProfileReplicaValidator {
                 throw CloudProfileReplicaValidationError
                     .duplicateRewardOfferMarker(offerID)
             }
-            let expectedID = CloudProfileEconomyMarkerRecordID.rewardOffer(
-                offerID,
+            let expectedID = DurableEconomyCloudSchema.rewardOfferMarkerRecordID(
+                for: offerID,
                 headRecordID: economyConfiguration.recordID
             )
             guard record.id == expectedID else {
@@ -712,8 +712,8 @@ private extension CloudProfileReplicaValidator {
         }
 
         for marker in ledgerMarkers.values {
-            let recordID = CloudProfileEconomyMarkerRecordID.ledger(
-                marker.record.entry.id,
+            let recordID = DurableEconomyCloudSchema.ledgerMarkerRecordID(
+                for: marker.record.entry.id,
                 headRecordID: economyConfiguration.recordID
             )
             guard marker.schemaVersion
@@ -736,8 +736,8 @@ private extension CloudProfileReplicaValidator {
         }
 
         for marker in offerMarkers.values {
-            let recordID = CloudProfileEconomyMarkerRecordID.rewardOffer(
-                marker.redemption.offerID,
+            let recordID = DurableEconomyCloudSchema.rewardOfferMarkerRecordID(
+                for: marker.redemption.offerID,
                 headRecordID: economyConfiguration.recordID
             )
             guard marker.schemaVersion
@@ -885,50 +885,5 @@ private extension CloudProfileReplicaValidator {
         actual: CloudRecordID
     ) -> CloudProfileReplicaValidationError {
         .wrongDeterministicRecordID(expected: expected, actual: actual)
-    }
-}
-
-/// Mirrors the immutable marker address contract used by the economy writer.
-/// The profile validator needs only this addressing rule; payload validity and
-/// replay remain delegated to `verifyCompleteCloudHistory`.
-enum CloudProfileEconomyMarkerRecordID {
-    static func ledger(
-        _ entryID: LedgerEntryID,
-        headRecordID: CloudRecordID
-    ) -> CloudRecordID {
-        make(
-            kind: "ledger-entry-v1",
-            value: entryID.rawValue,
-            headRecordID: headRecordID
-        )
-    }
-
-    static func rewardOffer(
-        _ offerID: RewardOfferID,
-        headRecordID: CloudRecordID
-    ) -> CloudRecordID {
-        make(
-            kind: "reward-offer-v1",
-            value: offerID.rawValue,
-            headRecordID: headRecordID
-        )
-    }
-
-    private static func make(
-        kind: String,
-        value: String,
-        headRecordID: CloudRecordID
-    ) -> CloudRecordID {
-        let digest = CloudProfileDigest.sha256(
-            components: [
-                "pocket-vector-durable-economy-marker-v1",
-                headRecordID.rawValue,
-                kind,
-                value,
-            ]
-        )
-        return CloudRecordID(
-            "economy-marker-v1-\(CloudProfileDigest.hex(digest))"
-        )
     }
 }

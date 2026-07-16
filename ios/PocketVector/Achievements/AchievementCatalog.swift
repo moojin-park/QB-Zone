@@ -12,6 +12,9 @@ enum LaunchAchievementID {
 }
 
 enum AchievementCatalog {
+    static let persistedSemanticIdentifier =
+        "pocket-vector-launch-achievement-catalog-semantics-v1"
+
     static let launch: [AchievementDefinition] = [
         AchievementDefinition(
             id: LaunchAchievementID.firstRead,
@@ -70,4 +73,43 @@ enum AchievementCatalog {
             rule: .incrementalCareerSuccessfulPasses(100)
         ),
     ]
+
+    /// Achievement updates are persisted in settlement receipts. Declaration
+    /// order is presentation-only, so persisted evaluation always uses this
+    /// stable semantic order instead of the source array's insertion order.
+    static func persistedEvaluationOrder(
+        _ definitions: [AchievementDefinition]
+    ) -> [AchievementDefinition] {
+        precondition(
+            Set(definitions.map(\.id)).count == definitions.count,
+            "Achievement IDs must be unique"
+        )
+        return definitions.sorted {
+            $0.id.rawValue.utf8.lexicographicallyPrecedes($1.id.rawValue.utf8)
+        }
+    }
+
+    static func persistedFingerprintMaterial(
+        for definitions: [AchievementDefinition] = launch
+    ) -> [String] {
+        let ordered = persistedEvaluationOrder(definitions)
+        let evaluator = AchievementEvaluator.persistedFingerprintMaterial
+        var material = [
+            persistedSemanticIdentifier,
+            "evaluatorMaterialCount", String(evaluator.count),
+        ] + evaluator
+        material.append(contentsOf: [
+            "achievementCount", String(ordered.count),
+        ])
+        for definition in ordered {
+            let rule = definition.rule.persistedFingerprintMaterial
+            material.append(contentsOf: [
+                "achievement", definition.id.rawValue,
+                "points", String(definition.points),
+                "ruleMaterialCount", String(rule.count),
+            ])
+            material.append(contentsOf: rule)
+        }
+        return material
+    }
 }

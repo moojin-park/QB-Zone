@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 @preconcurrency import CloudKit
 import XCTest
@@ -36,6 +37,125 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
                 .invalidPayloadFieldName
             )
         }
+    }
+
+    func testTransportFingerprintMaterialBindsExactSchemaAndAddressContracts()
+        throws
+    {
+        let configuration = try CloudKitCloudSyncConfiguration(
+            containerIdentifier: "iCloud.test.container",
+            zoneName: "TestZone",
+            payloadFieldName: "payload",
+            operationRecordType: "OperationMarker",
+            accountIdentifierNamespace: "account-namespace",
+            recordNameNamespace: "record-namespace"
+        )
+
+        XCTAssertEqual(
+            configuration.fingerprintMaterial,
+            [
+                "pocket-vector-cloudkit-transport-schema-v1",
+                "containerIdentifier", "iCloud.test.container",
+                "zoneName", "TestZone",
+                "payloadFieldName", "payload",
+                "operationRecordType", "OperationMarker",
+                "accountIdentifierNamespace", "account-namespace",
+                "recordNameNamespace", "record-namespace",
+                "recordEnvelopeSchemaVersion", "3",
+                "recordEnvelopeFields",
+                "fields,lastOperationFingerprint,logicalRecordID,schemaVersion",
+                "operationMarkerSchemaVersion", "2",
+                "operationMarkerFields",
+                "requestFingerprint,schemaVersion,targetRecordNames",
+                "payloadEncoding",
+                "sorted-key-json-default-keys-without-escaped-slashes-deferred-date-base64-data-nonfinite-float-throw-v1",
+                "databaseScope", "private",
+                "zoneOwner", "current-user-default",
+                "opaqueIdentifierDomain",
+                "pocket-vector-cloudkit-opaque-id-v1",
+                "recordAddressKind", "record-v1",
+                "accountAddressKind", "account-v1",
+                "operationAddressKind", "operation-v1",
+                "operationFingerprintDomain",
+                "pocket-vector-cloudkit-request-v2",
+                "opaqueAddressPolicy",
+                "domain-namespace-kind-value-stable-digest-lowercase-hex-v1",
+                "operationFingerprintPolicy",
+                "account-operation-count-framed-writes-by-id-count-framed-fields-by-key-precondition-and-bytes-v2",
+                "orderingPolicy", "utf8-byte-lexicographic-ascending-v1",
+                "preconditionCases", "change-tag(rawValue),must-not-exist,none",
+                "digestAlgorithm", "sha256-v1",
+                "digestComponentEncoding",
+                "uint64-big-endian-length-prefixed-bytes-v1",
+                "operationFingerprintCountEncoding",
+                "uint64-big-endian-as-length-prefixed-eight-byte-component-v1",
+                "digestHexEncoding", "lowercase-two-digit-hex-per-byte-v1",
+            ]
+        )
+    }
+
+    func testAddressAndPayloadCodecGoldenVectorsBindActualStoredBytes()
+        async throws
+    {
+        let client = FakeCloudKitPrivateDatabaseClient(
+            userRecordName: "provider-user-a"
+        )
+        let transport = try makeTransport(client: client)
+        let accountID = try await availableAccountID(transport)
+        _ = try await transport.commitAtomically(
+            writeRequest(
+                accountID: accountID,
+                operationID: "operation/golden-v1",
+                writes: [
+                    write(
+                        id: "record/golden-v1",
+                        value: "value/with/slashes",
+                        precondition: .mustNotExist
+                    ),
+                ]
+            )
+        )
+
+        let records = await client.recordsForUser("provider-user-a")
+        XCTAssertEqual(records.count, 2)
+        XCTAssertEqual(
+            accountID.rawValue,
+            "4ee89b5253341886aed65e94c6255b3f3a4498dae536ba27d3ea7e19c586d895"
+        )
+        XCTAssertEqual(
+            Set(records.map(\.recordName)),
+            [
+                "cbec03de07a8eaf1976e545e1afe7bcf36bfe3de38b845d6ca5f35509009ea41",
+                "a95bc95028abe42cbab1ae4d87d68e9d3ea582157aac6d30c2d98720c3ba7d31",
+            ]
+        )
+
+        var payloadDigests: [String: String] = [:]
+        for record in records {
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: record.payload)
+                    as? [String: Any]
+            )
+            let expectedKeys = record.recordType == "OperationMarker"
+                ? Set(["requestFingerprint", "schemaVersion", "targetRecordNames"])
+                : Set([
+                    "fields", "lastOperationFingerprint", "logicalRecordID",
+                    "schemaVersion",
+                ])
+            XCTAssertEqual(Set(object.keys), expectedKeys)
+            payloadDigests[record.recordType] = Data(
+                SHA256.hash(data: record.payload)
+            ).map { String(format: "%02x", $0) }.joined()
+        }
+        XCTAssertEqual(
+            payloadDigests,
+            [
+                "OperationMarker":
+                    "52aff05fa8eb429cc5f4247c1a33da910b7cbcca635083e13d7b0daddc4ab9d3",
+                "TestRecord":
+                    "abc1e0c7cbd27c5f9a5229b9159e2bcaec7693ff0bf504abacca155ff10e0ccd",
+            ]
+        )
     }
 
     func testAccountIdentityIsStableOpaqueAndChangesWithProviderAccount() async throws {
@@ -144,6 +264,287 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
         }
         let saveCount = await client.successfulSaveCount()
         XCTAssertEqual(saveCount, 1)
+    }
+
+    func testWriteCountFramingSeparatesLegacyTwoWriteVersusOneWriteCollision()
+        async throws
+    {
+        let twoWriteClient = FakeCloudKitPrivateDatabaseClient(
+            userRecordName: "provider-user-a"
+        )
+        let oneWriteClient = FakeCloudKitPrivateDatabaseClient(
+            userRecordName: "provider-user-a"
+        )
+        let twoWriteTransport = try makeTransport(client: twoWriteClient)
+        let oneWriteTransport = try makeTransport(client: oneWriteClient)
+        let accountID = try await availableAccountID(twoWriteTransport)
+        let oneWriteAccountID = try await availableAccountID(oneWriteTransport)
+        XCTAssertEqual(accountID, oneWriteAccountID)
+
+        let seedWrites = [
+            CloudRecordWrite(
+                id: CloudRecordID("0"),
+                recordType: "R",
+                fields: ["seed": Data("zero".utf8)],
+                precondition: .mustNotExist
+            ),
+            CloudRecordWrite(
+                id: CloudRecordID("a"),
+                recordType: "E",
+                fields: ["seed": Data("alpha".utf8)],
+                precondition: .mustNotExist
+            ),
+        ]
+        let twoSeed = try await twoWriteTransport.commitAtomically(
+            writeRequest(
+                accountID: accountID,
+                operationID: "seed-boundary-fixture",
+                writes: seedWrites
+            )
+        )
+        let oneSeed = try await oneWriteTransport.commitAtomically(
+            writeRequest(
+                accountID: accountID,
+                operationID: "seed-boundary-fixture",
+                writes: seedWrites
+            )
+        )
+        XCTAssertEqual(twoSeed.savedChangeTags, oneSeed.savedChangeTags)
+        let zeroTag = try XCTUnwrap(twoSeed.savedChangeTags[CloudRecordID("0")])
+        let alphaTag = try XCTUnwrap(twoSeed.savedChangeTags[CloudRecordID("a")])
+
+        // Without collection counts, both requests append the same component
+        // stream: 0,R,change-tag,zeroTag,a,E,change-tag,alphaTag. The one-write
+        // request disguises the second write as two field key/value pairs.
+        let operationID = "legacy-flat-boundary-collision"
+        let twoWrites = writeRequest(
+            accountID: accountID,
+            operationID: operationID,
+            writes: [
+                CloudRecordWrite(
+                    id: CloudRecordID("0"),
+                    recordType: "R",
+                    fields: [:],
+                    precondition: .changeTag(zeroTag)
+                ),
+                CloudRecordWrite(
+                    id: CloudRecordID("a"),
+                    recordType: "E",
+                    fields: [:],
+                    precondition: .changeTag(alphaTag)
+                ),
+            ]
+        )
+        let oneWrite = writeRequest(
+            accountID: accountID,
+            operationID: operationID,
+            writes: [
+                CloudRecordWrite(
+                    id: CloudRecordID("0"),
+                    recordType: "R",
+                    fields: [
+                        "a": Data("E".utf8),
+                        "change-tag": Data(alphaTag.rawValue.utf8),
+                    ],
+                    precondition: .changeTag(zeroTag)
+                ),
+            ]
+        )
+
+        let twoPreOperationNames = Set(
+            await twoWriteClient.recordsForUser("provider-user-a")
+                .map(\.recordName)
+        )
+        let onePreOperationNames = Set(
+            await oneWriteClient.recordsForUser("provider-user-a")
+                .map(\.recordName)
+        )
+        _ = try await twoWriteTransport.commitAtomically(twoWrites)
+        _ = try await oneWriteTransport.commitAtomically(oneWrite)
+
+        let twoStoredRecords = await twoWriteClient.recordsForUser(
+            "provider-user-a"
+        )
+        let oneStoredRecords = await oneWriteClient.recordsForUser(
+            "provider-user-a"
+        )
+        let twoMarker = try XCTUnwrap(
+            twoStoredRecords
+                .filter {
+                    $0.recordType == "OperationMarker"
+                        && !twoPreOperationNames.contains($0.recordName)
+                }
+                .compactMap {
+                    try? JSONDecoder().decode(
+                        TestCloudKitOperationMarkerV2.self,
+                        from: $0.payload
+                    )
+                }
+                .first { $0.targetRecordNames.count == 2 }
+        )
+        let oneMarker = try XCTUnwrap(
+            oneStoredRecords
+                .filter {
+                    $0.recordType == "OperationMarker"
+                        && !onePreOperationNames.contains($0.recordName)
+                }
+                .compactMap {
+                    try? JSONDecoder().decode(
+                        TestCloudKitOperationMarkerV2.self,
+                        from: $0.payload
+                    )
+                }
+                .first { $0.targetRecordNames.count == 1 }
+        )
+        XCTAssertNotEqual(
+            twoMarker.requestFingerprint,
+            oneMarker.requestFingerprint
+        )
+
+    }
+
+    func testFieldCountFramingRejectsSameTargetLegacyBoundaryShiftReplay()
+        async throws
+    {
+        let firstClient = FakeCloudKitPrivateDatabaseClient(
+            userRecordName: "provider-user-a"
+        )
+        let secondClient = FakeCloudKitPrivateDatabaseClient(
+            userRecordName: "provider-user-a"
+        )
+        let firstTransport = try makeTransport(client: firstClient)
+        let secondTransport = try makeTransport(client: secondClient)
+        let accountID = try await availableAccountID(firstTransport)
+        let secondAccountID = try await availableAccountID(secondTransport)
+        XCTAssertEqual(accountID, secondAccountID)
+
+        let seedWrites = [
+            CloudRecordWrite(
+                id: CloudRecordID("0"),
+                recordType: "R",
+                fields: ["seed": Data("zero".utf8)],
+                precondition: .mustNotExist
+            ),
+            CloudRecordWrite(
+                id: CloudRecordID("a"),
+                recordType: "E",
+                fields: ["seed": Data("alpha".utf8)],
+                precondition: .mustNotExist
+            ),
+        ]
+        let firstSeed = try await firstTransport.commitAtomically(
+            writeRequest(
+                accountID: accountID,
+                operationID: "seed-same-target-boundary-fixture",
+                writes: seedWrites
+            )
+        )
+        let secondSeed = try await secondTransport.commitAtomically(
+            writeRequest(
+                accountID: accountID,
+                operationID: "seed-same-target-boundary-fixture",
+                writes: seedWrites
+            )
+        )
+        XCTAssertEqual(firstSeed.savedChangeTags, secondSeed.savedChangeTags)
+        let zeroTag = try XCTUnwrap(firstSeed.savedChangeTags[CloudRecordID("0")])
+        let alphaTag = try XCTUnwrap(firstSeed.savedChangeTags[CloudRecordID("a")])
+        let mimicFields = [
+            "a": Data("E".utf8),
+            "change-tag": Data(alphaTag.rawValue.utf8),
+        ]
+        let operationID = "same-target-legacy-boundary-shift"
+
+        // Both requests target {0,a}. Without a field count on each write,
+        // their sorted legacy component streams are both P_A,P_B,P_B: one
+        // assigns the mimic fields to `a`; the other assigns them to `0`.
+        let firstRequest = writeRequest(
+            accountID: accountID,
+            operationID: operationID,
+            writes: [
+                CloudRecordWrite(
+                    id: CloudRecordID("0"),
+                    recordType: "R",
+                    fields: [:],
+                    precondition: .changeTag(zeroTag)
+                ),
+                CloudRecordWrite(
+                    id: CloudRecordID("a"),
+                    recordType: "E",
+                    fields: mimicFields,
+                    precondition: .changeTag(alphaTag)
+                ),
+            ]
+        )
+        let secondRequest = writeRequest(
+            accountID: accountID,
+            operationID: operationID,
+            writes: [
+                CloudRecordWrite(
+                    id: CloudRecordID("0"),
+                    recordType: "R",
+                    fields: mimicFields,
+                    precondition: .changeTag(zeroTag)
+                ),
+                CloudRecordWrite(
+                    id: CloudRecordID("a"),
+                    recordType: "E",
+                    fields: [:],
+                    precondition: .changeTag(alphaTag)
+                ),
+            ]
+        )
+
+        let firstPreOperationNames = Set(
+            await firstClient.recordsForUser("provider-user-a")
+                .map(\.recordName)
+        )
+        let secondPreOperationNames = Set(
+            await secondClient.recordsForUser("provider-user-a")
+                .map(\.recordName)
+        )
+        _ = try await firstTransport.commitAtomically(firstRequest)
+        _ = try await secondTransport.commitAtomically(secondRequest)
+
+        let decodedFirstMarker = await operationMarker(
+            in: firstClient,
+            excluding: firstPreOperationNames
+        )
+        let decodedSecondMarker = await operationMarker(
+            in: secondClient,
+            excluding: secondPreOperationNames
+        )
+        let firstMarker = try XCTUnwrap(decodedFirstMarker)
+        let secondMarker = try XCTUnwrap(decodedSecondMarker)
+        XCTAssertEqual(
+            firstMarker.targetRecordNames,
+            secondMarker.targetRecordNames
+        )
+        XCTAssertNotEqual(
+            firstMarker.requestFingerprint,
+            secondMarker.requestFingerprint
+        )
+
+        do {
+            _ = try await firstTransport.commitAtomically(secondRequest)
+            XCTFail("A same-target structural boundary shift must not replay")
+        } catch let error as CloudSyncTransportError {
+            XCTAssertEqual(
+                error,
+                .operationIDCollision(OperationID(operationID))
+            )
+        }
+        let successfulSaveCount = await firstClient.successfulSaveCount()
+        XCTAssertEqual(successfulSaveCount, 2)
+        let stored = try await firstTransport.records(
+            accountID: accountID,
+            ids: [CloudRecordID("0"), CloudRecordID("a")]
+        )
+        XCTAssertEqual(stored.first { $0.id == CloudRecordID("0") }?.fields, [:])
+        XCTAssertEqual(
+            stored.first { $0.id == CloudRecordID("a") }?.fields,
+            mimicFields
+        )
     }
 
     func testChangeTagConflictsAreSortedAndNeverOverwriteServerRecords() async throws {
@@ -391,7 +792,7 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
         )
     }
 
-    func testV2EnvelopeSupportsDiscoveryAndKnownReadsWhileFilteringMarkers() async throws {
+    func testV3EnvelopeSupportsDiscoveryAndKnownReadsWhileFilteringMarkers() async throws {
         let client = FakeCloudKitPrivateDatabaseClient(userRecordName: "provider-user-a")
         let transport = try makeTransport(client: client)
         let accountID = try await availableAccountID(transport)
@@ -412,10 +813,10 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(regularRecords.count, 2)
         for record in regularRecords {
             let envelope = try JSONDecoder().decode(
-                TestCloudKitRecordPayloadV2.self,
+                TestCloudKitRecordPayloadV3.self,
                 from: record.payload
             )
-            XCTAssertEqual(envelope.schemaVersion, 2)
+            XCTAssertEqual(envelope.schemaVersion, 3)
             XCTAssertTrue(
                 [CloudRecordID("record-a"), CloudRecordID("record-b")]
                     .contains(envelope.logicalRecordID)
@@ -556,7 +957,7 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
         }
     }
 
-    func testProviderNameMismatchAndMalformedV2PayloadFailClosed() async throws {
+    func testProviderNameMismatchAndMalformedV3PayloadFailClosed() async throws {
         let client = FakeCloudKitPrivateDatabaseClient(userRecordName: "provider-user-a")
         let transport = try makeTransport(client: client)
         let accountID = try await availableAccountID(transport)
@@ -572,8 +973,8 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
             storedRecords.first { $0.recordType == "TestRecord" }
         )
         let mismatchedPayload = try JSONEncoder().encode(
-            TestCloudKitRecordPayloadV2(
-                schemaVersion: 2,
+            TestCloudKitRecordPayloadV3(
+                schemaVersion: 3,
                 logicalRecordID: CloudRecordID("record-b"),
                 fields: ["value": Data("tampered".utf8)],
                 lastOperationFingerprint: Data("fingerprint".utf8)
@@ -887,6 +1288,24 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    private func operationMarker(
+        in client: FakeCloudKitPrivateDatabaseClient,
+        excluding recordNames: Set<String>
+    ) async -> TestCloudKitOperationMarkerV2? {
+        await client.recordsForUser("provider-user-a")
+            .filter {
+                $0.recordType == "OperationMarker"
+                    && !recordNames.contains($0.recordName)
+            }
+            .compactMap {
+                try? JSONDecoder().decode(
+                    TestCloudKitOperationMarkerV2.self,
+                    from: $0.payload
+                )
+            }
+            .first
+    }
+
     private func changePage(
         modifications: [CloudKitClientRecord] = [],
         deletions: [CloudKitClientRecordDeletion] = [],
@@ -903,7 +1322,7 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
 
     private func recordLogicalID(_ record: CloudKitClientRecord) -> CloudRecordID? {
         try? JSONDecoder().decode(
-            TestCloudKitRecordPayloadV2.self,
+            TestCloudKitRecordPayloadV3.self,
             from: record.payload
         ).logicalRecordID
     }
@@ -913,11 +1332,17 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
     }
 }
 
-private struct TestCloudKitRecordPayloadV2: Codable, Equatable, Sendable {
+private struct TestCloudKitRecordPayloadV3: Codable, Equatable, Sendable {
     let schemaVersion: Int
     let logicalRecordID: CloudRecordID
     let fields: [String: Data]
     let lastOperationFingerprint: Data
+}
+
+private struct TestCloudKitOperationMarkerV2: Codable, Equatable, Sendable {
+    let schemaVersion: Int
+    let requestFingerprint: Data
+    let targetRecordNames: [String]
 }
 
 private actor FakeCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {

@@ -9,6 +9,40 @@ enum CoinLedgerReason: Codable, Equatable, Hashable, Sendable {
     )
     case storeKit(transactionID: UInt64, packID: CoinPackID)
     case catalogUnlock(itemID: CatalogItemID)
+
+    enum PersistedCase: String, CaseIterable {
+        case gameplay
+        case signingBonus
+        case rewardedAd
+        case storeKit
+        case catalogUnlock
+
+        var associatedFields: [String] {
+            switch self {
+            case .gameplay:
+                ["runID", "economyVersion"]
+            case .signingBonus:
+                ["version"]
+            case .rewardedAd:
+                ["offerID", "providerTransactionID"]
+            case .storeKit:
+                ["transactionID", "packID"]
+            case .catalogUnlock:
+                ["itemID"]
+            }
+        }
+    }
+
+    static var persistedCaseManifest: String {
+        PersistedCase.allCases.sorted {
+            $0.rawValue.utf8.lexicographicallyPrecedes($1.rawValue.utf8)
+        }.map { persistedCase in
+            let fields = persistedCase.associatedFields.sorted {
+                $0.utf8.lexicographicallyPrecedes($1.utf8)
+            }.joined(separator: ",")
+            return "\(persistedCase.rawValue)(\(fields))"
+        }.joined(separator: ",")
+    }
 }
 
 struct CoinLedgerEntry: Codable, Equatable, Hashable, Sendable {
@@ -16,29 +50,60 @@ struct CoinLedgerEntry: Codable, Equatable, Hashable, Sendable {
     let delta: Int64
     let reason: CoinLedgerReason
     let createdAt: Date
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case id
+        case delta
+        case reason
+        case createdAt
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
 }
 
 enum CoinLedgerID {
+    static let addressSchemaIdentifier = "pocket-vector-coin-ledger-addresses-v1"
+    static let gameplayPrefix = "run/"
+    static let gameplaySuffix = "/reward"
+    static let signingBonusPrefix = "signing-bonus/v"
+    static let rewardedAdPrefix = "rewarded-ad/"
+    static let storeKitPrefix = "storekit/"
+    static let catalogUnlockPrefix = "unlock/"
+
+    static var fingerprintMaterial: [String] {
+        [
+            addressSchemaIdentifier,
+            "gameplayPrefix", gameplayPrefix,
+            "gameplaySuffix", gameplaySuffix,
+            "signingBonusPrefix", signingBonusPrefix,
+            "rewardedAdPrefix", rewardedAdPrefix,
+            "storeKitPrefix", storeKitPrefix,
+            "catalogUnlockPrefix", catalogUnlockPrefix,
+        ]
+    }
+
     static func gameplay(runID: RunID) -> LedgerEntryID {
-        LedgerEntryID("run/\(runID.description)/reward")
+        LedgerEntryID("\(gameplayPrefix)\(runID.description)\(gameplaySuffix)")
     }
 
     static func signingBonus(version: Int) -> LedgerEntryID {
-        LedgerEntryID("signing-bonus/v\(version)")
+        LedgerEntryID("\(signingBonusPrefix)\(version)")
     }
 
     static func rewardedAd(
         providerTransactionID: AdProviderTransactionID
     ) -> LedgerEntryID {
-        LedgerEntryID("rewarded-ad/\(providerTransactionID.rawValue)")
+        LedgerEntryID("\(rewardedAdPrefix)\(providerTransactionID.rawValue)")
     }
 
     static func storeKit(transactionID: UInt64) -> LedgerEntryID {
-        LedgerEntryID("storekit/\(transactionID)")
+        LedgerEntryID("\(storeKitPrefix)\(transactionID)")
     }
 
     static func catalogUnlock(itemID: CatalogItemID) -> LedgerEntryID {
-        LedgerEntryID("unlock/\(itemID.rawValue)")
+        LedgerEntryID("\(catalogUnlockPrefix)\(itemID.rawValue)")
     }
 }
 
@@ -80,6 +145,17 @@ enum CoinLedger {
 }
 
 struct RewardedAdState: Codable, Equatable, Sendable {
+    static let offerAddressSchemaIdentifier =
+        "pocket-vector-rewarded-ad-offer-address-v1"
+    static let offerIDPrefix = "reward-cycle/"
+
+    static var offerAddressFingerprintMaterial: [String] {
+        [
+            offerAddressSchemaIdentifier,
+            "offerIDPrefix", offerIDPrefix,
+        ]
+    }
+
     private(set) var cycle: UInt64
     private(set) var validRunsSinceReward: Int
     private(set) var eligibleOfferID: RewardOfferID?
@@ -137,7 +213,7 @@ struct RewardedAdState: Codable, Equatable, Sendable {
     }
 
     static func offerID(for cycle: UInt64) -> RewardOfferID {
-        RewardOfferID("reward-cycle/\(cycle)")
+        RewardOfferID("\(offerIDPrefix)\(cycle)")
     }
 }
 
@@ -148,7 +224,7 @@ struct RewardedAdState: Codable, Equatable, Sendable {
 /// upload can never become progress in a later cycle after another device has
 /// redeemed the offer.
 struct RewardedRunObservation: Codable, Equatable, Sendable {
-    enum Disposition: String, Codable, Equatable, Sendable {
+    enum Disposition: String, Codable, CaseIterable, Equatable, Sendable {
         case candidate
         case ignoredWhileOfferPending
         /// A pre-observation-schema run whose original reward cycle cannot be
@@ -159,6 +235,19 @@ struct RewardedRunObservation: Codable, Equatable, Sendable {
 
     let observedCycle: UInt64
     let disposition: Disposition
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case observedCycle
+        case disposition
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
+    static var dispositionCaseManifest: String {
+        Disposition.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
 }
 
 struct CoinPackDescriptor: Codable, Equatable, Hashable, Sendable {

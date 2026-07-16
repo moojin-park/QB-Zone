@@ -14,6 +14,33 @@ enum InventoryRuleError: Error, Equatable {
 }
 
 enum InventoryRules {
+    static let persistedSemanticIdentifier =
+        "pocket-vector-inventory-rules-persisted-semantics-v1"
+    static let initialInventoryPolicyIdentifier =
+        "initially-owned-teams-grant-primary-jerseys-and-initial-footballs-v1"
+    static let selectionValidationPolicyIdentifier =
+        "owned-team-associated-owned-jersey-and-owned-football-v1"
+    static let unlockTransitionPolicyIdentifier =
+        "team-grants-primary-alternate-requires-team-football-grants-global-v1"
+    static let defaultSelectionPolicyIdentifier =
+        "fixed-team-all-team-primaries-and-fixed-football-v1"
+    static let unlockReplayOrderingPolicyIdentifier =
+        "team-before-alternate-before-football-then-item-id-v1"
+
+    static var persistedFingerprintMaterial: [String] {
+        [
+            persistedSemanticIdentifier,
+            "initialInventoryPolicy", initialInventoryPolicyIdentifier,
+            "selectionValidationPolicy", selectionValidationPolicyIdentifier,
+            "unlockTransitionPolicy", unlockTransitionPolicyIdentifier,
+            "defaultSelectionPolicy", defaultSelectionPolicyIdentifier,
+            "unlockReplayOrderingPolicy", unlockReplayOrderingPolicyIdentifier,
+            "defaultSelectedTeamID", LaunchTeamID.novaCityComets.rawValue,
+            "defaultSelectedJerseyPolicy", "primary-jersey-for-each-team-v1",
+            "defaultSelectedFootballID", LaunchFootballID.standard.rawValue,
+        ]
+    }
+
     static func initialInventory(catalog: LaunchCatalog = .approved) -> PlayerInventory {
         let ownedTeams = Set(catalog.teams.filter(\.initiallyOwned).map(\.id))
         let primaryJerseys = Set(

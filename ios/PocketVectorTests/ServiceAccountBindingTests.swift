@@ -3,6 +3,52 @@ import XCTest
 @testable import PocketVector
 
 final class ServiceAccountBindingTests: XCTestCase {
+    func testProfileDerivationFingerprintMaterialIsVersionedAndExact() {
+        XCTAssertEqual(
+            CloudAccountDerivedBindings.profileFingerprintMaterial,
+            [
+                "pocket-vector-private-cloud-account-binding-derivation-v1",
+                "rootDomain",
+                "pocket-vector-private-cloud-account-binding-v1",
+                "playerIdentityDomain", "player-account-identity-v1",
+                "serviceAccountKeyDomain", "service-account-key-v1",
+                "profileIDDomain", "profile-id-v1",
+                "digestAlgorithm", "sha256-v1",
+                "componentEncoding",
+                "uint64-big-endian-length-prefixed-utf8-components-v1",
+                "hexEncoding", "lowercase-two-digit-hex-per-byte-v1",
+                "uuidEncoding",
+                "sha256-first-16-bytes-rfc9562-version-8-variant-v1",
+                "serviceAccountKeyType", "ServiceAccountKey",
+                "serviceAccountKeyEncoding", "single-value-raw-string-v1",
+            ]
+        )
+    }
+
+    func testServiceAccountKeyEncodingLabelMatchesProductionJSONShape() throws {
+        let binding = DurableAccountBinding(
+            accountKey: ServiceAccountKey("service-account-shape"),
+            profileID: UUID(
+                uuidString: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+            )!
+        )
+        let payload = try DurableEconomyCloudSchema.makePayloadEncoder()
+            .encode(binding)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: payload) as? [String: Any]
+        )
+
+        XCTAssertEqual(
+            String(decoding: try JSONEncoder().encode(binding.accountKey), as: UTF8.self),
+            "\"service-account-shape\""
+        )
+        XCTAssertEqual(
+            object["accountKey"] as? String,
+            binding.accountKey.rawValue
+        )
+        XCTAssertNil(object["accountKey"] as? [String: Any])
+    }
+
     func testCloudAccountBindingsAreStableAcrossDerivations() {
         let accountID = CloudAccountID(String(repeating: "a", count: 64))
 

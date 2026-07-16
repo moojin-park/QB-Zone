@@ -17,6 +17,9 @@ enum LaunchFootballID {
 }
 
 struct LaunchCatalog: Equatable, Sendable {
+    static let persistedSemanticIdentifier =
+        "pocket-vector-launch-catalog-persisted-semantics-v1"
+
     let teams: [TeamDescriptor]
     let footballs: [FootballDescriptor]
     let unlockableItems: [CatalogItemDescriptor]
@@ -51,6 +54,65 @@ struct LaunchCatalog: Equatable, Sendable {
 
     func item(id: CatalogItemID) -> CatalogItemDescriptor? {
         unlockableItems.first { $0.id == id }
+    }
+
+    /// Presentation order, display copy, palettes, and asset keys do not affect
+    /// persisted ownership. Every persisted relationship is normalized by its
+    /// stable identifier before entering the combined cloud scope.
+    var persistedFingerprintMaterial: [String] {
+        let orderedTeams = teams.sorted {
+            $0.id.rawValue.utf8.lexicographicallyPrecedes($1.id.rawValue.utf8)
+        }
+        let orderedFootballs = footballs.sorted {
+            $0.id.rawValue.utf8.lexicographicallyPrecedes($1.id.rawValue.utf8)
+        }
+        let orderedItems = unlockableItems.sorted {
+            $0.id.rawValue.utf8.lexicographicallyPrecedes($1.id.rawValue.utf8)
+        }
+        let inventoryRules = InventoryRules.persistedFingerprintMaterial
+
+        var material = [
+            Self.persistedSemanticIdentifier,
+            "inventoryRuleMaterialCount", String(inventoryRules.count),
+        ] + inventoryRules
+
+        material.append(contentsOf: ["teamCount", String(orderedTeams.count)])
+        for team in orderedTeams {
+            material.append(contentsOf: [
+                "team", team.id.rawValue,
+                "initiallyOwned", String(team.initiallyOwned),
+                "primaryJerseyID", team.primaryJersey.id.rawValue,
+                "primaryJerseyTeamID", team.primaryJersey.teamID.rawValue,
+                "primaryJerseyKind", team.primaryJersey.kind.rawValue,
+                "alternateJerseyID", team.alternateJersey.id.rawValue,
+                "alternateJerseyTeamID", team.alternateJersey.teamID.rawValue,
+                "alternateJerseyKind", team.alternateJersey.kind.rawValue,
+            ])
+        }
+
+        material.append(contentsOf: [
+            "footballCount", String(orderedFootballs.count),
+        ])
+        for football in orderedFootballs {
+            material.append(contentsOf: [
+                "football", football.id.rawValue,
+                "initiallyOwned", String(football.initiallyOwned),
+            ])
+        }
+
+        material.append(contentsOf: [
+            "unlockableItemCount", String(orderedItems.count),
+        ])
+        for item in orderedItems {
+            let kind = Self.persistedMaterial(for: item.kind)
+            material.append(contentsOf: [
+                "unlockableItem", item.id.rawValue,
+                "kindMaterialCount", String(kind.count),
+            ])
+            material.append(contentsOf: kind)
+            material.append(contentsOf: ["price", String(item.price)])
+        }
+        return material
     }
 
     static let approved: LaunchCatalog = {
@@ -207,5 +269,21 @@ struct LaunchCatalog: Equatable, Sendable {
                 fieldBranding: "teams/\(id.rawValue)/field-branding"
             )
         )
+    }
+
+    private static func persistedMaterial(
+        for kind: CatalogItemKind
+    ) -> [String] {
+        switch kind {
+        case let .team(teamID):
+            ["kind", "team", "targetTeamID", teamID.rawValue]
+        case let .alternateJersey(jerseyID):
+            [
+                "kind", "alternateJersey",
+                "targetJerseyID", jerseyID.rawValue,
+            ]
+        case let .football(footballID):
+            ["kind", "football", "targetFootballID", footballID.rawValue]
+        }
     }
 }

@@ -2,6 +2,35 @@ import Foundation
 import CryptoKit
 @preconcurrency import CloudKit
 
+enum CloudKitCloudSchema {
+    static let schemaIdentifier = "pocket-vector-cloudkit-transport-schema-v1"
+    static let recordEnvelopeSchemaVersion = 3
+    static let operationMarkerSchemaVersion = 2
+    static var recordEnvelopeFields: String {
+        CloudKitRecordPayloadV3.persistedFieldManifest
+    }
+    static var operationMarkerFields: String {
+        CloudKitOperationMarkerV2.persistedFieldManifest
+    }
+    static var payloadEncoding: String {
+        CloudKitPayloadCodec.encodingIdentifier
+    }
+    static let databaseScope = "private"
+    static let zoneOwner = "current-user-default"
+    static let opaqueIdentifierDomain = "pocket-vector-cloudkit-opaque-id-v1"
+    static let recordAddressKind = "record-v1"
+    static let accountAddressKind = "account-v1"
+    static let operationAddressKind = "operation-v1"
+    static let operationFingerprintDomain = "pocket-vector-cloudkit-request-v2"
+    static let opaqueAddressPolicyIdentifier =
+        "domain-namespace-kind-value-stable-digest-lowercase-hex-v1"
+    static let operationFingerprintPolicyIdentifier =
+        "account-operation-count-framed-writes-by-id-count-framed-fields-by-key-precondition-and-bytes-v2"
+    static let orderingPolicyIdentifier = "utf8-byte-lexicographic-ascending-v1"
+    static let preconditionCaseManifest =
+        "change-tag(rawValue),must-not-exist,none"
+}
+
 enum CloudKitCloudSyncConfigurationError: Error, Equatable, Sendable {
     case emptyContainerIdentifier
     case emptyZoneName
@@ -55,6 +84,45 @@ struct CloudKitCloudSyncConfiguration: Equatable, Sendable {
         self.operationRecordType = operationRecordType
         self.accountIdentifierNamespace = accountIdentifierNamespace
         self.recordNameNamespace = recordNameNamespace
+    }
+
+    var fingerprintMaterial: [String] {
+        [
+            CloudKitCloudSchema.schemaIdentifier,
+            "containerIdentifier", containerIdentifier,
+            "zoneName", zoneName,
+            "payloadFieldName", payloadFieldName,
+            "operationRecordType", operationRecordType,
+            "accountIdentifierNamespace", accountIdentifierNamespace,
+            "recordNameNamespace", recordNameNamespace,
+            "recordEnvelopeSchemaVersion",
+            String(CloudKitCloudSchema.recordEnvelopeSchemaVersion),
+            "recordEnvelopeFields", CloudKitCloudSchema.recordEnvelopeFields,
+            "operationMarkerSchemaVersion",
+            String(CloudKitCloudSchema.operationMarkerSchemaVersion),
+            "operationMarkerFields", CloudKitCloudSchema.operationMarkerFields,
+            "payloadEncoding", CloudKitCloudSchema.payloadEncoding,
+            "databaseScope", CloudKitCloudSchema.databaseScope,
+            "zoneOwner", CloudKitCloudSchema.zoneOwner,
+            "opaqueIdentifierDomain", CloudKitCloudSchema.opaqueIdentifierDomain,
+            "recordAddressKind", CloudKitCloudSchema.recordAddressKind,
+            "accountAddressKind", CloudKitCloudSchema.accountAddressKind,
+            "operationAddressKind", CloudKitCloudSchema.operationAddressKind,
+            "operationFingerprintDomain",
+            CloudKitCloudSchema.operationFingerprintDomain,
+            "opaqueAddressPolicy",
+            CloudKitCloudSchema.opaqueAddressPolicyIdentifier,
+            "operationFingerprintPolicy",
+            CloudKitCloudSchema.operationFingerprintPolicyIdentifier,
+            "orderingPolicy", CloudKitCloudSchema.orderingPolicyIdentifier,
+            "preconditionCases", CloudKitCloudSchema.preconditionCaseManifest,
+            "digestAlgorithm", StableDigestBuilder.algorithmIdentifier,
+            "digestComponentEncoding",
+            StableDigestBuilder.componentEncodingIdentifier,
+            "operationFingerprintCountEncoding",
+            StableDigestBuilder.countEncodingIdentifier,
+            "digestHexEncoding", StableDigestBuilder.hexEncodingIdentifier,
+        ]
     }
 
     private static func isValidSchemaIdentifier(_ value: String) -> Bool {
@@ -932,16 +1000,16 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
                 throw CloudKitCloudSyncError.malformedDiscoveredRecord
             }
 
-            let envelope: CloudKitRecordPayloadV2
+            let envelope: CloudKitRecordPayloadV3
             do {
                 envelope = try CloudKitPayloadCodec.decode(
-                    CloudKitRecordPayloadV2.self,
+                    CloudKitRecordPayloadV3.self,
                     from: clientRecord.payload
                 )
             } catch {
                 throw CloudKitCloudSyncError.malformedDiscoveredRecord
             }
-            guard envelope.schemaVersion == CloudKitRecordPayloadV2.currentSchemaVersion,
+            guard envelope.schemaVersion == CloudKitRecordPayloadV3.currentSchemaVersion,
                   !envelope.logicalRecordID.rawValue.isEmpty,
                   recordName(for: envelope.logicalRecordID) == clientRecord.recordName else {
                 throw CloudKitCloudSyncError.malformedDiscoveredRecord
@@ -1018,16 +1086,16 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
             guard let id = mapping[record.recordName] else {
                 throw CloudKitCloudSyncError.providerRequestRejected
             }
-            let envelope: CloudKitRecordPayloadV2
+            let envelope: CloudKitRecordPayloadV3
             do {
                 envelope = try CloudKitPayloadCodec.decode(
-                    CloudKitRecordPayloadV2.self,
+                    CloudKitRecordPayloadV3.self,
                     from: record.payload
                 )
             } catch {
                 throw CloudKitCloudSyncError.malformedRecord(id)
             }
-            guard envelope.schemaVersion == CloudKitRecordPayloadV2.currentSchemaVersion,
+            guard envelope.schemaVersion == CloudKitRecordPayloadV3.currentSchemaVersion,
                   envelope.logicalRecordID == id,
                   recordName(for: id) == record.recordName,
                   !record.recordType.isEmpty,
@@ -1055,7 +1123,7 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
         let mapping = try recordNameMapping(for: writeIDs)
         let fingerprint = CloudKitOperationFingerprint.make(request)
         let markerName = operationMarkerName(for: request.operationID)
-        let targetNames = mapping.keys.sorted()
+        let targetNames = mapping.keys.sorted(by: CloudKitStableOrdering.precedes)
 
         if let recovered = try await recoverReceiptIfPresent(
             request: request,
@@ -1072,8 +1140,8 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
         // receives the old account's queued operation.
         let expectedProviderRecordName = try await revalidate(request.accountID)
 
-        let marker = CloudKitOperationMarkerV1(
-            schemaVersion: CloudKitOperationMarkerV1.currentSchemaVersion,
+        let marker = CloudKitOperationMarkerV2(
+            schemaVersion: CloudKitOperationMarkerV2.currentSchemaVersion,
             requestFingerprint: fingerprint,
             targetRecordNames: targetNames
         )
@@ -1083,8 +1151,8 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
             guard let recordName = mapping.first(where: { $0.value == write.id })?.key else {
                 throw CloudKitCloudSyncError.invalidRequest
             }
-            let payload = CloudKitRecordPayloadV2(
-                schemaVersion: CloudKitRecordPayloadV2.currentSchemaVersion,
+            let payload = CloudKitRecordPayloadV3(
+                schemaVersion: CloudKitRecordPayloadV3.currentSchemaVersion,
                 logicalRecordID: write.id,
                 fields: write.fields,
                 lastOperationFingerprint: fingerprint
@@ -1159,20 +1227,20 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
             throw CloudKitCloudSyncError.malformedOperationMarker
         }
 
-        let marker: CloudKitOperationMarkerV1
+        let marker: CloudKitOperationMarkerV2
         do {
             marker = try CloudKitPayloadCodec.decode(
-                CloudKitOperationMarkerV1.self,
+                CloudKitOperationMarkerV2.self,
                 from: markerRecord.payload
             )
         } catch {
             throw CloudKitCloudSyncError.malformedOperationMarker
         }
-        guard marker.schemaVersion == CloudKitOperationMarkerV1.currentSchemaVersion,
+        guard marker.schemaVersion == CloudKitOperationMarkerV2.currentSchemaVersion,
               marker.requestFingerprint == fingerprint,
               marker.targetRecordNames == targetNames
         else {
-            if marker.schemaVersion == CloudKitOperationMarkerV1.currentSchemaVersion {
+            if marker.schemaVersion == CloudKitOperationMarkerV2.currentSchemaVersion {
                 throw CloudSyncTransportError.operationIDCollision(request.operationID)
             }
             throw CloudKitCloudSyncError.malformedOperationMarker
@@ -1200,10 +1268,10 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
             guard let record = targetByName[name],
                   let id = recordNameToID[name],
                   let payload = try? CloudKitPayloadCodec.decode(
-                      CloudKitRecordPayloadV2.self,
+                      CloudKitRecordPayloadV3.self,
                       from: record.payload
                   ),
-                  payload.schemaVersion == CloudKitRecordPayloadV2.currentSchemaVersion,
+                  payload.schemaVersion == CloudKitRecordPayloadV3.currentSchemaVersion,
                   payload.logicalRecordID == id,
                   recordName(for: id) == name,
                   payload.lastOperationFingerprint == fingerprint
@@ -1303,7 +1371,7 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
     private func recordName(for id: CloudRecordID) -> String {
         CloudKitOpaqueIdentifier.make(
             namespace: configuration.recordNameNamespace,
-            kind: "record-v1",
+            kind: CloudKitCloudSchema.recordAddressKind,
             value: id.rawValue
         )
     }
@@ -1312,7 +1380,7 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
         CloudAccountID(
             CloudKitOpaqueIdentifier.make(
                 namespace: configuration.accountIdentifierNamespace,
-                kind: "account-v1",
+                kind: CloudKitCloudSchema.accountAddressKind,
                 value: recordName
             )
         )
@@ -1321,7 +1389,7 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
     private func operationMarkerName(for operationID: OperationID) -> String {
         CloudKitOpaqueIdentifier.make(
             namespace: configuration.recordNameNamespace,
-            kind: "operation-v1",
+            kind: CloudKitCloudSchema.operationAddressKind,
             value: operationID.rawValue
         )
     }
@@ -1410,39 +1478,72 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
     }
 }
 
-private struct CloudKitRecordPayloadV2: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 2
+private struct CloudKitRecordPayloadV3: Codable, Equatable, Sendable {
+    static let currentSchemaVersion = CloudKitCloudSchema.recordEnvelopeSchemaVersion
 
     let schemaVersion: Int
     let logicalRecordID: CloudRecordID
     let fields: [String: Data]
     let lastOperationFingerprint: Data
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion
+        case logicalRecordID
+        case fields
+        case lastOperationFingerprint
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
 }
 
-private struct CloudKitOperationMarkerV1: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 1
+private struct CloudKitOperationMarkerV2: Codable, Equatable, Sendable {
+    static let currentSchemaVersion = CloudKitCloudSchema.operationMarkerSchemaVersion
 
     let schemaVersion: Int
     let requestFingerprint: Data
     let targetRecordNames: [String]
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion
+        case requestFingerprint
+        case targetRecordNames
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
 }
 
 private enum CloudKitPayloadCodec {
+    static let encodingIdentifier =
+        "sorted-key-json-default-keys-without-escaped-slashes-deferred-date-base64-data-nonfinite-float-throw-v1"
+
     static func encode<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        encoder.keyEncodingStrategy = .useDefaultKeys
+        encoder.dateEncodingStrategy = .deferredToDate
+        encoder.dataEncodingStrategy = .base64
+        encoder.nonConformingFloatEncodingStrategy = .throw
         return try encoder.encode(value)
     }
 
     static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-        try JSONDecoder().decode(type, from: data)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .useDefaultKeys
+        decoder.dateDecodingStrategy = .deferredToDate
+        decoder.dataDecodingStrategy = .base64
+        decoder.nonConformingFloatDecodingStrategy = .throw
+        return try decoder.decode(type, from: data)
     }
 }
 
 private enum CloudKitOpaqueIdentifier {
     static func make(namespace: String, kind: String, value: String) -> String {
         var builder = StableDigestBuilder()
-        builder.append("pocket-vector-cloudkit-opaque-id-v1")
+        builder.append(CloudKitCloudSchema.opaqueIdentifierDomain)
         builder.append(namespace)
         builder.append(kind)
         builder.append(value)
@@ -1453,11 +1554,15 @@ private enum CloudKitOpaqueIdentifier {
 private enum CloudKitOperationFingerprint {
     static func make(_ request: CloudAtomicWriteRequest) -> Data {
         var builder = StableDigestBuilder()
-        builder.append("pocket-vector-cloudkit-request-v1")
+        builder.append(CloudKitCloudSchema.operationFingerprintDomain)
         builder.append(request.accountID.rawValue)
         builder.append(request.operationID.rawValue)
 
-        for write in request.writes.sorted(by: { $0.id.rawValue < $1.id.rawValue }) {
+        let writes = request.writes.sorted(by: {
+            CloudKitStableOrdering.precedes($0.id.rawValue, $1.id.rawValue)
+        })
+        builder.appendCount(writes.count)
+        for write in writes {
             builder.append(write.id.rawValue)
             builder.append(write.recordType)
             switch write.precondition {
@@ -1469,7 +1574,8 @@ private enum CloudKitOperationFingerprint {
                 builder.append("change-tag")
                 builder.append(tag.rawValue)
             }
-            for key in write.fields.keys.sorted() {
+            builder.appendCount(write.fields.count)
+            for key in write.fields.keys.sorted(by: CloudKitStableOrdering.precedes) {
                 builder.append(key)
                 builder.append(write.fields[key] ?? Data())
             }
@@ -1478,7 +1584,21 @@ private enum CloudKitOperationFingerprint {
     }
 }
 
+private enum CloudKitStableOrdering {
+    static func precedes(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.utf8.lexicographicallyPrecedes(rhs.utf8)
+    }
+}
+
 private struct StableDigestBuilder {
+    static let algorithmIdentifier = "sha256-v1"
+    static let componentEncodingIdentifier =
+        "uint64-big-endian-length-prefixed-bytes-v1"
+    static let countEncodingIdentifier =
+        "uint64-big-endian-as-length-prefixed-eight-byte-component-v1"
+    static let hexEncodingIdentifier =
+        "lowercase-two-digit-hex-per-byte-v1"
+
     private var bytes = Data()
 
     mutating func append(_ string: String) {
@@ -1491,6 +1611,14 @@ private struct StableDigestBuilder {
             bytes.append(contentsOf: raw)
         }
         bytes.append(data)
+    }
+
+    mutating func appendCount(_ count: Int) {
+        precondition(count >= 0, "A collection count cannot be negative")
+        var value = UInt64(count).bigEndian
+        withUnsafeBytes(of: &value) { raw in
+            append(Data(raw))
+        }
     }
 
     func digest() -> Data {

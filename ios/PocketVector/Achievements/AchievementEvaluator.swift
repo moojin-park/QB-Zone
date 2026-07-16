@@ -1,6 +1,45 @@
 import Foundation
 
 enum AchievementEvaluator {
+    static let persistedSemanticIdentifier =
+        "pocket-vector-achievement-evaluator-semantics-v1"
+    static let eligibleRunPolicyIdentifier =
+        "naturally-completed-runs-only-v1"
+    static let evaluationOrderPolicyIdentifier =
+        "achievement-id-utf8-ascending-v1"
+    static let progressPolicyIdentifier =
+        "monotonic-max-percent-and-first-completion-date-v1"
+    static let binaryProgressPolicyIdentifier =
+        "value-greater-than-or-equal-target-yields-100-else-0-v1"
+    static let scaledProgressPolicyIdentifier =
+        "target-nonpositive-100-else-clamped-integer-floor-percent-v1"
+    static let allLanesPolicyIdentifier =
+        "set-intersection-with-all-lane-ids-v1"
+
+    static var persistedFingerprintMaterial: [String] {
+        let completedRun = CompletedRun.achievementEligibilityFingerprintMaterial
+        let runStatistics =
+            RunStatisticsSnapshot.achievementDependencyFingerprintMaterial
+        let career = CareerStatistics.achievementDependencyFingerprintMaterial
+        let accumulator = PersistedCareerAccumulatorV1.persistedFingerprintMaterial
+        return [
+            persistedSemanticIdentifier,
+            "eligibleRunPolicy", eligibleRunPolicyIdentifier,
+            "evaluationOrderPolicy", evaluationOrderPolicyIdentifier,
+            "progressPolicy", progressPolicyIdentifier,
+            "binaryProgressPolicy", binaryProgressPolicyIdentifier,
+            "scaledProgressPolicy", scaledProgressPolicyIdentifier,
+            "allLanesPolicy", allLanesPolicyIdentifier,
+            "completedRunDependencyMaterialCount", String(completedRun.count),
+        ] + completedRun + [
+            "runStatisticsDependencyMaterialCount", String(runStatistics.count),
+        ] + runStatistics + [
+            "careerDependencyMaterialCount", String(career.count),
+        ] + career + [
+            "careerAccumulatorDependencyMaterialCount", String(accumulator.count),
+        ] + accumulator
+    }
+
     static func evaluate(
         run: CompletedRun,
         careerAfter: CareerStatistics,
@@ -9,7 +48,9 @@ enum AchievementEvaluator {
     ) -> [AchievementProgressUpdate] {
         guard run.isNaturallyCompleted else { return [] }
 
-        return AchievementCatalog.launch.compactMap { definition in
+        return AchievementCatalog.persistedEvaluationOrder(
+            AchievementCatalog.launch
+        ).compactMap { definition in
             let previous = existing[definition.id]
                 ?? AchievementProgress(id: definition.id)
             let evaluatedPercent = percentComplete(

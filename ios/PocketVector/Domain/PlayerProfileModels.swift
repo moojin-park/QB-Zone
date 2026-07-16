@@ -130,6 +130,11 @@ struct PlayerInventory: Codable, Equatable, Sendable {
 }
 
 struct CareerStatistics: Codable, Equatable, Sendable {
+    static let achievementDependencySemanticIdentifier =
+        "pocket-vector-career-statistics-achievement-dependencies-v1"
+    static let successfulPassesPolicyIdentifier =
+        "completions-plus-touchdowns-native-int-v1"
+
     var completedRuns = 0
     var rewardEligibleRuns = 0
     var attempts = 0
@@ -143,6 +148,13 @@ struct CareerStatistics: Codable, Equatable, Sendable {
 
     var successfulPasses: Int {
         completions + touchdowns
+    }
+
+    static var achievementDependencyFingerprintMaterial: [String] {
+        [
+            achievementDependencySemanticIdentifier,
+            "successfulPassesPolicy", successfulPassesPolicyIdentifier,
+        ]
     }
 
     mutating func apply(_ run: CompletedRun) {

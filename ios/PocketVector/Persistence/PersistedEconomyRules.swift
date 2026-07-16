@@ -90,6 +90,49 @@ enum PersistedEconomyRulesV1 {
 }
 
 enum PersistedCareerAccumulatorV1 {
+    static let semanticIdentifier =
+        "pocket-vector-persisted-career-accumulator-v1"
+    static let naturalCompletionPolicyIdentifier =
+        "supported-economy-version-and-timer-expired-with-exact-persisted-run-duration-v1"
+    static let nonNaturalRunPolicyIdentifier = "return-input-career-unchanged-v1"
+    static let integerAdditionPolicyIdentifier =
+        "native-int-adding-reporting-overflow-throws-arithmetic-overflow-v1"
+    static let totalScoreAdditionPolicyIdentifier =
+        "int64-adding-reporting-overflow-throws-arithmetic-overflow-v1"
+    static let highestScorePolicyIdentifier = "maximum-existing-and-run-score-v1"
+    static let recomputePolicyIdentifier =
+        "input-sequence-left-fold-from-zero-career-v1"
+    static let fieldUpdateManifest =
+        "attempts+=run.attempts,bonusTouchdowns+=run.bonusTouchdownCount," +
+        "completedRuns+=1,completions+=run.completions," +
+        "incompletions+=run.incompletions," +
+        "interceptions+=run.interceptions," +
+        "rewardEligibleRuns+=1-if-eligible,touchdowns+=run.touchdowns"
+
+    static var persistedFingerprintMaterial: [String] {
+        let rules = PersistedEconomyRulesV1.run
+        return [
+            semanticIdentifier,
+            "supportedEconomyVersion", String(rules.economyVersion),
+            "naturalCompletionPolicy", naturalCompletionPolicyIdentifier,
+            "naturalCompletionFinishReason",
+            RunFinishReason.timerExpired.rawValue,
+            "naturalCompletionMilliseconds",
+            String(rules.naturalRunMilliseconds),
+            "rewardEligibilityMinimumAttempts",
+            String(rules.minimumRewardAttempts),
+            "nonNaturalRunPolicy", nonNaturalRunPolicyIdentifier,
+            "fieldUpdates", fieldUpdateManifest,
+            "integerAdditionPolicy", integerAdditionPolicyIdentifier,
+            "successfulPassesOverflowCheck",
+            "checked-completions-plus-touchdowns-v1",
+            "highestScorePolicy", highestScorePolicyIdentifier,
+            "totalScoreUpdate", "existing-totalScore-plus-int64-run-score-v1",
+            "totalScoreAdditionPolicy", totalScoreAdditionPolicyIdentifier,
+            "recomputePolicy", recomputePolicyIdentifier,
+        ]
+    }
+
     static func applying(
         _ run: CompletedRun,
         to career: CareerStatistics

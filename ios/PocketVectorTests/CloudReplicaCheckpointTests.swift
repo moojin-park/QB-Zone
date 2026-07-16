@@ -672,9 +672,21 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(fingerprint, CloudReplicaScopeFingerprint.make(for: base))
         XCTAssertEqual(
             fingerprint.rawValue,
-            "3cf897580315794f23fa98294a6da0aa541cde3168a9b271497abd366ab21380"
+            "75ab98aa0642a71968b2e793e5acbf466b72db447a8e80e92b5566fd592eb95c"
         )
         XCTAssertEqual(fingerprint.rawValue.count, 64)
+        XCTAssertEqual(
+            CloudReplicaScopeFingerprint.orderedMaterial(for: base),
+            [
+                CloudReplicaScopeFingerprint.scopeDomain,
+                "transport", String(base.transport.fingerprintMaterial.count),
+            ]
+                + base.transport.fingerprintMaterial
+                + ["economy", String(base.economy.fingerprintMaterial.count)]
+                + base.economy.fingerprintMaterial
+                + ["profile", String(base.profile.fingerprintMaterial.count)]
+                + base.profile.fingerprintMaterial
+        )
 
         let variants = [
             try productionConfiguration(containerIdentifier: "iCloud.com.pocketvector.other"),
@@ -686,10 +698,289 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             try productionConfiguration(economyRecordID: "economy-head-other"),
             try productionConfiguration(economyRecordType: "EconomyRecordOther"),
             try productionConfiguration(economyPayloadFieldName: "economyPayloadOther"),
+            try productionConfiguration(profileRootRecordType: "ProfileRootOther"),
+            try productionConfiguration(
+                profileSettingsRecordType: "ProfileSettingsOther"
+            ),
+            try productionConfiguration(
+                profileSelectionRecordType: "ProfileSelectionOther"
+            ),
+            try productionConfiguration(profileRunRecordType: "ProfileRunOther"),
+            try productionConfiguration(profilePayloadFieldName: "profilePayloadOther"),
         ]
         let variantFingerprints = variants.map(CloudReplicaScopeFingerprint.make(for:))
         XCTAssertEqual(Set(variantFingerprints).count, variants.count)
         XCTAssertTrue(variantFingerprints.allSatisfy { $0 != fingerprint })
+
+        let operationalVariant = try productionConfiguration(conflictRetryLimit: 99)
+        XCTAssertNotEqual(base.economy, operationalVariant.economy)
+        XCTAssertEqual(
+            fingerprint,
+            CloudReplicaScopeFingerprint.make(for: operationalVariant)
+        )
+    }
+
+    func testCatalogAndAchievementSemanticMaterialIsNormalizedAndSensitive()
+        throws
+    {
+        let catalog = LaunchCatalog.approved
+        let reorderedCatalog = LaunchCatalog(
+            teams: Array(catalog.teams.reversed()),
+            footballs: Array(catalog.footballs.reversed()),
+            unlockableItems: Array(catalog.unlockableItems.reversed())
+        )
+        XCTAssertEqual(
+            catalog.persistedFingerprintMaterial,
+            reorderedCatalog.persistedFingerprintMaterial
+        )
+
+        var repricedItems = catalog.unlockableItems
+        let originalItem = try XCTUnwrap(repricedItems.first)
+        repricedItems[0] = CatalogItemDescriptor(
+            id: originalItem.id,
+            displayName: originalItem.displayName,
+            kind: originalItem.kind,
+            price: originalItem.price + 1
+        )
+        XCTAssertNotEqual(
+            catalog.persistedFingerprintMaterial,
+            LaunchCatalog(
+                teams: catalog.teams,
+                footballs: catalog.footballs,
+                unlockableItems: repricedItems
+            ).persistedFingerprintMaterial
+        )
+
+        let achievements = AchievementCatalog.launch
+        XCTAssertEqual(
+            AchievementCatalog.persistedFingerprintMaterial(for: achievements),
+            AchievementCatalog.persistedFingerprintMaterial(
+                for: Array(achievements.reversed())
+            )
+        )
+        var changedPoints = achievements
+        let first = try XCTUnwrap(changedPoints.first)
+        changedPoints[0] = AchievementDefinition(
+            id: first.id,
+            displayName: first.displayName,
+            detail: first.detail,
+            points: first.points + 1,
+            rule: first.rule
+        )
+        XCTAssertNotEqual(
+            AchievementCatalog.persistedFingerprintMaterial(for: achievements),
+            AchievementCatalog.persistedFingerprintMaterial(for: changedPoints)
+        )
+
+        var changedRule = achievements
+        changedRule[0] = AchievementDefinition(
+            id: first.id,
+            displayName: first.displayName,
+            detail: first.detail,
+            points: first.points,
+            rule: .careerSuccessfulPasses(2)
+        )
+        XCTAssertNotEqual(
+            AchievementCatalog.persistedFingerprintMaterial(for: achievements),
+            AchievementCatalog.persistedFingerprintMaterial(for: changedRule)
+        )
+
+        XCTAssertEqual(
+            CloudProfileDigest.hex(
+                CloudProfileDigest.sha256(
+                    components: catalog.persistedFingerprintMaterial
+                )
+            ),
+            "74420bf94ecb3707676b6a784a9a1df36f784faac8b83f792b8cabee786d024b"
+        )
+        XCTAssertEqual(
+            CloudProfileDigest.hex(
+                CloudProfileDigest.sha256(
+                    components: AchievementCatalog.persistedFingerprintMaterial()
+                )
+            ),
+            "2a0067b16b3a62d9ef99e1ca215efdc1aabae38b474eac52eebf2669c62ce057"
+        )
+    }
+
+    func testAchievementScopeBindsExactProductionDependencySemantics() {
+        let completedRun = [
+            "pocket-vector-completed-run-achievement-eligibility-v1",
+            "requiredFinishReason", "timerExpired",
+            "minimumElapsedGameplayMilliseconds", "60000",
+            "elapsedComparison", "greater-than-or-equal-v1",
+        ]
+        let runStatistics = [
+            "pocket-vector-run-statistics-achievement-dependencies-v1",
+            "successfulPassesPolicy",
+            "completions-plus-touchdowns-native-int-v1",
+            "accuracyPolicy",
+            "attempts-gte-minimum-and-positive-then-successful-passes-times-100-gte-attempts-times-percent-native-int-v1",
+        ]
+        let career = [
+            "pocket-vector-career-statistics-achievement-dependencies-v1",
+            "successfulPassesPolicy",
+            "completions-plus-touchdowns-native-int-v1",
+        ]
+        let accumulator = [
+            "pocket-vector-persisted-career-accumulator-v1",
+            "supportedEconomyVersion", "1",
+            "naturalCompletionPolicy",
+            "supported-economy-version-and-timer-expired-with-exact-persisted-run-duration-v1",
+            "naturalCompletionFinishReason", "timerExpired",
+            "naturalCompletionMilliseconds", "60000",
+            "rewardEligibilityMinimumAttempts", "3",
+            "nonNaturalRunPolicy", "return-input-career-unchanged-v1",
+            "fieldUpdates",
+            "attempts+=run.attempts,bonusTouchdowns+=run.bonusTouchdownCount,completedRuns+=1,completions+=run.completions,incompletions+=run.incompletions,interceptions+=run.interceptions,rewardEligibleRuns+=1-if-eligible,touchdowns+=run.touchdowns",
+            "integerAdditionPolicy",
+            "native-int-adding-reporting-overflow-throws-arithmetic-overflow-v1",
+            "successfulPassesOverflowCheck",
+            "checked-completions-plus-touchdowns-v1",
+            "highestScorePolicy", "maximum-existing-and-run-score-v1",
+            "totalScoreUpdate",
+            "existing-totalScore-plus-int64-run-score-v1",
+            "totalScoreAdditionPolicy",
+            "int64-adding-reporting-overflow-throws-arithmetic-overflow-v1",
+            "recomputePolicy",
+            "input-sequence-left-fold-from-zero-career-v1",
+        ]
+
+        XCTAssertEqual(
+            CompletedRun.achievementEligibilityFingerprintMaterial,
+            completedRun
+        )
+        XCTAssertEqual(
+            RunStatisticsSnapshot.achievementDependencyFingerprintMaterial,
+            runStatistics
+        )
+        XCTAssertEqual(
+            CareerStatistics.achievementDependencyFingerprintMaterial,
+            career
+        )
+        XCTAssertEqual(
+            PersistedCareerAccumulatorV1.persistedFingerprintMaterial,
+            accumulator
+        )
+        XCTAssertEqual(
+            AchievementEvaluator.persistedFingerprintMaterial,
+            [
+                "pocket-vector-achievement-evaluator-semantics-v1",
+                "eligibleRunPolicy", "naturally-completed-runs-only-v1",
+                "evaluationOrderPolicy",
+                "achievement-id-utf8-ascending-v1",
+                "progressPolicy",
+                "monotonic-max-percent-and-first-completion-date-v1",
+                "binaryProgressPolicy",
+                "value-greater-than-or-equal-target-yields-100-else-0-v1",
+                "scaledProgressPolicy",
+                "target-nonpositive-100-else-clamped-integer-floor-percent-v1",
+                "allLanesPolicy", "set-intersection-with-all-lane-ids-v1",
+                "completedRunDependencyMaterialCount",
+                String(completedRun.count),
+            ] + completedRun + [
+                "runStatisticsDependencyMaterialCount",
+                String(runStatistics.count),
+            ] + runStatistics + [
+                "careerDependencyMaterialCount", String(career.count),
+            ] + career + [
+                "careerAccumulatorDependencyMaterialCount",
+                String(accumulator.count),
+            ] + accumulator
+        )
+
+        XCTAssertTrue(
+            RunStatisticsSnapshot(
+                attempts: 12,
+                completions: 6,
+                touchdowns: 4
+            ).meetsAccuracy(percent: 80, minimumAttempts: 12)
+        )
+        XCTAssertFalse(
+            RunStatisticsSnapshot(
+                attempts: 11,
+                completions: 7,
+                touchdowns: 3,
+                incompletions: 1
+            ).meetsAccuracy(percent: 80, minimumAttempts: 12)
+        )
+        var careerFixture = CareerStatistics()
+        careerFixture.completions = 7
+        careerFixture.touchdowns = 3
+        XCTAssertEqual(careerFixture.successfulPasses, 10)
+    }
+
+    func testScopeResetRequiresExplicitEpochRevocationAndFreshBootstrap()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let oldEpoch = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
+        let freshEpoch = UUID(uuidString: "20000000-0000-4000-8000-000000000002")!
+        // Frozen pre-release transport/economy-only scope digest.
+        let oldScope = CloudReplicaScopeFingerprint(
+            rawValue:
+                "3cf897580315794f23fa98294a6da0aa541cde3168a9b271497abd366ab21380"
+        )
+        let newScope = scopeFingerprint()
+        let store = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
+        let oldCheckpoint = try CloudReplicaCheckpointV1(
+            accountID: accountA,
+            configurationScopeFingerprint: oldScope,
+            generation: 1,
+            finalCursor: cursor("pre-release-v2-cursor"),
+            recordsByLogicalID: [:],
+            providerLocatorByLogicalID: [:],
+            logicalIDByProviderLocator: [:],
+            tombstonesByProviderLocator: [:],
+            replicaEpoch: oldEpoch
+        )
+        try await store.activate(replicaEpoch: oldEpoch, for: accountA)
+        try await store.save(oldCheckpoint, at: Date(timeIntervalSince1970: 5_000))
+
+        let wrongScope = try await store.load(
+            for: accountA,
+            configurationScopeFingerprint: newScope,
+            at: Date(timeIntervalSince1970: 5_001)
+        )
+        XCTAssertNil(wrongScope.checkpoint)
+        do {
+            try await store.activate(replicaEpoch: freshEpoch, for: accountA)
+            XCTFail("A schema reset must not rotate an active epoch implicitly")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .replicaEpochMismatch
+            )
+        }
+
+        try await store.remove(for: accountA, revoking: oldEpoch)
+        try await store.activate(replicaEpoch: freshEpoch, for: accountA)
+        var accumulator = CloudReplicaStagedAccumulator(
+            accountID: accountA,
+            configurationScopeFingerprint: newScope,
+            replicaEpoch: freshEpoch
+        )
+        let firstFetch = page(
+            accountID: accountA,
+            requestedAfter: nil,
+            scope: newScope,
+            cursor: "fresh-v2-cursor",
+            moreComing: false
+        )
+        XCTAssertNil(firstFetch.requestedAfterCursor)
+        let freshCheckpoint = try XCTUnwrap(accumulator.apply(firstFetch))
+        XCTAssertEqual(freshCheckpoint.generation, 1)
+        try await store.save(
+            freshCheckpoint,
+            at: Date(timeIntervalSince1970: 5_002)
+        )
+        let loaded = try await store.load(
+            for: accountA,
+            configurationScopeFingerprint: newScope,
+            at: Date(timeIntervalSince1970: 5_003)
+        )
+        XCTAssertEqual(loaded.checkpoint, freshCheckpoint)
     }
 
     func testDiskStoreRecoversPrimaryFromBackupAndRepairsCorruptBackup() async throws {
@@ -2284,9 +2575,15 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         recordNameNamespace: String = "record-v1",
         economyRecordID: String = "economy-head",
         economyRecordType: String = "EconomyRecord",
-        economyPayloadFieldName: String = "economyPayload"
+        economyPayloadFieldName: String = "economyPayload",
+        conflictRetryLimit: Int = 3,
+        profileRootRecordType: String = "ProfileRoot",
+        profileSettingsRecordType: String = "ProfileSettings",
+        profileSelectionRecordType: String = "ProfileSelection",
+        profileRunRecordType: String = "ProfileRun",
+        profilePayloadFieldName: String = "profilePayload"
     ) throws -> ProductionCloudWriteConfiguration {
-        ProductionCloudWriteConfiguration(
+        try ProductionCloudWriteConfiguration(
             transport: try CloudKitCloudSyncConfiguration(
                 containerIdentifier: containerIdentifier,
                 zoneName: zoneName,
@@ -2298,7 +2595,15 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             economy: try DurableEconomyCloudConfiguration(
                 recordID: CloudRecordID(economyRecordID),
                 recordType: economyRecordType,
-                payloadFieldName: economyPayloadFieldName
+                payloadFieldName: economyPayloadFieldName,
+                conflictRetryLimit: conflictRetryLimit
+            ),
+            profile: try CloudProfileSchemaConfiguration(
+                rootRecordType: profileRootRecordType,
+                settingsRecordType: profileSettingsRecordType,
+                selectionRecordType: profileSelectionRecordType,
+                runRecordType: profileRunRecordType,
+                payloadFieldName: profilePayloadFieldName
             )
         )
     }

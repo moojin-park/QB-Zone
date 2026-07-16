@@ -1,6 +1,293 @@
 import CryptoKit
 import Foundation
 
+enum DurableEconomyCloudSchema {
+    static let schemaIdentifier = "pocket-vector-durable-economy-cloud-schema-v1"
+    static let headSchemaVersion = 3
+    static let ledgerMarkerSchemaVersion = 2
+    static let rewardOfferMarkerSchemaVersion = 2
+    static let rewardedAdHeadSchemaVersion = 1
+    static let ledgerAccumulatorDigestByteCount = 32
+    static let ledgerDigestDomain = "pocket-vector-ledger-entry-v1"
+    static let immutableMarkerAddressDomain =
+        "pocket-vector-durable-economy-marker-v1"
+    static let immutableMarkerRecordPrefix = "economy-marker-v1-"
+    static let ledgerMarkerKind = "ledger-entry-v1"
+    static let rewardOfferMarkerKind = "reward-offer-v1"
+    static let operationAddressDomain =
+        "pocket-vector-durable-economy-operation-v3"
+    static let operationRecordPrefix = "economy-v3-"
+    static let pendingCreditOperationKind = "pending-credit"
+    static let storeKitCreditOperationKind = "storekit-credit"
+    static let catalogUnlockOperationKind = "catalog-unlock"
+    static let rewardedAdCreditOperationKind = "rewarded-ad-credit"
+    static let payloadEncoding =
+        "sorted-key-json-default-keys-without-escaped-slashes-deferred-date-base64-data-nonfinite-float-throw-v1"
+    static let digestAlgorithmIdentifier = "sha256-v1"
+    static let digestComponentEncodingIdentifier =
+        "uint64-big-endian-length-prefixed-utf8-components-v1"
+    static let digestHexEncodingIdentifier =
+        "lowercase-two-digit-hex-per-byte-v1"
+    static let immutableMarkerAddressPolicyIdentifier =
+        "domain-head-record-kind-value-digest-prefixed-hex-v1"
+    static let operationAddressPolicyIdentifier =
+        "domain-cloud-account-id-account-key-profile-id-player-account-identity-kind-entry-count-then-entry-ids-digest-prefixed-hex-v2"
+    static let mutationOperationSessionPolicyIdentifier =
+        "durable-binding-and-player-identity-excludes-session-nonce-v1"
+    static let identifierOrderingPolicyIdentifier =
+        "utf8-byte-lexicographic-ascending-v1"
+    static let mutationEntryCountEncodingIdentifier =
+        "base-10-nonnegative-int-no-leading-zero-utf8-component-v1"
+    static let mutationEntryOrderingPolicyIdentifier =
+        "ledger-entry-id-utf8-byte-ascending-v1"
+    static let eventBatchAssignmentPolicyIdentifier =
+        "missing-ledger-entry-id-utf8-byte-ascending-zero-based-contiguous-uint32-v1"
+    static let cloudWriteOrderingPolicyIdentifier =
+        "cloud-record-id-utf8-byte-ascending-v1"
+    static let ledgerEntryDigestPolicyIdentifier =
+        "domain-id-delta-date-reference-bitpattern-reason-tag-associated-values-v1"
+    static let ledgerAccumulatorPolicyIdentifier =
+        "entry-count-confirmed-balance-order-independent-xor-entry-digests-v1"
+    static let economyEventOrderingPolicyIdentifier =
+        "cloud-head-revision-then-batch-index-v1"
+    static let unlockedItemOrderingPolicyIdentifier =
+        "catalog-item-id-utf8-byte-ascending-v1"
+
+    static func utf8Precedes(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.utf8.lexicographicallyPrecedes(rhs.utf8)
+    }
+
+    static func batchIndex(forZeroBasedOffset offset: Int) -> UInt32? {
+        guard offset >= 0 else { return nil }
+        return UInt32(exactly: offset)
+    }
+    static var durableAccountBindingFields: String {
+        DurableAccountBinding.persistedFieldManifest
+    }
+
+    static var headFields: String {
+        DurableEconomyCoordinator.CloudAccountHeadV3.persistedFieldManifest
+    }
+
+    static var ledgerAccumulatorFields: String {
+        DurableEconomyCoordinator.LedgerAccumulator.persistedFieldManifest
+    }
+
+    static var rewardedAdHeadFields: String {
+        DurableEconomyCoordinator.CloudRewardedAdHeadV1.persistedFieldManifest
+    }
+
+    static var ledgerMarkerFields: String {
+        DurableEconomyCoordinator.CloudLedgerMarkerV2.persistedFieldManifest
+    }
+
+    static var rewardOfferMarkerFields: String {
+        DurableEconomyCoordinator.CloudRewardOfferMarkerV2.persistedFieldManifest
+    }
+
+    static var ledgerRecordFields: String {
+        DurableEconomyCoordinator.CloudLedgerRecord.persistedFieldManifest
+    }
+
+    static var mutationBindingFields: String {
+        DurableEconomyCoordinator.MutationBinding.persistedFieldManifest
+    }
+
+    static var rewardRedemptionFields: String {
+        DurableEconomyCoordinator.RewardRedemption.persistedFieldManifest
+    }
+
+    static var eventPositionFields: String {
+        DurableEconomyCoordinator.CloudEconomyEventPosition.persistedFieldManifest
+    }
+
+    static var mutationKindCases: String {
+        DurableEconomyCoordinator.MutationKind.allCases
+            .map(\.rawValue)
+            .sorted(by: utf8Precedes)
+            .joined(separator: ",")
+    }
+
+    static var gameplayResolutionCases: String {
+        DurableEconomyCoordinator.GameplayRewardResolution.persistedCaseManifest
+    }
+
+    static func ledgerMarkerRecordID(
+        for entryID: LedgerEntryID,
+        headRecordID: CloudRecordID
+    ) -> CloudRecordID {
+        immutableMarkerRecordID(
+            kind: ledgerMarkerKind,
+            value: entryID.rawValue,
+            headRecordID: headRecordID
+        )
+    }
+
+    static func rewardOfferMarkerRecordID(
+        for offerID: RewardOfferID,
+        headRecordID: CloudRecordID
+    ) -> CloudRecordID {
+        immutableMarkerRecordID(
+            kind: rewardOfferMarkerKind,
+            value: offerID.rawValue,
+            headRecordID: headRecordID
+        )
+    }
+
+    static func fingerprintMaterial(
+        for configuration: DurableEconomyCloudConfiguration
+    ) -> [String] {
+        let coinLedgerAddresses = CoinLedgerID.fingerprintMaterial
+        let rewardOfferAddresses = RewardedAdState.offerAddressFingerprintMaterial
+        return [
+            schemaIdentifier,
+            "headLogicalRecordID", configuration.recordID.rawValue,
+            "recordType", configuration.recordType,
+            "payloadFieldName", configuration.payloadFieldName,
+            "headSchemaVersion", String(headSchemaVersion),
+            "ledgerMarkerSchemaVersion", String(ledgerMarkerSchemaVersion),
+            "rewardOfferMarkerSchemaVersion",
+            String(rewardOfferMarkerSchemaVersion),
+            "rewardedAdHeadSchemaVersion", String(rewardedAdHeadSchemaVersion),
+            "ledgerAccumulatorDigestByteCount",
+            String(ledgerAccumulatorDigestByteCount),
+            "ledgerDigestDomain", ledgerDigestDomain,
+            "immutableMarkerAddressDomain", immutableMarkerAddressDomain,
+            "immutableMarkerRecordPrefix", immutableMarkerRecordPrefix,
+            "ledgerMarkerKind", ledgerMarkerKind,
+            "rewardOfferMarkerKind", rewardOfferMarkerKind,
+            "operationAddressDomain", operationAddressDomain,
+            "operationRecordPrefix", operationRecordPrefix,
+            "pendingCreditOperationKind", pendingCreditOperationKind,
+            "storeKitCreditOperationKind", storeKitCreditOperationKind,
+            "catalogUnlockOperationKind", catalogUnlockOperationKind,
+            "rewardedAdCreditOperationKind", rewardedAdCreditOperationKind,
+            "payloadEncoding", payloadEncoding,
+            "digestAlgorithm", digestAlgorithmIdentifier,
+            "digestComponentEncoding", digestComponentEncodingIdentifier,
+            "digestHexEncoding", digestHexEncodingIdentifier,
+            "immutableMarkerAddressPolicy",
+            immutableMarkerAddressPolicyIdentifier,
+            "operationAddressPolicy", operationAddressPolicyIdentifier,
+            "mutationOperationSessionPolicy",
+            mutationOperationSessionPolicyIdentifier,
+            "identifierOrderingPolicy", identifierOrderingPolicyIdentifier,
+            "mutationEntryCountEncoding",
+            mutationEntryCountEncodingIdentifier,
+            "mutationEntryOrderingPolicy",
+            mutationEntryOrderingPolicyIdentifier,
+            "eventBatchAssignmentPolicy", eventBatchAssignmentPolicyIdentifier,
+            "cloudWriteOrderingPolicy", cloudWriteOrderingPolicyIdentifier,
+            "ledgerEntryDigestPolicy", ledgerEntryDigestPolicyIdentifier,
+            "ledgerAccumulatorPolicy", ledgerAccumulatorPolicyIdentifier,
+            "economyEventOrderingPolicy", economyEventOrderingPolicyIdentifier,
+            "unlockedItemOrderingPolicy", unlockedItemOrderingPolicyIdentifier,
+            "headFields", headFields,
+            "ledgerAccumulatorFields", ledgerAccumulatorFields,
+            "rewardedAdHeadFields", rewardedAdHeadFields,
+            "ledgerMarkerFields", ledgerMarkerFields,
+            "rewardOfferMarkerFields", rewardOfferMarkerFields,
+            "ledgerRecordFields", ledgerRecordFields,
+            "coinLedgerEntryFields", CoinLedgerEntry.persistedFieldManifest,
+            "coinLedgerReasonCases", CoinLedgerReason.persistedCaseManifest,
+            "mutationBindingFields", mutationBindingFields,
+            "durableAccountBindingFields", durableAccountBindingFields,
+            "mutationKindCases", mutationKindCases,
+            "rewardRedemptionFields", rewardRedemptionFields,
+            "eventPositionFields", eventPositionFields,
+            "rewardedRunObservationFields",
+            RewardedRunObservation.persistedFieldManifest,
+            "rewardedRunObservationDispositionCases",
+            RewardedRunObservation.dispositionCaseManifest,
+            "gameplayRewardResolutionCases", gameplayResolutionCases,
+            "coinLedgerAddressMaterialCount", String(coinLedgerAddresses.count),
+        ] + coinLedgerAddresses + [
+            "rewardOfferAddressMaterialCount", String(rewardOfferAddresses.count),
+        ] + rewardOfferAddresses + persistedEconomyRulesFingerprintMaterial
+    }
+
+    static func makePayloadEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        encoder.keyEncodingStrategy = .useDefaultKeys
+        encoder.dateEncodingStrategy = .deferredToDate
+        encoder.dataEncodingStrategy = .base64
+        encoder.nonConformingFloatEncodingStrategy = .throw
+        return encoder
+    }
+
+    static func makePayloadDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .useDefaultKeys
+        decoder.dateDecodingStrategy = .deferredToDate
+        decoder.dataDecodingStrategy = .base64
+        decoder.nonConformingFloatDecodingStrategy = .throw
+        return decoder
+    }
+
+    private static var persistedEconomyRulesFingerprintMaterial: [String] {
+        let run = PersistedEconomyRulesV1.run
+        var material: [String] = [
+            "persistedEconomyRules", "pocket-vector-persisted-economy-rules-v1",
+            "runEconomyVersion", String(run.economyVersion),
+            "runNaturalMilliseconds", String(run.naturalRunMilliseconds),
+            "runMinimumRewardAttempts", String(run.minimumRewardAttempts),
+            "runBaseCoins", String(run.baseRunCoins),
+            "runScoreCoinsPerPoints", String(run.scoreCoinsPerPoints),
+            "runMaximumScoreCoins", String(run.maximumScoreCoins),
+            "runAccuracyBonusCoins", String(run.accuracyBonusCoins),
+            "runAccuracyMinimumAttempts", String(run.accuracyMinimumAttempts),
+            "runAccuracyMinimumPercent", String(run.accuracyMinimumPercent),
+        ]
+        material.append(contentsOf: [
+            "signingBonusVersion", String(PersistedEconomyRulesV1.signingBonusVersion),
+            "signingBonusCoins", String(PersistedEconomyRulesV1.signingBonusCoins),
+            "signingBonusCreatedAt1970BitPattern",
+            String(
+                PersistedEconomyRulesV1.signingBonusLedgerCreatedAt
+                    .timeIntervalSince1970.bitPattern
+            ),
+            "rewardedAdCoins", String(PersistedEconomyRulesV1.rewardedAdCoins),
+            "rewardedAdRunThreshold",
+            String(PersistedEconomyRulesV1.rewardedAdRunThreshold),
+            "lockedTeamPrice", String(PersistedEconomyRulesV1.lockedTeamPrice),
+            "alternateJerseyPrice",
+            String(PersistedEconomyRulesV1.alternateJerseyPrice),
+            "alternateFootballPrice",
+            String(PersistedEconomyRulesV1.alternateFootballPrice),
+        ])
+        let packs = PersistedEconomyRulesV1.coinPackCoins.sorted {
+            utf8Precedes($0.key.rawValue, $1.key.rawValue)
+        }
+        material.append(contentsOf: ["coinPackCount", String(packs.count)])
+        for (packID, coins) in packs {
+            material.append(contentsOf: ["coinPack", packID.rawValue, String(coins)])
+        }
+        return material
+    }
+
+    private static func immutableMarkerRecordID(
+        kind: String,
+        value: String,
+        headRecordID: CloudRecordID
+    ) -> CloudRecordID {
+        var digest = SHA256()
+        append(immutableMarkerAddressDomain, to: &digest)
+        append(headRecordID.rawValue, to: &digest)
+        append(kind, to: &digest)
+        append(value, to: &digest)
+        let hex = digest.finalize().map { String(format: "%02x", $0) }.joined()
+        return CloudRecordID("\(immutableMarkerRecordPrefix)\(hex)")
+    }
+
+    private static func append(_ value: String, to digest: inout SHA256) {
+        let data = Data(value.utf8)
+        var length = UInt64(data.count).bigEndian
+        withUnsafeBytes(of: &length) { digest.update(data: Data($0)) }
+        digest.update(data: data)
+    }
+}
+
 enum DurableEconomyCloudConfigurationError: Error, Equatable, Sendable {
     case emptyRecordID
     case emptyRecordType
@@ -39,6 +326,10 @@ struct DurableEconomyCloudConfiguration: Equatable, Sendable {
         self.recordType = recordType
         self.payloadFieldName = payloadFieldName
         self.conflictRetryLimit = conflictRetryLimit
+    }
+
+    var fingerprintMaterial: [String] {
+        DurableEconomyCloudSchema.fingerprintMaterial(for: self)
     }
 }
 
@@ -392,7 +683,7 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
         )
 
         let operationID = mutationOperationID(
-            kind: "pending-credit",
+            kind: DurableEconomyCloudSchema.pendingCreditOperationKind,
             entryIDs: entryIDs
         )
         let committed = try await commitCreditMutation(
@@ -462,7 +753,7 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
             expectedSession: context.profileSession
         )
         let operationID = mutationOperationID(
-            kind: "storekit-credit",
+            kind: DurableEconomyCloudSchema.storeKitCreditOperationKind,
             entryIDs: [request.ledgerEntry.id]
         )
         let committed = try await commitCreditMutation(
@@ -531,7 +822,7 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
             inventory: snapshot.player.inventory
         )
         let operationID = mutationOperationID(
-            kind: "catalog-unlock",
+            kind: DurableEconomyCloudSchema.catalogUnlockOperationKind,
             entryIDs: [ledgerID]
         )
 
@@ -680,7 +971,7 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
             throw LocalPlayerRepositoryError.rewardedOfferNotEligible(request.offerID)
         }
         let operationID = mutationOperationID(
-            kind: "rewarded-ad-credit",
+            kind: DurableEconomyCloudSchema.rewardedAdCreditOperationKind,
             entryIDs: [ledgerID]
         )
         let committed = try await commitRewardedAdMutation(
@@ -719,7 +1010,7 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
 /// CloudKit hydrator. Mutations remain actor-serialized, while restoration can
 /// decode and replay the same fail-closed event schema without duplicating it.
 extension DurableEconomyCoordinator {
-    enum MutationKind: String, Codable, Equatable, Sendable {
+    enum MutationKind: String, Codable, CaseIterable, Equatable, Sendable {
         case pendingCredits = "pending-credits"
         case storeKit = "storekit"
         case catalogUnlock = "catalog-unlock"
@@ -734,17 +1025,56 @@ extension DurableEconomyCoordinator {
         let sourceEconomyRevision: UInt64
         let operationID: OperationID
         let kind: MutationKind
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case cloudAccountID
+            case accountBinding
+            case profileAccountIdentity
+            case profileSessionNonce
+            case sourceEconomyRevision
+            case operationID
+            case kind
+        }
+
+        static var persistedFieldManifest: String {
+            CodingKeys.allCases.map(\.rawValue)
+                .sorted(by: DurableEconomyCloudSchema.utf8Precedes)
+                .joined(separator: ",")
+        }
     }
 
     struct CloudLedgerRecord: Codable, Equatable, Sendable {
         let entry: CoinLedgerEntry
         let binding: MutationBinding
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case entry
+            case binding
+        }
+
+        static var persistedFieldManifest: String {
+            CodingKeys.allCases.map(\.rawValue)
+                .sorted(by: DurableEconomyCloudSchema.utf8Precedes)
+                .joined(separator: ",")
+        }
     }
 
     struct RewardRedemption: Codable, Equatable, Sendable {
         let offerID: RewardOfferID
         let providerTransactionID: AdProviderTransactionID
         let ledgerEntryID: LedgerEntryID
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case offerID
+            case providerTransactionID
+            case ledgerEntryID
+        }
+
+        static var persistedFieldManifest: String {
+            CodingKeys.allCases.map(\.rawValue)
+                .sorted(by: DurableEconomyCloudSchema.utf8Precedes)
+                .joined(separator: ",")
+        }
     }
 
     /// A fixed-width commitment to the complete immutable marker set. The XOR
@@ -754,11 +1084,24 @@ extension DurableEconomyCoordinator {
     /// every individual ID remains indefinitely provable through its immutable
     /// marker record.
     struct LedgerAccumulator: Codable, Equatable, Sendable {
-        static let digestByteCount = 32
+        static let digestByteCount =
+            DurableEconomyCloudSchema.ledgerAccumulatorDigestByteCount
 
         var entryCount: UInt64
         var confirmedBalance: Int64
         var digest: Data
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case entryCount
+            case confirmedBalance
+            case digest
+        }
+
+        static var persistedFieldManifest: String {
+            CodingKeys.allCases.map(\.rawValue)
+                .sorted(by: DurableEconomyCloudSchema.utf8Precedes)
+                .joined(separator: ",")
+        }
 
         static let empty = LedgerAccumulator(
             entryCount: 0,
@@ -772,6 +1115,17 @@ extension DurableEconomyCoordinator {
     {
         let cloudHeadRevision: UInt64
         let batchIndex: UInt32
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case cloudHeadRevision
+            case batchIndex
+        }
+
+        static var persistedFieldManifest: String {
+            CodingKeys.allCases.map(\.rawValue)
+                .sorted(by: DurableEconomyCloudSchema.utf8Precedes)
+                .joined(separator: ",")
+        }
 
         static func < (
             lhs: CloudEconomyEventPosition,
@@ -793,10 +1147,46 @@ extension DurableEconomyCoordinator {
         case ignoredActiveOffer(cycle: UInt64, offerID: RewardOfferID)
         case ignoredStaleCycle(observedCycle: UInt64, currentCycle: UInt64)
         case ignoredLegacyNonCounting
+
+        enum PersistedCase: String, CaseIterable {
+            case counted
+            case ignoredActiveOffer
+            case ignoredStaleCycle
+            case ignoredLegacyNonCounting
+
+            var associatedFields: [String] {
+                switch self {
+                case .counted:
+                    ["cycle", "resultingCount", "unlockedOfferID"]
+                case .ignoredActiveOffer:
+                    ["cycle", "offerID"]
+                case .ignoredStaleCycle:
+                    ["observedCycle", "currentCycle"]
+                case .ignoredLegacyNonCounting:
+                    []
+                }
+            }
+        }
+
+        static var persistedCaseManifest: String {
+            PersistedCase.allCases.sorted {
+                DurableEconomyCloudSchema.utf8Precedes(
+                    $0.rawValue,
+                    $1.rawValue
+                )
+            }.map { persistedCase in
+                let fields = persistedCase.associatedFields
+                    .sorted(by: DurableEconomyCloudSchema.utf8Precedes)
+                    .joined(separator: ",")
+                return fields.isEmpty
+                    ? persistedCase.rawValue
+                    : "\(persistedCase.rawValue)(\(fields))"
+            }.joined(separator: ",")
+        }
     }
 
     struct CloudLedgerMarkerV2: Codable, Equatable, Sendable {
-        static let schemaVersion = 2
+        static let schemaVersion = DurableEconomyCloudSchema.ledgerMarkerSchemaVersion
 
         let schemaVersion: Int
         let headRecordID: CloudRecordID
@@ -804,25 +1194,68 @@ extension DurableEconomyCoordinator {
         let eventPosition: CloudEconomyEventPosition
         let gameplayRewardObservation: RewardedRunObservation?
         let gameplayRewardResolution: GameplayRewardResolution?
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case schemaVersion
+            case headRecordID
+            case record
+            case eventPosition
+            case gameplayRewardObservation
+            case gameplayRewardResolution
+        }
+
+        static var persistedFieldManifest: String {
+            CodingKeys.allCases.map(\.rawValue)
+                .sorted(by: DurableEconomyCloudSchema.utf8Precedes)
+                .joined(separator: ",")
+        }
     }
 
     struct CloudRewardOfferMarkerV2: Codable, Equatable, Sendable {
-        static let schemaVersion = 2
+        static let schemaVersion =
+            DurableEconomyCloudSchema.rewardOfferMarkerSchemaVersion
 
         let schemaVersion: Int
         let headRecordID: CloudRecordID
         let redemption: RewardRedemption
         let binding: MutationBinding
         let eventPosition: CloudEconomyEventPosition
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case schemaVersion
+            case headRecordID
+            case redemption
+            case binding
+            case eventPosition
+        }
+
+        static var persistedFieldManifest: String {
+            CodingKeys.allCases.map(\.rawValue)
+                .sorted(by: DurableEconomyCloudSchema.utf8Precedes)
+                .joined(separator: ",")
+        }
     }
 
     struct CloudRewardedAdHeadV1: Codable, Equatable, Sendable {
-        static let schemaVersion = 1
+        static let schemaVersion = DurableEconomyCloudSchema.rewardedAdHeadSchemaVersion
 
         let schemaVersion: Int
         private(set) var cycle: UInt64
         private(set) var validRunsSinceReward: Int
         private(set) var eligibleOfferID: RewardOfferID?
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case schemaVersion
+            case cycle
+            case validRunsSinceReward
+            case eligibleOfferID
+        }
+
+        static var persistedFieldManifest: String {
+            CodingKeys.allCases.map(\.rawValue)
+                .sorted(by: DurableEconomyCloudSchema.utf8Precedes)
+                .joined(separator: ",")
+        }
 
         static let initial = CloudRewardedAdHeadV1(
             schemaVersion: schemaVersion,
@@ -893,7 +1326,7 @@ extension DurableEconomyCoordinator {
     /// ledger entries and reward-offer dedupe keys live in deterministic,
     /// immutable records written atomically with this head.
     struct CloudAccountHeadV3: Codable, Equatable, Sendable {
-        static let schemaVersion = 3
+        static let schemaVersion = DurableEconomyCloudSchema.headSchemaVersion
 
         let schemaVersion: Int
         let cloudAccountID: CloudAccountID
@@ -904,9 +1337,31 @@ extension DurableEconomyCoordinator {
         var unlockedItemIDs: [CatalogItemID]
         var rewardedAd: CloudRewardedAdHeadV1
 
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case schemaVersion
+            case cloudAccountID
+            case accountBinding
+            case profileAccountIdentity
+            case revision
+            case ledgerAccumulator
+            case unlockedItemIDs
+            case rewardedAd
+        }
+
+        static var persistedFieldManifest: String {
+            CodingKeys.allCases.map(\.rawValue)
+                .sorted(by: DurableEconomyCloudSchema.utf8Precedes)
+                .joined(separator: ",")
+        }
+
         mutating func appendUnlockedItem(_ itemID: CatalogItemID) {
             unlockedItemIDs.append(itemID)
-            unlockedItemIDs.sort { $0.rawValue < $1.rawValue }
+            unlockedItemIDs.sort {
+                DurableEconomyCloudSchema.utf8Precedes(
+                    $0.rawValue,
+                    $1.rawValue
+                )
+            }
         }
     }
 
@@ -970,7 +1425,10 @@ extension DurableEconomyCoordinator {
         var ledgerPositionOwners: [CloudEconomyEventPosition: LedgerEntryID] = [:]
 
         for (entryID, marker) in ledgerMarkers.sorted(by: {
-            $0.key.rawValue < $1.key.rawValue
+            DurableEconomyCloudSchema.utf8Precedes(
+                $0.key.rawValue,
+                $1.key.rawValue
+            )
         }) {
             guard entryID == marker.record.entry.id,
                   marker.schemaVersion == CloudLedgerMarkerV2.schemaVersion,
@@ -1012,7 +1470,10 @@ extension DurableEconomyCoordinator {
 
         var offerPositions = Set<CloudEconomyEventPosition>()
         for (offerID, marker) in rewardOfferMarkers.sorted(by: {
-            $0.key.rawValue < $1.key.rawValue
+            DurableEconomyCloudSchema.utf8Precedes(
+                $0.key.rawValue,
+                $1.key.rawValue
+            )
         }) {
             guard offerID == marker.redemption.offerID,
                   marker.schemaVersion == CloudRewardOfferMarkerV2.schemaVersion,
@@ -1069,13 +1530,16 @@ extension DurableEconomyCoordinator {
                 throw DurableEconomyCoordinatorError.malformedCloudRecord
             }
             for (offset, marker) in canonical.enumerated() {
-                guard let expectedIndex = UInt32(exactly: offset),
+                guard let expectedIndex = DurableEconomyCloudSchema
+                    .batchIndex(forZeroBasedOffset: offset),
                       marker.eventPosition.batchIndex == expectedIndex else {
                     throw DurableEconomyCoordinatorError.invalidRewardEventPosition
                 }
             }
             let positionedEntryIDs = canonical.map(\.record.entry.id.rawValue)
-            guard positionedEntryIDs == positionedEntryIDs.sorted() else {
+            guard positionedEntryIDs == positionedEntryIDs.sorted(
+                by: DurableEconomyCloudSchema.utf8Precedes
+            ) else {
                 throw DurableEconomyCoordinatorError.invalidRewardEventPosition
             }
         }
@@ -1088,7 +1552,12 @@ extension DurableEconomyCoordinator {
         guard accumulator == head.ledgerAccumulator,
               unlockedItemIDs == Set(head.unlockedItemIDs),
               head.unlockedItemIDs
-                == head.unlockedItemIDs.sorted(by: { $0.rawValue < $1.rawValue })
+                == head.unlockedItemIDs.sorted(by: {
+                    DurableEconomyCloudSchema.utf8Precedes(
+                        $0.rawValue,
+                        $1.rawValue
+                    )
+                })
         else {
             throw DurableEconomyCoordinatorError.cloudStateDiverged
         }
@@ -1189,7 +1658,12 @@ extension DurableEconomyCoordinator {
 
         let records = try await cloud.records(
             accountID: context.cloudAccountID,
-            ids: requestedIDs.sorted { $0.rawValue < $1.rawValue }
+            ids: requestedIDs.sorted {
+                DurableEconomyCloudSchema.utf8Precedes(
+                    $0.rawValue,
+                    $1.rawValue
+                )
+            }
         )
         try await requireCurrentContext()
         guard records.count <= requestedIDs.count,
@@ -1470,7 +1944,10 @@ extension DurableEconomyCoordinator {
             throw DurableEconomyCoordinatorError.malformedCloudRecord
         }
         do {
-            return try JSONDecoder().decode(type, from: payload)
+            return try DurableEconomyCloudSchema.makePayloadDecoder().decode(
+                type,
+                from: payload
+            )
         } catch {
             throw DurableEconomyCoordinatorError.malformedCloudRecord
         }
@@ -1698,12 +2175,16 @@ extension DurableEconomyCoordinator {
                 sourceEconomyRevision: sourceSnapshot.economyRevision
             )
             let orderedMissingEntries = missingEntries.sorted {
-                $0.key.rawValue < $1.key.rawValue
+                DurableEconomyCloudSchema.utf8Precedes(
+                    $0.key.rawValue,
+                    $1.key.rawValue
+                )
             }
             var newMarkers: [LedgerEntryID: CloudLedgerMarkerV2] = [:]
             for (offset, element) in orderedMissingEntries.enumerated() {
                 let (entryID, entry) = element
-                guard let batchIndex = UInt32(exactly: offset) else {
+                guard let batchIndex = DurableEconomyCloudSchema
+                    .batchIndex(forZeroBasedOffset: offset) else {
                     throw DurableEconomyCoordinatorError.invalidRewardEventPosition
                 }
                 let eventPosition = CloudEconomyEventPosition(
@@ -1771,7 +2252,12 @@ extension DurableEconomyCoordinator {
             if let newRewardMarker {
                 writes.append(try makeRewardOfferMarkerWrite(newRewardMarker))
             }
-            writes.sort { $0.id.rawValue < $1.id.rawValue }
+            writes.sort {
+                DurableEconomyCloudSchema.utf8Precedes(
+                    $0.id.rawValue,
+                    $1.id.rawValue
+                )
+            }
             let request = CloudAtomicWriteRequest(
                 accountID: context.cloudAccountID,
                 operationID: operationID,
@@ -2209,9 +2695,7 @@ extension DurableEconomyCoordinator {
     }
 
     func encodeCloudPayload<T: Encodable>(_ value: T) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        return try encoder.encode(value)
+        try DurableEconomyCloudSchema.makePayloadEncoder().encode(value)
     }
 
     func validateProviderReceipt(
@@ -2324,7 +2808,7 @@ extension DurableEconomyCoordinator {
 
     func ledgerDigest(for entry: CoinLedgerEntry) -> Data {
         var digest = SHA256()
-        append("pocket-vector-ledger-entry-v1", to: &digest)
+        append(DurableEconomyCloudSchema.ledgerDigestDomain, to: &digest)
         append(entry.id.rawValue, to: &digest)
         append(String(entry.delta), to: &digest)
         append(String(entry.createdAt.timeIntervalSinceReferenceDate.bitPattern), to: &digest)
@@ -2360,21 +2844,17 @@ extension DurableEconomyCoordinator {
     }
 
     func ledgerMarkerRecordID(for entryID: LedgerEntryID) -> CloudRecordID {
-        immutableMarkerRecordID(kind: "ledger-entry-v1", value: entryID.rawValue)
+        DurableEconomyCloudSchema.ledgerMarkerRecordID(
+            for: entryID,
+            headRecordID: configuration.recordID
+        )
     }
 
     func rewardOfferMarkerRecordID(for offerID: RewardOfferID) -> CloudRecordID {
-        immutableMarkerRecordID(kind: "reward-offer-v1", value: offerID.rawValue)
-    }
-
-    func immutableMarkerRecordID(kind: String, value: String) -> CloudRecordID {
-        var digest = SHA256()
-        append("pocket-vector-durable-economy-marker-v1", to: &digest)
-        append(configuration.recordID.rawValue, to: &digest)
-        append(kind, to: &digest)
-        append(value, to: &digest)
-        let value = digest.finalize().map { String(format: "%02x", $0) }.joined()
-        return CloudRecordID("economy-marker-v1-\(value)")
+        DurableEconomyCloudSchema.rewardOfferMarkerRecordID(
+            for: offerID,
+            headRecordID: configuration.recordID
+        )
     }
 
     func mutationBinding(
@@ -2398,17 +2878,24 @@ extension DurableEconomyCoordinator {
         entryIDs: Set<LedgerEntryID>
     ) -> OperationID {
         var digest = SHA256()
-        append("pocket-vector-durable-economy-operation-v2", to: &digest)
+        append(DurableEconomyCloudSchema.operationAddressDomain, to: &digest)
         append(context.cloudAccountID.rawValue, to: &digest)
         append(context.accountBinding.accountKey.rawValue, to: &digest)
         append(context.accountBinding.profileID.uuidString.lowercased(), to: &digest)
         append(context.profileSession.accountIdentity.rawValue, to: &digest)
         append(kind, to: &digest)
-        for entryID in entryIDs.sorted(by: { $0.rawValue < $1.rawValue }) {
+        let orderedEntryIDs = entryIDs.sorted {
+            DurableEconomyCloudSchema.utf8Precedes(
+                $0.rawValue,
+                $1.rawValue
+            )
+        }
+        append(String(orderedEntryIDs.count), to: &digest)
+        for entryID in orderedEntryIDs {
             append(entryID.rawValue, to: &digest)
         }
         let value = digest.finalize().map { String(format: "%02x", $0) }.joined()
-        return OperationID("economy-v2-\(value)")
+        return OperationID("\(DurableEconomyCloudSchema.operationRecordPrefix)\(value)")
     }
 
     func append(_ value: String, to digest: inout SHA256) {

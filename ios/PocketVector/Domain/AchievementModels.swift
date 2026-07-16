@@ -9,6 +9,38 @@ enum AchievementRule: Codable, Equatable, Hashable, Sendable {
     case singleRunAccuracy(percent: Int, minimumAttempts: Int)
     case singleRunTouchdownStreak(Int)
     case singleRunScore(Int)
+
+    /// Exhaustive, value-bearing rule material used by the cloud scope. This
+    /// intentionally describes evaluation semantics rather than Swift's
+    /// synthesized enum encoding, because definitions are not themselves
+    /// persisted in a player profile.
+    var persistedFingerprintMaterial: [String] {
+        switch self {
+        case let .careerSuccessfulPasses(target):
+            ["rule", "careerSuccessfulPasses", "target", String(target)]
+        case let .incrementalCareerSuccessfulPasses(target):
+            [
+                "rule", "incrementalCareerSuccessfulPasses",
+                "target", String(target),
+            ]
+        case let .careerTouchdowns(target):
+            ["rule", "careerTouchdowns", "target", String(target)]
+        case let .careerBonusTouchdowns(target):
+            ["rule", "careerBonusTouchdowns", "target", String(target)]
+        case .allLanesInSingleRun:
+            ["rule", "allLanesInSingleRun"]
+        case let .singleRunAccuracy(percent, minimumAttempts):
+            [
+                "rule", "singleRunAccuracy",
+                "percent", String(percent),
+                "minimumAttempts", String(minimumAttempts),
+            ]
+        case let .singleRunTouchdownStreak(target):
+            ["rule", "singleRunTouchdownStreak", "target", String(target)]
+        case let .singleRunScore(target):
+            ["rule", "singleRunScore", "target", String(target)]
+        }
+    }
 }
 
 struct AchievementDefinition: Codable, Equatable, Hashable, Sendable {

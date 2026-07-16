@@ -19,6 +19,11 @@ enum ProductionConfigurationField: Equatable, Sendable {
     case economyRecordID
     case economyRecordType
     case economyPayloadFieldName
+    case profileRootRecordType
+    case profileSettingsRecordType
+    case profileSelectionRecordType
+    case profileRunRecordType
+    case profilePayloadFieldName
     case productIdentifiers
 }
 
@@ -33,9 +38,39 @@ enum ValidatedServiceConfiguration<Value: Equatable & Sendable>: Equatable, Send
     case validated(Value)
 }
 
+enum ProductionCloudWriteConfigurationError: Error, Equatable, Sendable {
+    case recordTypeCollision(String)
+}
+
 struct ProductionCloudWriteConfiguration: Equatable, Sendable {
     let transport: CloudKitCloudSyncConfiguration
     let economy: DurableEconomyCloudConfiguration
+    let profile: CloudProfileSchemaConfiguration
+
+    init(
+        transport: CloudKitCloudSyncConfiguration,
+        economy: DurableEconomyCloudConfiguration,
+        profile: CloudProfileSchemaConfiguration
+    ) throws {
+        let recordTypes = [
+            transport.operationRecordType,
+            economy.recordType,
+            profile.rootRecordType,
+            profile.settingsRecordType,
+            profile.selectionRecordType,
+            profile.runRecordType,
+        ]
+        if let collision = recordTypes.first(where: { candidate in
+            recordTypes.filter { $0 == candidate }.count > 1
+        }) {
+            throw ProductionCloudWriteConfigurationError.recordTypeCollision(
+                collision
+            )
+        }
+        self.transport = transport
+        self.economy = economy
+        self.profile = profile
+    }
 }
 
 /// Rewarded ads require a provider and a server-side-verification service.
@@ -106,6 +141,11 @@ private extension ProductionServiceConfiguration {
         static let economyRecordID = "EconomyRecordID"
         static let economyRecordType = "EconomyRecordType"
         static let economyPayloadFieldName = "EconomyPayloadFieldName"
+        static let profileRootRecordType = "ProfileRootRecordType"
+        static let profileSettingsRecordType = "ProfileSettingsRecordType"
+        static let profileSelectionRecordType = "ProfileSelectionRecordType"
+        static let profileRunRecordType = "ProfileRunRecordType"
+        static let profilePayloadFieldName = "ProfilePayloadFieldName"
 
         static let productIdentifiers = "ProductIdentifiers"
     }
@@ -365,6 +405,36 @@ private extension ProductionServiceConfiguration {
             field: .economyPayloadFieldName,
             in: dictionary
         )
+        let profileRootRecordType = requiredSchemaIdentifier(
+            Keys.profileRootRecordType,
+            service: .cloudKit,
+            field: .profileRootRecordType,
+            in: dictionary
+        )
+        let profileSettingsRecordType = requiredSchemaIdentifier(
+            Keys.profileSettingsRecordType,
+            service: .cloudKit,
+            field: .profileSettingsRecordType,
+            in: dictionary
+        )
+        let profileSelectionRecordType = requiredSchemaIdentifier(
+            Keys.profileSelectionRecordType,
+            service: .cloudKit,
+            field: .profileSelectionRecordType,
+            in: dictionary
+        )
+        let profileRunRecordType = requiredSchemaIdentifier(
+            Keys.profileRunRecordType,
+            service: .cloudKit,
+            field: .profileRunRecordType,
+            in: dictionary
+        )
+        let profilePayloadFieldName = requiredSchemaIdentifier(
+            Keys.profilePayloadFieldName,
+            service: .cloudKit,
+            field: .profilePayloadFieldName,
+            in: dictionary
+        )
 
         let fields: [ParsedField<String>] = [
             containerIdentifier,
@@ -376,6 +446,11 @@ private extension ProductionServiceConfiguration {
             economyRecordID,
             economyRecordType,
             economyPayloadFieldName,
+            profileRootRecordType,
+            profileSettingsRecordType,
+            profileSelectionRecordType,
+            profileRunRecordType,
+            profilePayloadFieldName,
         ]
         let issues = fields.compactMap(\.issue)
         guard issues.isEmpty,
@@ -387,8 +462,33 @@ private extension ProductionServiceConfiguration {
               let recordNamespace = recordNamespace.value,
               let economyRecordID = economyRecordID.value,
               let economyRecordType = economyRecordType.value,
-              let economyPayloadFieldName = economyPayloadFieldName.value else {
+              let economyPayloadFieldName = economyPayloadFieldName.value,
+              let profileRootRecordType = profileRootRecordType.value,
+              let profileSettingsRecordType = profileSettingsRecordType.value,
+              let profileSelectionRecordType = profileSelectionRecordType.value,
+              let profileRunRecordType = profileRunRecordType.value,
+              let profilePayloadFieldName = profilePayloadFieldName.value else {
             return .unavailable(issues)
+        }
+
+        let recordTypeFields: [(
+            value: String,
+            field: ProductionConfigurationField
+        )] = [
+            (operationRecordType, .cloudOperationRecordType),
+            (economyRecordType, .economyRecordType),
+            (profileRootRecordType, .profileRootRecordType),
+            (profileSettingsRecordType, .profileSettingsRecordType),
+            (profileSelectionRecordType, .profileSelectionRecordType),
+            (profileRunRecordType, .profileRunRecordType),
+        ]
+        let collisionIssues = recordTypeFields.compactMap { candidate in
+            recordTypeFields.filter { $0.value == candidate.value }.count > 1
+                ? ProductionConfigurationIssue.invalid(.cloudKit, candidate.field)
+                : nil
+        }
+        guard collisionIssues.isEmpty else {
+            return .unavailable(collisionIssues)
         }
 
         let transport: CloudKitCloudSyncConfiguration
@@ -446,12 +546,43 @@ private extension ProductionServiceConfiguration {
             return .unavailable([.invalid(.cloudKit, .economyPayloadFieldName)])
         }
 
-        return .validated(
-            ProductionCloudWriteConfiguration(
-                transport: transport,
-                economy: economy
+        let profile: CloudProfileSchemaConfiguration
+        do {
+            profile = try CloudProfileSchemaConfiguration(
+                rootRecordType: profileRootRecordType,
+                settingsRecordType: profileSettingsRecordType,
+                selectionRecordType: profileSelectionRecordType,
+                runRecordType: profileRunRecordType,
+                payloadFieldName: profilePayloadFieldName
             )
-        )
+        } catch {
+            return .unavailable([
+                .invalid(.cloudKit, .profileRootRecordType),
+                .invalid(.cloudKit, .profileSettingsRecordType),
+                .invalid(.cloudKit, .profileSelectionRecordType),
+                .invalid(.cloudKit, .profileRunRecordType),
+                .invalid(.cloudKit, .profilePayloadFieldName),
+            ])
+        }
+
+        do {
+            return .validated(
+                try ProductionCloudWriteConfiguration(
+                    transport: transport,
+                    economy: economy,
+                    profile: profile
+                )
+            )
+        } catch {
+            return .unavailable([
+                .invalid(.cloudKit, .cloudOperationRecordType),
+                .invalid(.cloudKit, .economyRecordType),
+                .invalid(.cloudKit, .profileRootRecordType),
+                .invalid(.cloudKit, .profileSettingsRecordType),
+                .invalid(.cloudKit, .profileSelectionRecordType),
+                .invalid(.cloudKit, .profileRunRecordType),
+            ])
+        }
     }
 
     static func parseStoreKit(

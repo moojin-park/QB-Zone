@@ -4,6 +4,9 @@ import Foundation
 /// A stable, opaque account key supplied by the account coordinator. It must
 /// not contain an email address, Game Center alias, or other display identity.
 struct ServiceAccountKey: RawRepresentable, Codable, Equatable, Hashable, Sendable {
+    static let persistedTypeIdentifier = "ServiceAccountKey"
+    static let persistedEncodingIdentifier = "single-value-raw-string-v1"
+
     let rawValue: String
 
     init(rawValue: String) {
@@ -21,6 +24,15 @@ struct ServiceAccountKey: RawRepresentable, Codable, Equatable, Hashable, Sendab
 struct DurableAccountBinding: Codable, Equatable, Hashable, Sendable {
     let accountKey: ServiceAccountKey
     let profileID: UUID
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case accountKey
+        case profileID
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
 }
 
 /// A nonce is minted for each active repository session. Old callbacks cannot
@@ -40,6 +52,43 @@ struct StoreActiveSession: Codable, Equatable, Hashable, Sendable {
     let nonce: UUID
 }
 
+enum CloudAccountBindingDerivationV1 {
+    static let semanticIdentifier =
+        "pocket-vector-private-cloud-account-binding-derivation-v1"
+    static let rootDomain =
+        "pocket-vector-private-cloud-account-binding-v1"
+    static let playerIdentityDomain = "player-account-identity-v1"
+    static let serviceAccountKeyDomain = "service-account-key-v1"
+    static let profileIDDomain = "profile-id-v1"
+    static let storeAppAccountTokenDomain = "store-app-account-token-v1"
+    static let digestAlgorithmIdentifier = "sha256-v1"
+    static let componentEncodingIdentifier =
+        "uint64-big-endian-length-prefixed-utf8-components-v1"
+    static let hexEncodingIdentifier = "lowercase-two-digit-hex-per-byte-v1"
+    static let uuidEncodingIdentifier =
+        "sha256-first-16-bytes-rfc9562-version-8-variant-v1"
+
+    /// Store account-token derivation is owned by the StoreKit scope. Profile
+    /// scope binds only outputs persisted in profile payloads.
+    static var profileFingerprintMaterial: [String] {
+        [
+            semanticIdentifier,
+            "rootDomain", rootDomain,
+            "playerIdentityDomain", playerIdentityDomain,
+            "serviceAccountKeyDomain", serviceAccountKeyDomain,
+            "profileIDDomain", profileIDDomain,
+            "digestAlgorithm", digestAlgorithmIdentifier,
+            "componentEncoding", componentEncodingIdentifier,
+            "hexEncoding", hexEncodingIdentifier,
+            "uuidEncoding", uuidEncodingIdentifier,
+            "serviceAccountKeyType",
+            ServiceAccountKey.persistedTypeIdentifier,
+            "serviceAccountKeyEncoding",
+            ServiceAccountKey.persistedEncodingIdentifier,
+        ]
+    }
+}
+
 /// Stable account ownership derived only from the already opaque private-cloud
 /// account identifier. Each output uses a separate versioned domain so a value
 /// from one service can never be substituted for another service's identity.
@@ -52,22 +101,26 @@ struct CloudAccountDerivedBindings: Equatable, Sendable {
     let durableAccountBinding: DurableAccountBinding
     let storeAccountBinding: StoreAccountBinding
 
+    static var profileFingerprintMaterial: [String] {
+        CloudAccountBindingDerivationV1.profileFingerprintMaterial
+    }
+
     static func derive(from cloudAccountID: CloudAccountID) -> Self {
         let playerAccountIdentity = PlayerAccountIdentity(
             AccountBindingDigest.hex(
-                domain: "player-account-identity-v1",
+                domain: CloudAccountBindingDerivationV1.playerIdentityDomain,
                 cloudAccountID: cloudAccountID
             )
         )
         let durableAccountBinding = DurableAccountBinding(
             accountKey: ServiceAccountKey(
                 AccountBindingDigest.hex(
-                    domain: "service-account-key-v1",
+                    domain: CloudAccountBindingDerivationV1.serviceAccountKeyDomain,
                     cloudAccountID: cloudAccountID
                 )
             ),
             profileID: AccountBindingDigest.uuid(
-                domain: "profile-id-v1",
+                domain: CloudAccountBindingDerivationV1.profileIDDomain,
                 cloudAccountID: cloudAccountID
             )
         )
@@ -77,7 +130,7 @@ struct CloudAccountDerivedBindings: Equatable, Sendable {
             storeAccountBinding: StoreAccountBinding(
                 account: durableAccountBinding,
                 appAccountToken: AccountBindingDigest.uuid(
-                    domain: "store-app-account-token-v1",
+                    domain: CloudAccountBindingDerivationV1.storeAppAccountTokenDomain,
                     cloudAccountID: cloudAccountID
                 )
             )
@@ -86,8 +139,6 @@ struct CloudAccountDerivedBindings: Equatable, Sendable {
 }
 
 private enum AccountBindingDigest {
-    private static let rootDomain = "pocket-vector-private-cloud-account-binding-v1"
-
     static func hex(domain: String, cloudAccountID: CloudAccountID) -> String {
         digest(domain: domain, cloudAccountID: cloudAccountID)
             .map { String(format: "%02x", $0) }
@@ -124,7 +175,7 @@ private enum AccountBindingDigest {
         cloudAccountID: CloudAccountID
     ) -> SHA256.Digest {
         var hasher = SHA256()
-        append(rootDomain, to: &hasher)
+        append(CloudAccountBindingDerivationV1.rootDomain, to: &hasher)
         append(domain, to: &hasher)
         append(cloudAccountID.rawValue, to: &hasher)
         return hasher.finalize()

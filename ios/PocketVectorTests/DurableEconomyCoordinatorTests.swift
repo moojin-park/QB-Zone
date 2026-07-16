@@ -1,9 +1,482 @@
+import CryptoKit
 import XCTest
 
 @testable import PocketVector
 
 final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
     private let baseDate = Date(timeIntervalSince1970: 1_750_000_000)
+
+    func testCloudSchemaFingerprintMaterialBindsExactDurableEconomyContract()
+        throws
+    {
+        let configuration = try DurableEconomyCloudConfiguration(
+            recordID: CloudRecordID("economy-head-v1"),
+            recordType: "EconomyHead",
+            payloadFieldName: "economyPayload"
+        )
+
+        XCTAssertEqual(
+            configuration.fingerprintMaterial,
+            [
+                "pocket-vector-durable-economy-cloud-schema-v1",
+                "headLogicalRecordID", "economy-head-v1",
+                "recordType", "EconomyHead",
+                "payloadFieldName", "economyPayload",
+                "headSchemaVersion", "3",
+                "ledgerMarkerSchemaVersion", "2",
+                "rewardOfferMarkerSchemaVersion", "2",
+                "rewardedAdHeadSchemaVersion", "1",
+                "ledgerAccumulatorDigestByteCount", "32",
+                "ledgerDigestDomain", "pocket-vector-ledger-entry-v1",
+                "immutableMarkerAddressDomain",
+                "pocket-vector-durable-economy-marker-v1",
+                "immutableMarkerRecordPrefix", "economy-marker-v1-",
+                "ledgerMarkerKind", "ledger-entry-v1",
+                "rewardOfferMarkerKind", "reward-offer-v1",
+                "operationAddressDomain",
+                "pocket-vector-durable-economy-operation-v3",
+                "operationRecordPrefix", "economy-v3-",
+                "pendingCreditOperationKind", "pending-credit",
+                "storeKitCreditOperationKind", "storekit-credit",
+                "catalogUnlockOperationKind", "catalog-unlock",
+                "rewardedAdCreditOperationKind", "rewarded-ad-credit",
+                "payloadEncoding",
+                "sorted-key-json-default-keys-without-escaped-slashes-deferred-date-base64-data-nonfinite-float-throw-v1",
+                "digestAlgorithm", "sha256-v1",
+                "digestComponentEncoding",
+                "uint64-big-endian-length-prefixed-utf8-components-v1",
+                "digestHexEncoding", "lowercase-two-digit-hex-per-byte-v1",
+                "immutableMarkerAddressPolicy",
+                "domain-head-record-kind-value-digest-prefixed-hex-v1",
+                "operationAddressPolicy",
+                "domain-cloud-account-id-account-key-profile-id-player-account-identity-kind-entry-count-then-entry-ids-digest-prefixed-hex-v2",
+                "mutationOperationSessionPolicy",
+                "durable-binding-and-player-identity-excludes-session-nonce-v1",
+                "identifierOrderingPolicy",
+                "utf8-byte-lexicographic-ascending-v1",
+                "mutationEntryCountEncoding",
+                "base-10-nonnegative-int-no-leading-zero-utf8-component-v1",
+                "mutationEntryOrderingPolicy",
+                "ledger-entry-id-utf8-byte-ascending-v1",
+                "eventBatchAssignmentPolicy",
+                "missing-ledger-entry-id-utf8-byte-ascending-zero-based-contiguous-uint32-v1",
+                "cloudWriteOrderingPolicy",
+                "cloud-record-id-utf8-byte-ascending-v1",
+                "ledgerEntryDigestPolicy",
+                "domain-id-delta-date-reference-bitpattern-reason-tag-associated-values-v1",
+                "ledgerAccumulatorPolicy",
+                "entry-count-confirmed-balance-order-independent-xor-entry-digests-v1",
+                "economyEventOrderingPolicy",
+                "cloud-head-revision-then-batch-index-v1",
+                "unlockedItemOrderingPolicy",
+                "catalog-item-id-utf8-byte-ascending-v1",
+                "headFields",
+                "accountBinding,cloudAccountID,ledgerAccumulator,profileAccountIdentity,revision,rewardedAd,schemaVersion,unlockedItemIDs",
+                "ledgerAccumulatorFields", "confirmedBalance,digest,entryCount",
+                "rewardedAdHeadFields",
+                "cycle,eligibleOfferID,schemaVersion,validRunsSinceReward",
+                "ledgerMarkerFields",
+                "eventPosition,gameplayRewardObservation,gameplayRewardResolution,headRecordID,record,schemaVersion",
+                "rewardOfferMarkerFields",
+                "binding,eventPosition,headRecordID,redemption,schemaVersion",
+                "ledgerRecordFields", "binding,entry",
+                "coinLedgerEntryFields", "createdAt,delta,id,reason",
+                "coinLedgerReasonCases",
+                "catalogUnlock(itemID),gameplay(economyVersion,runID),rewardedAd(offerID,providerTransactionID),signingBonus(version),storeKit(packID,transactionID)",
+                "mutationBindingFields",
+                "accountBinding,cloudAccountID,kind,operationID,profileAccountIdentity,profileSessionNonce,sourceEconomyRevision",
+                "durableAccountBindingFields", "accountKey,profileID",
+                "mutationKindCases",
+                "catalog-unlock,pending-credits,rewarded-ad,storekit",
+                "rewardRedemptionFields",
+                "ledgerEntryID,offerID,providerTransactionID",
+                "eventPositionFields", "batchIndex,cloudHeadRevision",
+                "rewardedRunObservationFields", "disposition,observedCycle",
+                "rewardedRunObservationDispositionCases",
+                "candidate,ignoredWhileOfferPending,legacyNonCounting",
+                "gameplayRewardResolutionCases",
+                "counted(cycle,resultingCount,unlockedOfferID),ignoredActiveOffer(cycle,offerID),ignoredLegacyNonCounting,ignoredStaleCycle(currentCycle,observedCycle)",
+                "coinLedgerAddressMaterialCount", "13",
+                "pocket-vector-coin-ledger-addresses-v1",
+                "gameplayPrefix", "run/",
+                "gameplaySuffix", "/reward",
+                "signingBonusPrefix", "signing-bonus/v",
+                "rewardedAdPrefix", "rewarded-ad/",
+                "storeKitPrefix", "storekit/",
+                "catalogUnlockPrefix", "unlock/",
+                "rewardOfferAddressMaterialCount", "3",
+                "pocket-vector-rewarded-ad-offer-address-v1",
+                "offerIDPrefix", "reward-cycle/",
+                "persistedEconomyRules",
+                "pocket-vector-persisted-economy-rules-v1",
+                "runEconomyVersion", "1",
+                "runNaturalMilliseconds", "60000",
+                "runMinimumRewardAttempts", "3",
+                "runBaseCoins", "10",
+                "runScoreCoinsPerPoints", "1000",
+                "runMaximumScoreCoins", "25",
+                "runAccuracyBonusCoins", "5",
+                "runAccuracyMinimumAttempts", "10",
+                "runAccuracyMinimumPercent", "70",
+                "signingBonusVersion", "1",
+                "signingBonusCoins", "250",
+                "signingBonusCreatedAt1970BitPattern", "0",
+                "rewardedAdCoins", "100",
+                "rewardedAdRunThreshold", "5",
+                "lockedTeamPrice", "1500",
+                "alternateJerseyPrice", "500",
+                "alternateFootballPrice", "750",
+                "coinPackCount", "4",
+                "coinPack", "bundle", "3600",
+                "coinPack", "pocket", "500",
+                "coinPack", "team", "1650",
+                "coinPack", "vault", "6500",
+            ]
+        )
+        XCTAssertEqual(
+            DurableEconomyCloudSchema.utf8Precedes("z", "é"),
+            Data("z".utf8).lexicographicallyPrecedes(Data("é".utf8))
+        )
+        XCTAssertEqual(
+            DurableEconomyCloudSchema.batchIndex(forZeroBasedOffset: 0),
+            0
+        )
+        XCTAssertEqual(
+            DurableEconomyCloudSchema.batchIndex(forZeroBasedOffset: 17),
+            17
+        )
+        XCTAssertNil(
+            DurableEconomyCloudSchema.batchIndex(forZeroBasedOffset: -1)
+        )
+        XCTAssertNil(
+            DurableEconomyCloudSchema.batchIndex(
+                forZeroBasedOffset: Int(UInt32.max) + 1
+            )
+        )
+    }
+
+    func testAssociatedEnumManifestsMatchActualGoldenJSONEncoding() throws {
+        XCTAssertEqual(
+            CoinLedgerReason.persistedCaseManifest,
+            "catalogUnlock(itemID),gameplay(economyVersion,runID)," +
+                "rewardedAd(offerID,providerTransactionID)," +
+                "signingBonus(version),storeKit(packID,transactionID)"
+        )
+        XCTAssertEqual(
+            DurableEconomyCoordinator.GameplayRewardResolution
+                .persistedCaseManifest,
+            "counted(cycle,resultingCount,unlockedOfferID)," +
+                "ignoredActiveOffer(cycle,offerID)," +
+                "ignoredLegacyNonCounting," +
+                "ignoredStaleCycle(currentCycle,observedCycle)"
+        )
+
+        let reasons: [CoinLedgerReason] = [
+            .catalogUnlock(itemID: CatalogItemID("item-a")),
+            .gameplay(
+                runID: RunID(
+                    UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
+                ),
+                economyVersion: 7
+            ),
+            .rewardedAd(
+                offerID: RewardOfferID("offer-a"),
+                providerTransactionID: AdProviderTransactionID("provider-a")
+            ),
+            .signingBonus(version: 3),
+            .storeKit(transactionID: 42, packID: CoinPackID("pack-a")),
+        ]
+        let reasonCaseNames = [
+            "catalogUnlock", "gameplay", "rewardedAd", "signingBonus",
+            "storeKit",
+        ]
+        let reasonJSON = try reasons.map {
+            String(
+                decoding: try DurableEconomyCloudSchema.makePayloadEncoder()
+                    .encode($0),
+                as: UTF8.self
+            )
+        }
+        XCTAssertEqual(
+            reasonJSON,
+            [
+                "{\"catalogUnlock\":{\"itemID\":\"item-a\"}}",
+                "{\"gameplay\":{\"economyVersion\":7,\"runID\":{\"rawValue\":\"00000000-0000-4000-8000-000000000001\"}}}",
+                "{\"rewardedAd\":{\"offerID\":\"offer-a\",\"providerTransactionID\":\"provider-a\"}}",
+                "{\"signingBonus\":{\"version\":3}}",
+                "{\"storeKit\":{\"packID\":\"pack-a\",\"transactionID\":42}}",
+            ]
+        )
+        for (encoded, caseName) in zip(reasonJSON, reasonCaseNames) {
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(encoded.utf8))
+                    as? [String: Any]
+            )
+            XCTAssertEqual(Set(object.keys), [caseName])
+        }
+
+        let resolutions: [DurableEconomyCoordinator.GameplayRewardResolution] = [
+            .counted(
+                cycle: 2,
+                resultingCount: 4,
+                unlockedOfferID: RewardOfferID("offer-a")
+            ),
+            .ignoredActiveOffer(cycle: 2, offerID: RewardOfferID("offer-a")),
+            .ignoredLegacyNonCounting,
+            .ignoredStaleCycle(observedCycle: 1, currentCycle: 2),
+        ]
+        let resolutionCaseNames = [
+            "counted", "ignoredActiveOffer", "ignoredLegacyNonCounting",
+            "ignoredStaleCycle",
+        ]
+        let resolutionJSON = try resolutions.map {
+            String(
+                decoding: try DurableEconomyCloudSchema.makePayloadEncoder()
+                    .encode($0),
+                as: UTF8.self
+            )
+        }
+        XCTAssertEqual(
+            resolutionJSON,
+            [
+                "{\"counted\":{\"cycle\":2,\"resultingCount\":4,\"unlockedOfferID\":\"offer-a\"}}",
+                "{\"ignoredActiveOffer\":{\"cycle\":2,\"offerID\":\"offer-a\"}}",
+                "{\"ignoredLegacyNonCounting\":{}}",
+                "{\"ignoredStaleCycle\":{\"currentCycle\":2,\"observedCycle\":1}}",
+            ]
+        )
+        for (encoded, caseName) in zip(resolutionJSON, resolutionCaseNames) {
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(encoded.utf8))
+                    as? [String: Any]
+            )
+            XCTAssertEqual(Set(object.keys), [caseName])
+        }
+    }
+
+    func testProductionEconomyAddressDigestAndMaximalPayloadGoldenVectors()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let cloud = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let fixture = try await makeFixture(
+            directory: directory,
+            cloud: cloud,
+            sessionNonce: uuid(1),
+            newProfileID: uuid(2)
+        )
+        let providerTransactionID = AdProviderTransactionID(
+            "provider/golden-001"
+        )
+        let offerID = RewardedAdState.offerID(for: 7)
+        let rewardEntry = CoinLedgerEntry(
+            id: CoinLedgerID.rewardedAd(
+                providerTransactionID: providerTransactionID
+            ),
+            delta: PersistedEconomyRulesV1.rewardedAdCoins,
+            reason: .rewardedAd(
+                offerID: offerID,
+                providerTransactionID: providerTransactionID
+            ),
+            createdAt: Date(timeIntervalSince1970: 1_750_000_123)
+        )
+        let signingEntry = CoinLedgerEntry(
+            id: CoinLedgerID.signingBonus(version: 1),
+            delta: PersistedEconomyRulesV1.signingBonusCoins,
+            reason: .signingBonus(version: 1),
+            createdAt: PersistedEconomyRulesV1.signingBonusLedgerCreatedAt
+        )
+        let rewardOperationID = await fixture.coordinator.mutationOperationID(
+            kind: DurableEconomyCloudSchema.rewardedAdCreditOperationKind,
+            entryIDs: [rewardEntry.id]
+        )
+        let batchOperationID = await fixture.coordinator.mutationOperationID(
+            kind: DurableEconomyCloudSchema.pendingCreditOperationKind,
+            entryIDs: [rewardEntry.id, signingEntry.id]
+        )
+        let rewardDigest = await fixture.coordinator.ledgerDigest(
+            for: rewardEntry
+        )
+        let signingDigest = await fixture.coordinator.ledgerDigest(
+            for: signingEntry
+        )
+        let accumulator = try await fixture.coordinator.ledgerAccumulator(
+            for: [rewardEntry, signingEntry]
+        )
+        let binding = await fixture.coordinator.mutationBinding(
+            kind: .rewardedAd,
+            operationID: rewardOperationID,
+            sourceEconomyRevision: 41
+        )
+        let eventPosition = DurableEconomyCoordinator.CloudEconomyEventPosition(
+            cloudHeadRevision: 42,
+            batchIndex: 0
+        )
+        let ledgerMarker = DurableEconomyCoordinator.CloudLedgerMarkerV2(
+            schemaVersion:
+                DurableEconomyCoordinator.CloudLedgerMarkerV2.schemaVersion,
+            headRecordID: economyRecordID,
+            record: DurableEconomyCoordinator.CloudLedgerRecord(
+                entry: rewardEntry,
+                binding: binding
+            ),
+            eventPosition: eventPosition,
+            gameplayRewardObservation: RewardedRunObservation(
+                observedCycle: 7,
+                disposition: .candidate
+            ),
+            gameplayRewardResolution: .counted(
+                cycle: 7,
+                resultingCount: 5,
+                unlockedOfferID: offerID
+            )
+        )
+        let rewardMarker = DurableEconomyCoordinator.CloudRewardOfferMarkerV2(
+            schemaVersion:
+                DurableEconomyCoordinator.CloudRewardOfferMarkerV2.schemaVersion,
+            headRecordID: economyRecordID,
+            redemption: DurableEconomyCoordinator.RewardRedemption(
+                offerID: offerID,
+                providerTransactionID: providerTransactionID,
+                ledgerEntryID: rewardEntry.id
+            ),
+            binding: binding,
+            eventPosition: eventPosition
+        )
+        var maximalRewardedAdHead =
+            DurableEconomyCoordinator.CloudRewardedAdHeadV1.initial
+        for _ in 0 ..< PersistedEconomyRulesV1.rewardedAdRunThreshold {
+            _ = try maximalRewardedAdHead.resolveGameplay(
+                observation: RewardedRunObservation(
+                    observedCycle: 0,
+                    disposition: .candidate
+                )
+            )
+        }
+        XCTAssertEqual(
+            maximalRewardedAdHead.eligibleOfferID,
+            RewardedAdState.offerID(for: 0)
+        )
+
+        let head = DurableEconomyCoordinator.CloudAccountHeadV3(
+            schemaVersion:
+                DurableEconomyCoordinator.CloudAccountHeadV3.schemaVersion,
+            cloudAccountID: fixture.context.cloudAccountID,
+            accountBinding: fixture.context.accountBinding,
+            profileAccountIdentity: fixture.context.profileSession.accountIdentity,
+            revision: 42,
+            ledgerAccumulator: accumulator,
+            unlockedItemIDs: [CatalogItemID("unlock.golden-item")],
+            rewardedAd: maximalRewardedAdHead
+        )
+        let loaded = DurableEconomyCoordinator.LoadedCloudState(
+            state: nil,
+            changeTag: nil,
+            ledgerMarkers: [:],
+            rewardOfferMarkers: [:]
+        )
+        let headWrite = try await fixture.coordinator.makeHeadWrite(
+            state: head,
+            loaded: loaded
+        )
+        let ledgerWrite = try await fixture.coordinator.makeLedgerMarkerWrite(
+            ledgerMarker
+        )
+        let rewardWrite = try await fixture.coordinator.makeRewardOfferMarkerWrite(
+            rewardMarker
+        )
+        let headPayload = try XCTUnwrap(headWrite.fields["economyPayload"])
+        let ledgerPayload = try XCTUnwrap(
+            ledgerWrite.fields["economyPayload"]
+        )
+        let rewardPayload = try XCTUnwrap(
+            rewardWrite.fields["economyPayload"]
+        )
+
+        XCTAssertEqual(
+            rewardEntry.id.rawValue,
+            "rewarded-ad/provider/golden-001"
+        )
+        XCTAssertEqual(
+            offerID.rawValue,
+            "reward-cycle/7"
+        )
+        XCTAssertEqual(
+            ledgerWrite.id.rawValue,
+            "economy-marker-v1-b68b7a5c0b77fd21e858bc45d244bcc3062917965ac1f58fc4e78a2228a16429"
+        )
+        XCTAssertEqual(
+            rewardWrite.id.rawValue,
+            "economy-marker-v1-dc0752c3f4461f94ec8733befb24e68443cfd517b2c935a3126d4c6f5fff2121"
+        )
+        XCTAssertEqual(
+            rewardOperationID.rawValue,
+            "economy-v3-10b47d23503d6540721c2974057cd93d855fe73cfd22bd29f915aa6deef03808"
+        )
+        XCTAssertEqual(
+            batchOperationID.rawValue,
+            "economy-v3-df7eebf7d5a4e29027d0758a20cba587cbd8d2f2f54774dcf19b455b1d2c63e0"
+        )
+        XCTAssertEqual(
+            hex(rewardDigest),
+            "ff79f657a63355601af7205f9c215cf16ddb18ecbbc81a0bdc2571f078590392"
+        )
+        XCTAssertEqual(
+            hex(signingDigest),
+            "e849815cd40843ff013d99607fbd3d91732169475b24eb4d6e58fe2f74e21f32"
+        )
+        XCTAssertEqual(accumulator.entryCount, 2)
+        XCTAssertEqual(accumulator.confirmedBalance, 350)
+        XCTAssertEqual(
+            hex(accumulator.digest),
+            "1730770b723b169f1bcab93fe39c61601efa71abe0ecf146b27d8fdf0cbb1ca0"
+        )
+        XCTAssertEqual(
+            hex(Data(SHA256.hash(data: headPayload))),
+            "db228f2708d269ab5faa582293944e8e0735f32c180029b9e343e70ed70913be"
+        )
+        XCTAssertEqual(
+            hex(Data(SHA256.hash(data: ledgerPayload))),
+            "f74f011b090002c95cb67e234ccbe2ebb3a21996c4842ebc8c88d0a8c0d88099"
+        )
+        XCTAssertEqual(
+            hex(Data(SHA256.hash(data: rewardPayload))),
+            "14272bd9ac9b64319685e2abb6537da8ffdabb27aeb6d541603bcaa9477115d0"
+        )
+
+        let relaunchedSession = ProfileSessionToken(
+            accountIdentity: fixture.context.profileSession.accountIdentity,
+            nonce: uuid(99),
+            profileID: fixture.context.profileSession.profileID
+        )
+        let relaunchedContext = try DurableEconomySessionContext(
+            cloudAccountID: fixture.context.cloudAccountID,
+            accountBinding: fixture.context.accountBinding,
+            profileSession: relaunchedSession,
+            storeSession: StoreActiveSession(
+                binding: fixture.context.storeSession.binding,
+                nonce: relaunchedSession.nonce
+            )
+        )
+        let relaunchedAuthority = DurableEconomySessionAuthority(
+            context: relaunchedContext
+        )
+        let relaunchedCoordinator = try makeCoordinator(
+            context: relaunchedContext,
+            authority: relaunchedAuthority,
+            repository: fixture.repository,
+            cloud: cloud
+        )
+        let relaunchedOperationID = await relaunchedCoordinator
+            .mutationOperationID(
+                kind: DurableEconomyCloudSchema.pendingCreditOperationKind,
+                entryIDs: [signingEntry.id, rewardEntry.id]
+            )
+        XCTAssertEqual(relaunchedOperationID, batchOperationID)
+    }
 
     func testPendingGameplayAndSigningCreditsCommitExactlyOnceAcrossRelaunch() async throws {
         let directory = makeTemporaryDirectory()
@@ -1053,7 +1526,12 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         }
         XCTAssertEqual(
             orderedMarkers.map(\.record.entry.id),
-            pendingIDs.sorted { $0.rawValue < $1.rawValue }
+            pendingIDs.sorted {
+                DurableEconomyCloudSchema.utf8Precedes(
+                    $0.rawValue,
+                    $1.rawValue
+                )
+            }
         )
         XCTAssertEqual(
             orderedMarkers.map(\.eventPosition.cloudHeadRevision),
@@ -2607,6 +3085,10 @@ private extension DurableEconomyCoordinatorTests {
     func rawIdentifier(_ encoded: Any) -> String? {
         if let value = encoded as? String { return value }
         return (encoded as? [String: Any])?["rawValue"] as? String
+    }
+
+    func hex(_ data: Data) -> String {
+        data.map { String(format: "%02x", $0) }.joined()
     }
 
     func makeTemporaryDirectory() -> URL {

@@ -17,6 +17,10 @@ struct CloudProfileSchemaConfiguration: Equatable, Sendable {
     static let runRecordIDDomain = "pocket-vector-cloud-profile-run-record-id-v1"
     static let runAccumulatorDomain =
         "pocket-vector-cloud-profile-run-accumulator-entry-v1"
+    static let runRecordAddressPolicyIdentifier =
+        "domain-and-run-id-length-prefixed-sha256-lowercase-hex-v1"
+    static let runAccumulatorPolicyIdentifier =
+        "unique-logical-id-count-and-order-independent-xor-entry-digests-v1"
 
     let rootRecordType: String
     let settingsRecordType: String
@@ -85,7 +89,14 @@ struct CloudProfileSchemaConfiguration: Equatable, Sendable {
     /// It includes every profile schema name, version, singleton ID, and digest
     /// domain so changing interpretation necessarily invalidates a checkpoint.
     var fingerprintMaterial: [String] {
-        [
+        let canonicalPayload = CloudProfileCanonicalPayload.fingerprintMaterial
+        let mergePolicy = CloudProfileMergePolicyV1.fingerprintMaterial
+        let deviceIDRule = ProfileStampDeviceIDRuleV1.fingerprintMaterial
+        let accountDerivation = CloudAccountDerivedBindings.profileFingerprintMaterial
+        let catalog = LaunchCatalog.approved.persistedFingerprintMaterial
+        let achievements = AchievementCatalog.persistedFingerprintMaterial()
+
+        return [
             Self.schemaIdentifier,
             "rootRecordType", rootRecordType,
             "settingsRecordType", settingsRecordType,
@@ -96,7 +107,9 @@ struct CloudProfileSchemaConfiguration: Equatable, Sendable {
             "settingsLogicalRecordID", settingsRecordID.rawValue,
             "selectionLogicalRecordID", selectionRecordID.rawValue,
             "runRecordIDDomain", Self.runRecordIDDomain,
+            "runRecordAddressPolicy", Self.runRecordAddressPolicyIdentifier,
             "runAccumulatorDomain", Self.runAccumulatorDomain,
+            "runAccumulatorPolicy", Self.runAccumulatorPolicyIdentifier,
             "rootSchemaVersion", String(CloudProfileRootV1.schemaVersion),
             "settingsSchemaVersion", String(CloudProfileSettingsV1.schemaVersion),
             "selectionSchemaVersion", String(CloudProfileSelectionV1.schemaVersion),
@@ -104,7 +117,20 @@ struct CloudProfileSchemaConfiguration: Equatable, Sendable {
             String(CloudProfileCompletedRunV1.schemaVersion),
             "runAccumulatorDigestBytes",
             String(CloudProfileRunAccumulatorV1.digestByteCount),
-        ]
+            "digestAlgorithm", CloudProfileDigest.algorithmIdentifier,
+            "digestHexEncoding", CloudProfileDigest.hexEncodingIdentifier,
+            "canonicalPayloadMaterialCount", String(canonicalPayload.count),
+        ] + canonicalPayload + [
+            "mergePolicyMaterialCount", String(mergePolicy.count),
+        ] + mergePolicy + [
+            "deviceIDRuleMaterialCount", String(deviceIDRule.count),
+        ] + deviceIDRule + [
+            "accountDerivationMaterialCount", String(accountDerivation.count),
+        ] + accountDerivation + [
+            "catalogMaterialCount", String(catalog.count),
+        ] + catalog + [
+            "achievementMaterialCount", String(achievements.count),
+        ] + achievements
     }
 
     private static func isCloudKitIdentifier(_ value: String) -> Bool {
@@ -126,6 +152,16 @@ struct CloudProfileBindingV1: Codable, Equatable, Sendable {
     let cloudAccountID: CloudAccountID
     let accountBinding: DurableAccountBinding
     let profileAccountIdentity: PlayerAccountIdentity
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case cloudAccountID
+        case accountBinding
+        case profileAccountIdentity
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
 }
 
 struct CloudProfileRunAccumulatorV1: Codable, Equatable, Sendable {
@@ -133,6 +169,15 @@ struct CloudProfileRunAccumulatorV1: Codable, Equatable, Sendable {
 
     let runCount: UInt64
     let digest: Data
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case runCount
+        case digest
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
 
     static let empty = try! CloudProfileRunAccumulatorV1(
         runCount: 0,
@@ -215,6 +260,18 @@ struct CloudProfileRootV1: Codable, Equatable, Sendable {
     let rootRevision: UInt64
     let runAccumulator: CloudProfileRunAccumulatorV1
 
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion
+        case binding
+        case economyHeadRecordID
+        case rootRevision
+        case runAccumulator
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
     init(
         schemaVersion: Int = Self.schemaVersion,
         binding: CloudProfileBindingV1,
@@ -241,6 +298,16 @@ struct CloudProfileMergeStampV1: Codable, Equatable, Comparable, Sendable {
     let logicalCounter: UInt64
     let deviceID: String
     let modifiedAt: Date
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case logicalCounter
+        case deviceID
+        case modifiedAt
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
 
     init(logicalCounter: UInt64, deviceID: String, modifiedAt: Date) throws {
         guard ProfileStampDeviceIDRuleV1.isValid(deviceID) else {
@@ -277,12 +344,8 @@ struct CloudProfileMergeStampV1: Codable, Equatable, Comparable, Sendable {
         lhs: CloudProfileMergeStampV1,
         rhs: CloudProfileMergeStampV1
     ) -> Bool {
-        if lhs.logicalCounter != rhs.logicalCounter {
-            return lhs.logicalCounter < rhs.logicalCounter
-        }
-        return lhs.deviceID.utf8.lexicographicallyPrecedes(rhs.deviceID.utf8)
+        CloudProfileMergePolicyV1.isOrderedBefore(lhs, rhs)
     }
-
 }
 
 enum CloudProfileStampedMergeError: Error, Equatable, Sendable {
@@ -298,6 +361,17 @@ struct CloudProfileSettingsV1: Codable, Equatable, Sendable {
     let binding: CloudProfileBindingV1
     let stamp: CloudProfileMergeStampV1
     let settings: PlayerSettings
+
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion
+        case binding
+        case stamp
+        case settings
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
 
     init(
         schemaVersion: Int = Self.schemaVersion,
@@ -342,6 +416,17 @@ struct CloudProfileSelectionV1: Codable, Equatable, Sendable {
     let stamp: CloudProfileMergeStampV1
     let selection: PlayerSelection
 
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion
+        case binding
+        case stamp
+        case selection
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
     init(
         schemaVersion: Int = Self.schemaVersion,
         binding: CloudProfileBindingV1,
@@ -385,6 +470,17 @@ struct CloudProfileCompletedRunV1: Codable, Equatable, Sendable {
     let record: CompletedRunRecord
     let rewardedRunObservation: RewardedRunObservation?
 
+    enum CodingKeys: String, CodingKey, CaseIterable {
+        case schemaVersion
+        case binding
+        case record
+        case rewardedRunObservation
+    }
+
+    static var persistedFieldManifest: String {
+        CodingKeys.allCases.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
     init(
         schemaVersion: Int = Self.schemaVersion,
         binding: CloudProfileBindingV1,
@@ -401,6 +497,11 @@ struct CloudProfileCompletedRunV1: Codable, Equatable, Sendable {
 }
 
 enum CloudProfileDigest {
+    static let algorithmIdentifier =
+        "sha256-uint64-big-endian-length-prefixed-components-v1"
+    static let hexEncodingIdentifier =
+        "lowercase-two-digit-hex-per-byte-v1"
+
     static func sha256(components: [String]) -> Data {
         sha256(dataComponents: components.map { Data($0.utf8) })
     }
@@ -428,15 +529,136 @@ extension CloudProfileMergeStampV1 {
         return try CloudProfileMergeStampV1(
             logicalCounter: logicalCounter,
             deviceID: deviceID,
-            modifiedAt: max(modifiedAt, other.modifiedAt)
+            modifiedAt: CloudProfileMergePolicyV1.canonicalModifiedAt(
+                modifiedAt,
+                other.modifiedAt
+            )
         )
     }
 }
 
+enum CloudProfileMergePolicyV1 {
+    static let semanticIdentifier =
+        "pocket-vector-cloud-profile-stamped-merge-policy-v1"
+    static let orderingPolicyIdentifier =
+        "logical-counter-then-device-id-utf8-byte-lexicographic-v1"
+    static let equalityPolicyIdentifier =
+        "logical-counter-and-device-id-excluding-modified-at-v1"
+    static let compatibilityPolicyIdentifier =
+        "exact-schema-version-and-account-binding-v1"
+    static let equalStampPolicyIdentifier =
+        "equal-value-required-and-maximum-modified-at-canonicalized-v1"
+    static let divergentStampPolicyIdentifier =
+        "value-from-greater-logical-stamp-v1"
+
+    static var fingerprintMaterial: [String] {
+        [
+            semanticIdentifier,
+            "orderingPolicy", orderingPolicyIdentifier,
+            "equalityPolicy", equalityPolicyIdentifier,
+            "compatibilityPolicy", compatibilityPolicyIdentifier,
+            "equalStampPolicy", equalStampPolicyIdentifier,
+            "divergentStampPolicy", divergentStampPolicyIdentifier,
+        ]
+    }
+
+    static func isOrderedBefore(
+        _ lhs: CloudProfileMergeStampV1,
+        _ rhs: CloudProfileMergeStampV1
+    ) -> Bool {
+        if lhs.logicalCounter != rhs.logicalCounter {
+            return lhs.logicalCounter < rhs.logicalCounter
+        }
+        return lhs.deviceID.utf8.lexicographicallyPrecedes(rhs.deviceID.utf8)
+    }
+
+    static func canonicalModifiedAt(_ lhs: Date, _ rhs: Date) -> Date {
+        max(lhs, rhs)
+    }
+}
+
 enum CloudProfileCanonicalPayload {
+    static let semanticIdentifier =
+        "pocket-vector-cloud-profile-canonical-payload-v1"
+    static let payloadEncodingIdentifier =
+        "foundation-sorted-key-json-default-keys-deferred-date-base64-data-nonfinite-float-throw-v1"
+    static let stringIdentifierEncodingIdentifier =
+        "raw-representable-single-value-string-v1"
+    static let stringIdentifierTypeManifest = [
+        "CloudAccountID",
+        "CloudRecordID",
+        "FootballID",
+        "JerseyID",
+        "PlayerAccountIdentity",
+        ServiceAccountKey.persistedTypeIdentifier,
+        "TeamID",
+    ].joined(separator: ",")
+    static let runIDEncodingIdentifier =
+        "keyed-rawValue-foundation-uuid-v1"
+    static let runIDTypeIdentifier = "RunID"
+    static let uuidEncodingIdentifier = "foundation-uuid-string-v1"
+    static let rawStringEnumEncodingIdentifier = "single-value-raw-string-v1"
+    static let rawStringEnumTypeManifest =
+        "RewardedRunObservation.Disposition,RunFinishReason"
+    static let jsonObjectNormalizationIdentifier =
+        "jsonserialization-round-trip-sorted-keys-default-writing-options-v1"
+    static let optionalEncodingIdentifier = "synthesized-keyed-nil-omitted-v1"
+    static let completedLaneNormalizationIdentifier =
+        "completed-lane-raw-values-utf8-byte-ascending-v1"
+    static let selectedJerseyNormalizationIdentifier =
+        "team-id-jersey-id-alternating-pairs-team-utf8-byte-ascending-v1"
+
+    static var fingerprintMaterial: [String] {
+        let laneCases = LaneID.allCases.map(\.rawValue).sorted {
+            $0.utf8.lexicographicallyPrecedes($1.utf8)
+        }.joined(separator: ",")
+        return [
+            semanticIdentifier,
+            "payloadEncoding", payloadEncodingIdentifier,
+            "stringIdentifierEncoding", stringIdentifierEncodingIdentifier,
+            "stringIdentifierTypes", stringIdentifierTypeManifest,
+            "runIDEncoding", runIDEncodingIdentifier,
+            "runIDType", runIDTypeIdentifier,
+            "uuidEncoding", uuidEncodingIdentifier,
+            "rawStringEnumEncoding", rawStringEnumEncodingIdentifier,
+            "rawStringEnumTypes", rawStringEnumTypeManifest,
+            "jsonObjectNormalization", jsonObjectNormalizationIdentifier,
+            "optionalEncoding", optionalEncodingIdentifier,
+            "completedLaneNormalization", completedLaneNormalizationIdentifier,
+            "selectedJerseyNormalization", selectedJerseyNormalizationIdentifier,
+            "bindingFields", CloudProfileBindingV1.persistedFieldManifest,
+            "durableAccountBindingFields",
+            DurableAccountBinding.persistedFieldManifest,
+            "runAccumulatorFields",
+            CloudProfileRunAccumulatorV1.persistedFieldManifest,
+            "rootFields", CloudProfileRootV1.persistedFieldManifest,
+            "mergeStampFields", CloudProfileMergeStampV1.persistedFieldManifest,
+            "settingsEnvelopeFields",
+            CloudProfileSettingsV1.persistedFieldManifest,
+            "playerSettingsFields", PlayerSettings.persistedFieldManifest,
+            "selectionEnvelopeFields",
+            CloudProfileSelectionV1.persistedFieldManifest,
+            "playerSelectionFields", PlayerSelection.persistedFieldManifest,
+            "completedRunEnvelopeFields",
+            CloudProfileCompletedRunV1.persistedFieldManifest,
+            "completedRunRecordFields",
+            CompletedRunRecord.persistedFieldManifest,
+            "completedRunFields", CompletedRun.persistedFieldManifest,
+            "runConfigurationFields", RunConfiguration.persistedFieldManifest,
+            "runStatisticsFields",
+            RunStatisticsSnapshot.persistedFieldManifest,
+            "rewardedRunObservationFields",
+            RewardedRunObservation.persistedFieldManifest,
+            "rewardedRunObservationDispositionCases",
+            RewardedRunObservation.dispositionCaseManifest,
+            "runFinishReasonCases", RunFinishReason.persistedCaseManifest,
+            "laneIDEncoding", "single-value-raw-string-v1",
+            "laneIDCases", laneCases,
+        ]
+    }
+
     static func encode<T: Encodable>(_ value: T) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+        let encoder = makeEncoder()
         let encoded = try encoder.encode(value)
         let object = try JSONSerialization.jsonObject(with: encoded)
         let normalized: Any
@@ -453,6 +675,16 @@ enum CloudProfileCanonicalPayload {
         )
     }
 
+    private static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.keyEncodingStrategy = .useDefaultKeys
+        encoder.dateEncodingStrategy = .deferredToDate
+        encoder.dataEncodingStrategy = .base64
+        encoder.nonConformingFloatEncodingStrategy = .throw
+        return encoder
+    }
+
     private static func canonicalCompletedRunObject(_ object: Any) -> Any {
         guard var payload = object as? [String: Any],
               var record = payload["record"] as? [String: Any],
@@ -461,7 +693,9 @@ enum CloudProfileCanonicalPayload {
         else {
             return object
         }
-        run["completedLaneIDs"] = laneIDs.sorted()
+        run["completedLaneIDs"] = laneIDs.sorted {
+            $0.utf8.lexicographicallyPrecedes($1.utf8)
+        }
         record["run"] = run
         payload["record"] = record
         return payload
@@ -482,7 +716,9 @@ enum CloudProfileCanonicalPayload {
             }
             pairs.append((key, flatEntries[index + 1]))
         }
-        pairs.sort { $0.key < $1.key }
+        pairs.sort {
+            $0.key.utf8.lexicographicallyPrecedes($1.key.utf8)
+        }
         selection["selectedJerseyByTeam"] = pairs.flatMap { [$0.key, $0.value] }
         payload["selection"] = selection
         return payload
