@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "menu-stadium-neutral-v1.png",
+      "filename" : "utility-achievements-v2.png",
       "idiom" : "universal",
       "scale" : "1x"
     },
@@ -19,7 +19,6 @@
     "version" : 1
   },
   "properties" : {
-    "compression-type" : "lossless",
-    "preserves-vector-representation" : false
+    "compression-type" : "lossless"
   }
 }

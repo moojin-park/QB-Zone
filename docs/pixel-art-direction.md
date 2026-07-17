@@ -58,18 +58,27 @@ vector/material choice and remains attached to the player across teams.
 ## Main menu
 
 The main menu is a full-stadium arcade marquee, not a stack of generic app
-cards. Its hierarchy is: team banner and `POCKET VECTOR` wordmark, team name,
-large central Play control, compact utility actions, then the three primary
-destinations. Pixel players flank Play without becoming interactive targets.
+cards. Its hierarchy is: the stadium-mounted `POCKET VECTOR` marquee and
+tagline, large central Play control, flanking QB and coach, then the two bottom
+destinations. Achievements, Store, and Settings stay in a compact corner rail.
+Privacy and Support live inside Settings. Personal Best is a small live-value
+sideline scoreboard rather than a destination card.
 
-The selected offense drives the menu's primary and secondary accents, emblem,
-wordmark, and both player uniforms. Nova City Comets is the fresh-profile
-default; a returning player's persisted selection remains authoritative. The
-stadium base stays neutral so team color comes from runtime overlays rather
-than baked identity.
+The selected offense drives the marquee accents, Play face, flags, banner
+emblems and wordmarks, uniforms, equipment highlights, and upper-stadium
+lighting. Nova City Comets is the fresh-profile default; a returning player's
+persisted selection remains authoritative. Runtime palette replacement must
+preserve skin, football leather, white lettering, steel, and neutral shadows.
+A dedicated 4:3 scene is required for iPad; do not letterbox the phone plate
+over a blurred enlargement.
 
 - Preserve the concept's dark navy, bright stadium lighting, framed marquee,
-  oversized Play control, and clear bottom navigation rhythm.
+  detailed character art, oversized dimensional Play control, and clear
+  two-button bottom navigation rhythm.
+- Do not place a separate oversized team badge beside the title. Team identity
+  belongs in the stadium banners, palette, uniforms, and environmental light.
+- Coin balance is icon-first and compact: use the coin mark plus value, never a
+  large balance card or the word “Coin.”
 - Keep every interactive control inside landscape safe areas on compact iPhone,
   regular iPhone, and iPad.
 - Decorative stadium and player layers remain hidden from accessibility; every
