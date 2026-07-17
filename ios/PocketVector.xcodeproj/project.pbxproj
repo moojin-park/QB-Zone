@@ -118,6 +118,8 @@
 		1F0000000000000000000008 /* ProfileHydrationFileTransactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000008 /* ProfileHydrationFileTransactionTests.swift */; };
 		1F0000000000000000000009 /* CloudProfileHydrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000009 /* CloudProfileHydrator.swift */; };
 		1F000000000000000000000A /* CloudProfileHydratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000A /* CloudProfileHydratorTests.swift */; };
+		1F000000000000000000000B /* CloudInitialProfileSeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000B /* CloudInitialProfileSeed.swift */; };
+		1F000000000000000000000C /* CloudInitialProfileSeedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000C /* CloudInitialProfileSeedTests.swift */; };
 		1F000000000000000000000F /* StoreKitRuntimeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000F /* StoreKitRuntimeCoordinator.swift */; };
 		1F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift */; };
 		1F000000000000000000000D /* GameCenterDeliveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000D /* GameCenterDeliveryCoordinator.swift */; };
@@ -257,6 +259,8 @@
 		2F0000000000000000000008 /* ProfileHydrationFileTransactionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileHydrationFileTransactionTests.swift; sourceTree = "<group>"; };
 		2F0000000000000000000009 /* CloudProfileHydrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudProfileHydrator.swift; sourceTree = "<group>"; };
 		2F000000000000000000000A /* CloudProfileHydratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudProfileHydratorTests.swift; sourceTree = "<group>"; };
+		2F000000000000000000000B /* CloudInitialProfileSeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudInitialProfileSeed.swift; sourceTree = "<group>"; };
+		2F000000000000000000000C /* CloudInitialProfileSeedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudInitialProfileSeedTests.swift; sourceTree = "<group>"; };
 		2F000000000000000000000F /* StoreKitRuntimeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitRuntimeCoordinator.swift; sourceTree = "<group>"; };
 		2F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitRuntimeCoordinatorTests.swift; sourceTree = "<group>"; };
 		2F000000000000000000000D /* GameCenterDeliveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterDeliveryCoordinator.swift; sourceTree = "<group>"; };
@@ -426,6 +430,7 @@
 				2F0000000000000000000007 /* ProfileHydrationJournalTests.swift */,
 				2F0000000000000000000008 /* ProfileHydrationFileTransactionTests.swift */,
 				2F000000000000000000000A /* CloudProfileHydratorTests.swift */,
+				2F000000000000000000000C /* CloudInitialProfileSeedTests.swift */,
 				2C0000000000000000000008 /* AppleDiagnosticsRuntimeTests.swift */,
 				2C0000000000000000000009 /* UIKitGameKitPresentationHandoffTests.swift */,
 				2C000000000000000000000A /* ProductionAppRuntimeTests.swift */,
@@ -500,6 +505,7 @@
 				2F0000000000000000000001 /* CloudProfileSchema.swift */,
 				2F0000000000000000000002 /* CloudProfileReplicaValidator.swift */,
 				2F0000000000000000000009 /* CloudProfileHydrator.swift */,
+				2F000000000000000000000B /* CloudInitialProfileSeed.swift */,
 				220000000000000000000005 /* TelemetryServices.swift */,
 				220000000000000000000006 /* DiagnosticsServices.swift */,
 				22000000000000000000000C /* ServiceAccountBindings.swift */,
@@ -720,6 +726,7 @@
 				1F0000000000000000000001 /* CloudProfileSchema.swift in Sources */,
 				1F0000000000000000000002 /* CloudProfileReplicaValidator.swift in Sources */,
 				1F0000000000000000000009 /* CloudProfileHydrator.swift in Sources */,
+				1F000000000000000000000B /* CloudInitialProfileSeed.swift in Sources */,
 				1F0000000000000000000005 /* ProfileHydrationJournal.swift in Sources */,
 				1F0000000000000000000006 /* ProfileHydrationFileSystem.swift in Sources */,
 				170000000000000000000005 /* StoreKit2TransactionAdapter.swift in Sources */,
@@ -799,6 +806,7 @@
 				1F0000000000000000000007 /* ProfileHydrationJournalTests.swift in Sources */,
 				1F0000000000000000000008 /* ProfileHydrationFileTransactionTests.swift in Sources */,
 				1F000000000000000000000A /* CloudProfileHydratorTests.swift in Sources */,
+				1F000000000000000000000C /* CloudInitialProfileSeedTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
