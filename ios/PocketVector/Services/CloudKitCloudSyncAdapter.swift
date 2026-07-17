@@ -613,7 +613,7 @@ enum CloudKitServerChangeTokenCodec {
 /// The only type in this file that talks to CloudKit. The adapter above it is
 /// fully deterministic and tests use a protocol fake, so no test opens or
 /// mutates a live container.
-actor LiveCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {
+fileprivate actor LiveCloudKitPrivateDatabaseClient: CloudKitPrivateDatabaseClient {
     private let container: CKContainer
     private let database: CKDatabase
     private let zoneID: CKRecordZone.ID
@@ -1032,16 +1032,69 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
         after cursor: CloudChangeCursor?,
         zonePreparation: CloudZonePreparationPolicy
     ) async throws -> CloudRecordChangePage {
+        guard zonePreparation == .requireExisting else {
+            throw CloudKitCloudSyncError.invalidRequest
+        }
+        return try await recordChanges(
+            accountID: accountID,
+            after: cursor,
+            allowZoneCreation: false
+        )
+    }
+
+    /// The raw change-fetch protocol cannot create a zone. Release bootstrap
+    /// must present the opaque permit retained only by a store-issued context.
+    func recordInitialBootstrapChanges(
+        accountID: CloudAccountID,
+        after cursor: CloudChangeCursor?,
+        authorization: CloudReplicaInitialBootstrapReservedFetchV1
+    ) async throws -> CloudRecordChangePage {
+        let allowZoneCreation: Bool
+        switch authorization.networkPolicy {
+        case .mayCreateZoneOnFirstRequest:
+            allowZoneCreation = cursor == nil
+        case .requireExistingZoneRecovery:
+            allowZoneCreation = false
+        }
+        return try await recordChanges(
+            accountID: accountID,
+            after: cursor,
+            allowZoneCreation: allowZoneCreation
+        )
+    }
+
+    #if DEBUG
+    /// Adapter tests exercise both provider policies without exposing a
+    /// zone-creating raw protocol path in Release.
+    func _testOnlyRecordChanges(
+        accountID: CloudAccountID,
+        after cursor: CloudChangeCursor?,
+        zonePreparation: CloudZonePreparationPolicy
+    ) async throws -> CloudRecordChangePage {
         if cursor != nil, zonePreparation == .createIfMissingForInitialBootstrap {
             throw CloudKitCloudSyncError.invalidRequest
         }
+        return try await recordChanges(
+            accountID: accountID,
+            after: cursor,
+            allowZoneCreation:
+                zonePreparation == .createIfMissingForInitialBootstrap
+        )
+    }
+    #endif
+
+    private func recordChanges(
+        accountID: CloudAccountID,
+        after cursor: CloudChangeCursor?,
+        allowZoneCreation: Bool
+    ) async throws -> CloudRecordChangePage {
         _ = try await requireActive(accountID)
 
         let clientPage: CloudKitClientChangePage
         do {
             clientPage = try await client.fetchRecordZoneChanges(
                 afterArchivedCursor: cursor?.rawValue,
-                allowZoneCreation: zonePreparation == .createIfMissingForInitialBootstrap
+                allowZoneCreation: allowZoneCreation
             )
         } catch let failure as CloudKitClientFailure {
             switch failure {
@@ -1549,62 +1602,6 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
     private func unique(_ ids: [CloudRecordID]) -> [CloudRecordID] {
         var seen: Set<CloudRecordID> = []
         return ids.filter { seen.insert($0).inserted }
-    }
-}
-
-/// A configuration-derived change-fetch capability for checkpoint publication.
-/// Release callers can obtain one only by supplying the complete validated
-/// cloud-write configuration; they cannot pair an asserted replica scope with
-/// an unrelated transport.
-struct CloudReplicaScopedChangeFetcherV1: Sendable {
-    let configurationScopeFingerprint: CloudReplicaScopeFingerprint
-    private let changeFetcher: any CloudSyncChangeFetching
-
-    private init(
-        configuration: ProductionCloudWriteConfiguration,
-        changeFetcher: any CloudSyncChangeFetching
-    ) {
-        configurationScopeFingerprint = CloudReplicaScopeFingerprint.make(
-            for: configuration
-        )
-        self.changeFetcher = changeFetcher
-    }
-
-    static func live(
-        configuration: ProductionCloudWriteConfiguration
-    ) -> CloudReplicaScopedChangeFetcherV1 {
-        CloudReplicaScopedChangeFetcherV1(
-            configuration: configuration,
-            changeFetcher: CloudKitCloudSyncTransport.live(
-                configuration: configuration.transport
-            )
-        )
-    }
-
-    #if DEBUG
-    /// Test seams still derive their scope from the complete production
-    /// configuration. Only the network behavior may be replaced.
-    static func _testOnly(
-        configuration: ProductionCloudWriteConfiguration,
-        changeFetcher: any CloudSyncChangeFetching
-    ) -> CloudReplicaScopedChangeFetcherV1 {
-        CloudReplicaScopedChangeFetcherV1(
-            configuration: configuration,
-            changeFetcher: changeFetcher
-        )
-    }
-    #endif
-
-    /// Checkpoint publication never grants zone-creation authority.
-    func recordChangesRequiringExistingZone(
-        accountID: CloudAccountID,
-        after cursor: CloudChangeCursor?
-    ) async throws -> CloudRecordChangePage {
-        try await changeFetcher.recordChanges(
-            accountID: accountID,
-            after: cursor,
-            zonePreparation: .requireExisting
-        )
     }
 }
 

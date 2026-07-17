@@ -377,6 +377,33 @@ actor CloudAccountGenerationAuthority {
         return try await operation(lease)
     }
 
+    /// Revalidates an opaque capability that intentionally escaped its
+    /// original bounded commit body, then runs one new bounded local commit.
+    /// Network work must happen only after this body returns. Callers cannot
+    /// construct the token, and a same-binding reactivation mints a different
+    /// token, so stale capabilities fail before their local reservation can be
+    /// admitted.
+    func withCurrentGeneration<Result: Sendable>(
+        matching expectedToken: AccountGenerationToken,
+        perform operation: @Sendable (
+            borrowing AccountGenerationCommitLease
+        ) async throws -> Result
+    ) async throws -> Result {
+        try await acquireCommitOperationGate()
+        defer { releaseCommitOperationGate() }
+        try Task.checkCancellation()
+
+        guard let activeGeneration else {
+            throw CloudAccountGenerationAuthorityError.noActiveGeneration
+        }
+        guard activeGeneration.token == expectedToken else {
+            throw CloudAccountGenerationAuthorityError.generationNotCurrent
+        }
+
+        let lease = AccountGenerationCommitLease(generation: activeGeneration)
+        return try await operation(lease)
+    }
+
     /// Synchronous issuer check used by stores that were explicitly composed
     /// with this authority. It reveals neither the token nor the active
     /// generation and cannot mint commit authority.

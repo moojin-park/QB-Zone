@@ -921,7 +921,7 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
                 cursor: "cursor-discovery"
             )
         )
-        let page = try await transport.recordChanges(
+        let page = try await transport._testOnlyRecordChanges(
             accountID: accountID,
             after: nil,
             zonePreparation: .createIfMissingForInitialBootstrap
@@ -995,7 +995,7 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
             )
         )
 
-        let first = try await transport.recordChanges(
+        let first = try await transport._testOnlyRecordChanges(
             accountID: accountID,
             after: nil,
             zonePreparation: .createIfMissingForInitialBootstrap
@@ -1022,6 +1022,36 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(calls[0].allowZoneCreation)
         XCTAssertEqual(calls[1].cursor, Data("cursor-page-1".utf8))
         XCTAssertFalse(calls[1].allowZoneCreation)
+    }
+
+    func testRawChangeFetchSurfaceCannotCreateInitialBootstrapZone()
+        async throws
+    {
+        let client = FakeCloudKitPrivateDatabaseClient(
+            userRecordName: "provider-user-a"
+        )
+        let transport = try makeTransport(client: client)
+        let accountID = try await availableAccountID(transport)
+        await client.setZoneExists(false, forUser: "provider-user-a")
+
+        do {
+            _ = try await transport.recordChanges(
+                accountID: accountID,
+                after: nil,
+                zonePreparation: .createIfMissingForInitialBootstrap
+            )
+            XCTFail("The raw protocol surface must not own zone creation")
+        } catch let error as CloudKitCloudSyncError {
+            XCTAssertEqual(error, .invalidRequest)
+        }
+
+        let creationCount = await client.zoneCreationCount(
+            forUser: "provider-user-a"
+        )
+        let fetchCallCount = await client.observedChangeFetchCalls().count
+        XCTAssertEqual(creationCount, 0)
+        XCTAssertEqual(fetchCallCount, 0)
+
     }
 
     func testAccountSwitchDuringChangeFetchRejectsReturnedPage() async throws {
@@ -1219,7 +1249,7 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
         let client = FakeCloudKitPrivateDatabaseClient(userRecordName: "provider-user-a")
         let transport = try makeTransport(client: client)
         let accountID = try await availableAccountID(transport)
-        _ = try await transport.recordChanges(
+        _ = try await transport._testOnlyRecordChanges(
             accountID: accountID,
             after: nil,
             zonePreparation: .createIfMissingForInitialBootstrap
@@ -1242,7 +1272,7 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
         )
         XCTAssertEqual(initialCreationCount, 0)
 
-        let bootstrapped = try await transport.recordChanges(
+        let bootstrapped = try await transport._testOnlyRecordChanges(
             accountID: accountID,
             after: nil,
             zonePreparation: .createIfMissingForInitialBootstrap
@@ -1255,7 +1285,7 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
 
         await client.setZoneExists(false, forUser: "provider-user-a")
         do {
-            _ = try await transport.recordChanges(
+            _ = try await transport._testOnlyRecordChanges(
                 accountID: accountID,
                 after: bootstrapped.nextCursor,
                 zonePreparation: .createIfMissingForInitialBootstrap
@@ -1276,7 +1306,7 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
         let client = FakeCloudKitPrivateDatabaseClient(userRecordName: "provider-user-a")
         let transport = try makeTransport(client: client)
         let accountID = try await availableAccountID(transport)
-        _ = try await transport.recordChanges(
+        _ = try await transport._testOnlyRecordChanges(
             accountID: accountID,
             after: nil,
             zonePreparation: .createIfMissingForInitialBootstrap

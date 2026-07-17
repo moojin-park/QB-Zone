@@ -2297,6 +2297,2230 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(resumed.hasDurableCheckpointIntent)
     }
 
+    func testInitialBootstrapPublishesEmptyAndInitializedZoneSnapshots()
+        async throws
+    {
+        let emptyRoot = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: emptyRoot) }
+        let emptyFixture = try await initialBootstrapFixture(root: emptyRoot)
+        let emptyContext = try await beginInitialBootstrap(
+            emptyFixture,
+            at: Date(timeIntervalSince1970: 3_114.1)
+        )
+        let emptyFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "bootstrap-empty",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let emptyPublication = try await emptyContext.fetchCompleteSnapshot(
+            using: scopedChangeFetcher(emptyFetcher)
+        )
+
+        XCTAssertEqual(emptyPublication.checkpoint.generation, 1)
+        XCTAssertTrue(emptyPublication.checkpoint.recordsByLogicalID.isEmpty)
+        XCTAssertEqual(
+            emptyPublication.targetCheckpointIdentity,
+            ProfileHydrationCheckpointIdentityV1(
+                checkpoint: emptyPublication.checkpoint
+            )
+        )
+        let emptyRequests = await emptyFetcher.observedRequests()
+        XCTAssertEqual(emptyRequests.count, 1)
+        XCTAssertNil(emptyRequests[0].cursor)
+        XCTAssertEqual(
+            emptyRequests[0].zonePreparation,
+            .createIfMissingForInitialBootstrap
+        )
+
+        try await saveInitialBootstrap(
+            emptyPublication,
+            fixture: emptyFixture,
+            at: Date(timeIntervalSince1970: 3_114.2)
+        )
+        let emptyLoaded = try await emptyFixture.store.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: Date(timeIntervalSince1970: 3_114.3)
+        )
+        XCTAssertEqual(emptyLoaded.checkpoint, emptyPublication.checkpoint)
+
+        let initializedRoot = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: initializedRoot) }
+        let initializedFixture = try await initialBootstrapFixture(
+            root: initializedRoot
+        )
+        let initializedContext = try await beginInitialBootstrap(
+            initializedFixture,
+            at: Date(timeIntervalSince1970: 3_114.4)
+        )
+        let initializedFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    modifications: [
+                        discovered(id: "profile", locator: "provider-profile"),
+                    ],
+                    cursor: "bootstrap-page-one",
+                    moreComing: true
+                ).page,
+                page(
+                    accountID: accountA,
+                    modifications: [
+                        discovered(id: "ledger", locator: "provider-ledger"),
+                    ],
+                    cursor: "bootstrap-page-two",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let initializedPublication = try await initializedContext
+            .fetchCompleteSnapshot(
+                using: scopedChangeFetcher(initializedFetcher)
+            )
+
+        XCTAssertEqual(initializedPublication.checkpoint.generation, 1)
+        XCTAssertEqual(
+            Set(initializedPublication.checkpoint.recordsByLogicalID.keys),
+            Set([CloudRecordID("profile"), CloudRecordID("ledger")])
+        )
+        let initializedRequests = await initializedFetcher.observedRequests()
+        XCTAssertEqual(initializedRequests.count, 2)
+        XCTAssertNil(initializedRequests[0].cursor)
+        XCTAssertEqual(
+            initializedRequests[1].cursor,
+            cursor("bootstrap-page-one")
+        )
+        XCTAssertEqual(
+            initializedRequests.map(\.zonePreparation),
+            [.createIfMissingForInitialBootstrap, .requireExisting]
+        )
+
+        try await saveInitialBootstrap(
+            initializedPublication,
+            fixture: initializedFixture,
+            at: Date(timeIntervalSince1970: 3_114.5)
+        )
+        let initializedLoaded = try await initializedFixture.store.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: Date(timeIntervalSince1970: 3_114.6)
+        )
+        XCTAssertEqual(
+            initializedLoaded.checkpoint,
+            initializedPublication.checkpoint
+        )
+    }
+
+    func testInitialBootstrapContextCannotReplayAfterItsPublicationIsSaved()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try await initialBootstrapFixture(root: root)
+        let context = try await beginInitialBootstrap(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_114.61)
+        )
+        let firstFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "bootstrap-single-use",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let publication = try await context.fetchCompleteSnapshot(
+            using: scopedChangeFetcher(firstFetcher)
+        )
+        try await saveInitialBootstrap(
+            publication,
+            fixture: fixture,
+            at: Date(timeIntervalSince1970: 3_114.62)
+        )
+
+        let replayFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "must-not-fetch",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        do {
+            _ = try await context.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(replayFetcher)
+            )
+            XCTFail("A consumed bootstrap context must never reach transport")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        let replayRequests = await replayFetcher.observedRequests()
+        XCTAssertTrue(replayRequests.isEmpty)
+    }
+
+    func testInitialBootstrapStoreAContextCannotFetchAfterStoreBWins()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let authority = CloudAccountGenerationAuthority()
+        let storeA = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: authority
+        )
+        let storeB = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: authority
+        )
+        for store in [storeA, storeB] {
+            try await store.activate(
+                replicaEpoch: epoch,
+                configurationScopeFingerprint: scopeFingerprint(),
+                for: accountA
+            )
+        }
+        let generation = try await authority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        let fixtureA = InitialBootstrapFixture(
+            authority: authority,
+            store: storeA,
+            generation: generation
+        )
+        let fixtureB = InitialBootstrapFixture(
+            authority: authority,
+            store: storeB,
+            generation: generation
+        )
+        let contextA = try await beginInitialBootstrap(
+            fixtureA,
+            at: Date(timeIntervalSince1970: 3_114.63)
+        )
+        let contextB = try await beginInitialBootstrap(
+            fixtureB,
+            at: Date(timeIntervalSince1970: 3_114.64)
+        )
+        let winningFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "store-b-wins",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let winningPublication = try await contextB.fetchCompleteSnapshot(
+            using: scopedChangeFetcher(winningFetcher)
+        )
+        try await saveInitialBootstrap(
+            winningPublication,
+            fixture: fixtureB,
+            at: Date(timeIntervalSince1970: 3_114.65)
+        )
+
+        let staleFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "store-a-must-not-fetch",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        do {
+            _ = try await contextA.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(staleFetcher)
+            )
+            XCTFail("The losing store context must fail before transport")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        let staleRequests = await staleFetcher.observedRequests()
+        XCTAssertTrue(staleRequests.isEmpty)
+    }
+
+    func testInitialBootstrapAmbiguousFailureRecoversRequireExistingOnly()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try await initialBootstrapFixture(root: root)
+        let context = try await beginInitialBootstrap(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_114.66)
+        )
+        let ambiguousFetcher = ScriptedReconstructionChangeFetcher(
+            failure: .sentinel
+        )
+        do {
+            _ = try await context.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(ambiguousFetcher)
+            )
+            XCTFail("The scripted transport must fail after admission")
+        } catch {
+            XCTAssertEqual(error as? ReconstructionFetchSentinelError, .sentinel)
+        }
+        let ambiguousRequests = await ambiguousFetcher.observedRequests()
+        XCTAssertEqual(ambiguousRequests.count, 1)
+        XCTAssertEqual(
+            ambiguousRequests[0].zonePreparation,
+            .createIfMissingForInitialBootstrap
+        )
+
+        let sameContextRetry = ScriptedReconstructionChangeFetcher()
+        do {
+            _ = try await context.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(sameContextRetry)
+            )
+            XCTFail("An ambiguous attempt must consume its process context")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        let sameContextRequests = await sameContextRetry.observedRequests()
+        XCTAssertTrue(sameContextRequests.isEmpty)
+
+        let recoveryAuthority = CloudAccountGenerationAuthority()
+        let recoveryStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: recoveryAuthority
+        )
+        try await recoveryStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let recoveryGeneration = try await recoveryAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        let recoveryFixture = InitialBootstrapFixture(
+            authority: recoveryAuthority,
+            store: recoveryStore,
+            generation: recoveryGeneration
+        )
+        let recoveryContext = try await beginInitialBootstrap(
+            recoveryFixture,
+            at: Date(timeIntervalSince1970: 3_114.67)
+        )
+        let recoveryFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "bootstrap-recovered",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let recoveredPublication = try await recoveryContext
+            .fetchCompleteSnapshot(using: scopedChangeFetcher(recoveryFetcher))
+        let recoveryRequests = await recoveryFetcher.observedRequests()
+        XCTAssertEqual(recoveryRequests.count, 1)
+        XCTAssertEqual(
+            recoveryRequests[0].zonePreparation,
+            .requireExisting
+        )
+        try await saveInitialBootstrap(
+            recoveredPublication,
+            fixture: recoveryFixture,
+            at: Date(timeIntervalSince1970: 3_114.68)
+        )
+        let loaded = try await recoveryFixture.store.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: Date(timeIntervalSince1970: 3_114.69)
+        )
+        XCTAssertEqual(loaded.checkpoint, recoveredPublication.checkpoint)
+    }
+
+    func testInitialBootstrapUnstartedReservationIsSafelyReplaced()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileSystem = FaultInjectingCheckpointFileSystem()
+        let fixture = try await initialBootstrapFixture(
+            root: root,
+            fileSystem: fileSystem
+        )
+        let context = try await beginInitialBootstrap(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_114.691)
+        )
+        fileSystem.failWrite(
+            named: "replica-authority.json",
+            afterSuccessfulMatchingWrites: 1
+        )
+        let neverReachedFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "must-not-reach-network",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        do {
+            _ = try await context.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(neverReachedFetcher)
+            )
+            XCTFail("The pre-network authority transition must fail")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .ioFailure
+            )
+        }
+        let neverReachedRequests = await neverReachedFetcher.observedRequests()
+        XCTAssertTrue(neverReachedRequests.isEmpty)
+
+        let replacement = try await beginInitialBootstrap(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_114.692)
+        )
+        let replacementFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "replacement-create",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let publication = try await replacement.fetchCompleteSnapshot(
+            using: scopedChangeFetcher(replacementFetcher)
+        )
+        let replacementRequests = await replacementFetcher.observedRequests()
+        XCTAssertEqual(replacementRequests.count, 1)
+        XCTAssertEqual(
+            replacementRequests[0].zonePreparation,
+            .createIfMissingForInitialBootstrap
+        )
+        try await saveInitialBootstrap(
+            publication,
+            fixture: fixture,
+            at: Date(timeIntervalSince1970: 3_114.693)
+        )
+    }
+
+    func testInitialBootstrapRecoveryCASAndLiveLeaseAllowOnlyOneAttempt()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let originalFixture = try await initialBootstrapFixture(root: root)
+        let originalContext = try await beginInitialBootstrap(
+            originalFixture,
+            at: Date(timeIntervalSince1970: 3_114.694)
+        )
+        do {
+            _ = try await originalContext.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(
+                    ScriptedReconstructionChangeFetcher(failure: .sentinel)
+                )
+            )
+            XCTFail("The initial network attempt must become ambiguous")
+        } catch {
+            XCTAssertEqual(error as? ReconstructionFetchSentinelError, .sentinel)
+        }
+
+        let recoveryAuthority = CloudAccountGenerationAuthority()
+        let storeA = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: recoveryAuthority
+        )
+        let storeB = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: recoveryAuthority
+        )
+        for store in [storeA, storeB] {
+            try await store.activate(
+                replicaEpoch: epoch,
+                configurationScopeFingerprint: scopeFingerprint(),
+                for: accountA
+            )
+        }
+        let generation = try await recoveryAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        let fixtureA = InitialBootstrapFixture(
+            authority: recoveryAuthority,
+            store: storeA,
+            generation: generation
+        )
+        let fixtureB = InitialBootstrapFixture(
+            authority: recoveryAuthority,
+            store: storeB,
+            generation: generation
+        )
+        let contextA = try await beginInitialBootstrap(
+            fixtureA,
+            at: Date(timeIntervalSince1970: 3_114.695)
+        )
+        let contextB = try await beginInitialBootstrap(
+            fixtureB,
+            at: Date(timeIntervalSince1970: 3_114.696)
+        )
+        let winnerFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "recovery-sequence-two",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        var retainedPublication: CloudReplicaInitialBootstrapPublicationV1? =
+            try await contextA.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(winnerFetcher)
+            )
+        XCTAssertNotNil(retainedPublication)
+        let loserFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "cas-loser-must-not-fetch",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        do {
+            _ = try await contextB.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(loserFetcher)
+            )
+            XCTFail("Only one context may claim the same recovery sequence")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        let loserRequests = await loserFetcher.observedRequests()
+        XCTAssertTrue(loserRequests.isEmpty)
+
+        let locations = storageLocations(root: root, accountID: accountA)
+        let blockedAuthority = try replicaAuthorityJSONObject(
+            at: locations.authority
+        )
+        let blockedReservation = try XCTUnwrap(
+            blockedAuthority["initialBootstrapReservation"]
+                as? [String: Any]
+        )
+        XCTAssertEqual(
+            (blockedReservation["activeAttemptSequence"] as? NSNumber)?
+                .uint64Value,
+            2
+        )
+
+        retainedPublication = nil
+
+        let currentContext = try await beginInitialBootstrap(
+            fixtureB,
+            at: Date(timeIntervalSince1970: 3_114.697)
+        )
+        let currentFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "recovery-sequence-three",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let currentPublication = try await currentContext.fetchCompleteSnapshot(
+            using: scopedChangeFetcher(currentFetcher)
+        )
+        try await saveInitialBootstrap(
+            currentPublication,
+            fixture: fixtureB,
+            at: Date(timeIntervalSince1970: 3_114.699)
+        )
+    }
+
+    func testInitialBootstrapBlockedRecoveryPreventsSequenceAdvanceAndTransport()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let originalFixture = try await initialBootstrapFixture(root: root)
+        let originalContext = try await beginInitialBootstrap(
+            originalFixture,
+            at: Date(timeIntervalSince1970: 3_114.69901)
+        )
+        do {
+            _ = try await originalContext.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(
+                    ScriptedReconstructionChangeFetcher(failure: .sentinel)
+                )
+            )
+            XCTFail("The initial attempt must become ambiguous")
+        } catch {
+            XCTAssertEqual(error as? ReconstructionFetchSentinelError, .sentinel)
+        }
+
+        let recoveryAuthority = CloudAccountGenerationAuthority()
+        let storeA = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: recoveryAuthority
+        )
+        let storeB = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: recoveryAuthority
+        )
+        for store in [storeA, storeB] {
+            try await store.activate(
+                replicaEpoch: epoch,
+                configurationScopeFingerprint: scopeFingerprint(),
+                for: accountA
+            )
+        }
+        let generation = try await recoveryAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        let fixtureA = InitialBootstrapFixture(
+            authority: recoveryAuthority,
+            store: storeA,
+            generation: generation
+        )
+        let fixtureB = InitialBootstrapFixture(
+            authority: recoveryAuthority,
+            store: storeB,
+            generation: generation
+        )
+        let contextA = try await beginInitialBootstrap(
+            fixtureA,
+            at: Date(timeIntervalSince1970: 3_114.69902)
+        )
+        let blockingFetcher = BlockingReconstructionChangeFetcher()
+        let blockedTask = Task {
+            try await contextA.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(blockingFetcher)
+            )
+        }
+        let blockingFetchStarted = await waitUntilAsync {
+            await blockingFetcher.hasStarted()
+        }
+        XCTAssertTrue(blockingFetchStarted)
+
+        let contextB = try await beginInitialBootstrap(
+            fixtureB,
+            at: Date(timeIntervalSince1970: 3_114.69903)
+        )
+        let loserFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "blocked-loser-must-not-fetch",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        do {
+            _ = try await contextB.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(loserFetcher)
+            )
+            XCTFail("A live recovery fetch must own the reservation slot")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        let loserRequests = await loserFetcher.observedRequests()
+        XCTAssertTrue(loserRequests.isEmpty)
+
+        let locations = storageLocations(root: root, accountID: accountA)
+        let blockedAuthority = try replicaAuthorityJSONObject(
+            at: locations.authority
+        )
+        let blockedReservation = try XCTUnwrap(
+            blockedAuthority["initialBootstrapReservation"]
+                as? [String: Any]
+        )
+        XCTAssertEqual(
+            (blockedReservation["activeAttemptSequence"] as? NSNumber)?
+                .uint64Value,
+            2
+        )
+
+        blockedTask.cancel()
+        do {
+            _ = try await blockedTask.value
+            XCTFail("The blocked transport must observe cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+
+        let recoveredContext = try await beginInitialBootstrap(
+            fixtureB,
+            at: Date(timeIntervalSince1970: 3_114.69904)
+        )
+        let recoveredFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "recovered-after-live-attempt-release",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let publication = try await recoveredContext.fetchCompleteSnapshot(
+            using: scopedChangeFetcher(recoveredFetcher)
+        )
+        let recoveredRequests = await recoveredFetcher.observedRequests()
+        XCTAssertEqual(
+            recoveredRequests.map(\.zonePreparation),
+            [.requireExisting]
+        )
+        try await saveInitialBootstrap(
+            publication,
+            fixture: fixtureB,
+            at: Date(timeIntervalSince1970: 3_114.69905)
+        )
+    }
+
+    func testReplicaAuthorityV2MigrationAndV3ReservationValidation()
+        async throws
+    {
+        let root = temporaryDirectory()
+        let checkpointRoot = temporaryDirectory()
+        let pendingRoot = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: checkpointRoot)
+            try? FileManager.default.removeItem(at: pendingRoot)
+        }
+
+        let fixture = try await initialBootstrapFixture(root: root)
+        let locations = storageLocations(root: root, accountID: accountA)
+        let baseAuthority = try replicaAuthorityJSONObject(
+            at: locations.authority
+        )
+        XCTAssertEqual(
+            (baseAuthority["formatVersion"] as? NSNumber)?.intValue,
+            3
+        )
+
+        var legacyAuthority = baseAuthority
+        legacyAuthority["formatVersion"] = 2
+        legacyAuthority["initialBootstrapReservation"] =
+            initialBootstrapReservationJSONObject(
+                activeAttemptSequence: 41,
+                phase: "networkMayHaveBeenInvoked"
+            )
+        let migratedData = try AtomicCloudReplicaCheckpointDiskStore
+            ._testOnlyRoundTripReplicaAuthority(
+                try replicaAuthorityData(legacyAuthority)
+            )
+        let migratedAuthority = try replicaAuthorityJSONObject(
+            from: migratedData
+        )
+        XCTAssertEqual(
+            (migratedAuthority["formatVersion"] as? NSNumber)?.intValue,
+            3
+        )
+        XCTAssertNil(migratedAuthority["initialBootstrapReservation"])
+
+        var unsupportedAuthority = baseAuthority
+        unsupportedAuthority["formatVersion"] = 4
+        let unsupportedData = try replicaAuthorityData(unsupportedAuthority)
+        XCTAssertThrowsError(
+            try AtomicCloudReplicaCheckpointDiskStore
+                ._testOnlyRoundTripReplicaAuthority(unsupportedData)
+        ) { error in
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointValidationError,
+                .unsupportedFormatVersion
+            )
+        }
+
+        var zeroIdentityAuthority = baseAuthority
+        zeroIdentityAuthority["initialBootstrapReservation"] =
+            initialBootstrapReservationJSONObject(
+                reservationID: UUID(
+                    uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                ),
+                activeAttemptSequence: 1,
+                phase: "networkMayHaveBeenInvoked"
+            )
+        try assertInvalidReplicaAuthority(zeroIdentityAuthority)
+
+        var malformedIdentityAuthority = baseAuthority
+        var malformedIdentityReservation =
+            initialBootstrapReservationJSONObject(
+                activeAttemptSequence: 1,
+                phase: "networkMayHaveBeenInvoked"
+            )
+        malformedIdentityReservation["reservationID"] = "not-a-uuid"
+        malformedIdentityAuthority["initialBootstrapReservation"] =
+            malformedIdentityReservation
+        let malformedIdentityData = try replicaAuthorityData(
+            malformedIdentityAuthority
+        )
+        XCTAssertThrowsError(
+            try AtomicCloudReplicaCheckpointDiskStore
+                ._testOnlyRoundTripReplicaAuthority(malformedIdentityData)
+        )
+
+        var missingIdentityAuthority = baseAuthority
+        var missingIdentityReservation =
+            initialBootstrapReservationJSONObject(
+                activeAttemptSequence: 1,
+                phase: "networkMayHaveBeenInvoked"
+            )
+        missingIdentityReservation.removeValue(forKey: "reservationID")
+        missingIdentityAuthority["initialBootstrapReservation"] =
+            missingIdentityReservation
+        let missingIdentityData = try replicaAuthorityData(
+            missingIdentityAuthority
+        )
+        XCTAssertThrowsError(
+            try AtomicCloudReplicaCheckpointDiskStore
+                ._testOnlyRoundTripReplicaAuthority(missingIdentityData)
+        )
+
+        var zeroSequenceAuthority = baseAuthority
+        zeroSequenceAuthority["initialBootstrapReservation"] =
+            initialBootstrapReservationJSONObject(
+                activeAttemptSequence: 0,
+                phase: "networkMayHaveBeenInvoked"
+            )
+        try assertInvalidReplicaAuthority(zeroSequenceAuthority)
+
+        var consumedWithoutCheckpoint = baseAuthority
+        consumedWithoutCheckpoint["initialBootstrapReservation"] =
+            initialBootstrapReservationJSONObject(
+                activeAttemptSequence: 1,
+                phase: "consumedByCheckpoint"
+            )
+        try assertInvalidReplicaAuthority(consumedWithoutCheckpoint)
+
+        let checkpointFixture = try await initialBootstrapFixture(
+            root: checkpointRoot
+        )
+        try await checkpointFixture.store._testOnlySaveRawCheckpoint(
+            try checkpoint(modifications: []),
+            at: Date(timeIntervalSince1970: 3_114.6991)
+        )
+        let checkpointLocations = storageLocations(
+            root: checkpointRoot,
+            accountID: accountA
+        )
+        var networkPhaseWithCheckpoint = try replicaAuthorityJSONObject(
+            at: checkpointLocations.authority
+        )
+        networkPhaseWithCheckpoint["initialBootstrapReservation"] =
+            initialBootstrapReservationJSONObject(
+                activeAttemptSequence: 1,
+                phase: "networkMayHaveBeenInvoked"
+            )
+        try assertInvalidReplicaAuthority(networkPhaseWithCheckpoint)
+
+        let pendingFileSystem = FaultInjectingCheckpointFileSystem()
+        let pendingFixture = try await initialBootstrapFixture(
+            root: pendingRoot,
+            fileSystem: pendingFileSystem
+        )
+        pendingFileSystem.failNextWrite(named: "checkpoint.watermark.json")
+        do {
+            try await pendingFixture.store._testOnlySaveRawCheckpoint(
+                try checkpoint(modifications: []),
+                at: Date(timeIntervalSince1970: 3_114.6992)
+            )
+            XCTFail("The injected write must retain a pending publication")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .ioFailure
+            )
+        }
+        let pendingLocations = storageLocations(
+            root: pendingRoot,
+            accountID: accountA
+        )
+        let pendingAuthority = try replicaAuthorityJSONObject(
+            at: pendingLocations.authority
+        )
+        XCTAssertNotNil(pendingAuthority["pendingCheckpointHighWatermark"])
+
+        var reservedPhaseWithPending = pendingAuthority
+        reservedPhaseWithPending["initialBootstrapReservation"] =
+            initialBootstrapReservationJSONObject(
+                activeAttemptSequence: 1,
+                phase: "reservedBeforeNetwork"
+            )
+        try assertInvalidReplicaAuthority(reservedPhaseWithPending)
+
+        var networkPhaseWithPending = pendingAuthority
+        networkPhaseWithPending["initialBootstrapReservation"] =
+            initialBootstrapReservationJSONObject(
+                activeAttemptSequence: 1,
+                phase: "networkMayHaveBeenInvoked"
+            )
+        XCTAssertNoThrow(
+            try AtomicCloudReplicaCheckpointDiskStore
+                ._testOnlyRoundTripReplicaAuthority(
+                    try replicaAuthorityData(networkPhaseWithPending)
+                )
+        )
+
+        var overflowAuthority = baseAuthority
+        overflowAuthority["initialBootstrapReservation"] =
+            initialBootstrapReservationJSONObject(
+                activeAttemptSequence: UInt64.max,
+                phase: "networkMayHaveBeenInvoked"
+            )
+        let overflowData = try AtomicCloudReplicaCheckpointDiskStore
+            ._testOnlyRoundTripReplicaAuthority(
+                try replicaAuthorityData(overflowAuthority)
+            )
+        try overflowData.write(to: locations.authority, options: .atomic)
+        do {
+            _ = try await beginInitialBootstrap(
+                fixture,
+                at: Date(timeIntervalSince1970: 3_114.6993)
+            )
+            XCTFail("An exhausted recovery sequence must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+    }
+
+    func testReplicaAuthorityReservationLifecycleSurvivesRecoveryAndRevocation()
+        async throws
+    {
+        let interruptedRoot = temporaryDirectory()
+        let consumedRoot = temporaryDirectory()
+        let revokedRoot = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: interruptedRoot)
+            try? FileManager.default.removeItem(at: consumedRoot)
+            try? FileManager.default.removeItem(at: revokedRoot)
+        }
+
+        let interruptedFileSystem = FaultInjectingCheckpointFileSystem()
+        let interruptedFixture = try await initialBootstrapFixture(
+            root: interruptedRoot,
+            fileSystem: interruptedFileSystem
+        )
+        let interruptedContext = try await beginInitialBootstrap(
+            interruptedFixture,
+            at: Date(timeIntervalSince1970: 3_114.6994)
+        )
+        var interruptedPublication: CloudReplicaInitialBootstrapPublicationV1? =
+            try await interruptedContext
+            .fetchCompleteSnapshot(
+                using: scopedChangeFetcher(
+                    ScriptedReconstructionChangeFetcher(
+                        pages: [
+                            page(
+                                accountID: accountA,
+                                cursor: "interrupted-genesis",
+                                moreComing: false
+                            ).page,
+                        ]
+                    )
+                )
+            )
+        interruptedFileSystem.failNextWrite(
+            named: "checkpoint.watermark.json"
+        )
+        do {
+            let publication = try XCTUnwrap(interruptedPublication)
+            try await saveInitialBootstrap(
+                publication,
+                fixture: interruptedFixture,
+                at: Date(timeIntervalSince1970: 3_114.6995)
+            )
+            XCTFail("The injected save must retain pending genesis intent")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .ioFailure
+            )
+        }
+
+        let interruptedLocations = storageLocations(
+            root: interruptedRoot,
+            accountID: accountA
+        )
+        let interruptedAuthority = try replicaAuthorityJSONObject(
+            at: interruptedLocations.authority
+        )
+        let interruptedReservation = try XCTUnwrap(
+            interruptedAuthority["initialBootstrapReservation"]
+                as? [String: Any]
+        )
+        XCTAssertNotNil(
+            interruptedAuthority["pendingCheckpointHighWatermark"]
+        )
+        XCTAssertEqual(
+            interruptedReservation["phase"] as? String,
+            "networkMayHaveBeenInvoked"
+        )
+        XCTAssertEqual(
+            (interruptedReservation["activeAttemptSequence"] as? NSNumber)?
+                .uint64Value,
+            1
+        )
+
+        let recoveredLoad = try await interruptedFixture.store.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: Date(timeIntervalSince1970: 3_114.6996)
+        )
+        XCTAssertNil(recoveredLoad.checkpoint)
+        let afterAbortAuthority = try replicaAuthorityJSONObject(
+            at: interruptedLocations.authority
+        )
+        XCTAssertNil(afterAbortAuthority["pendingCheckpointHighWatermark"])
+        let afterAbortReservation = try XCTUnwrap(
+            afterAbortAuthority["initialBootstrapReservation"]
+                as? [String: Any]
+        )
+        XCTAssertEqual(
+            (afterAbortReservation["activeAttemptSequence"] as? NSNumber)?
+                .uint64Value,
+            1
+        )
+        interruptedPublication = nil
+
+        let recoveryContext = try await beginInitialBootstrap(
+            interruptedFixture,
+            at: Date(timeIntervalSince1970: 3_114.6997)
+        )
+        let recoveryFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "recovered-after-interrupted-save",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let recoveredPublication = try await recoveryContext
+            .fetchCompleteSnapshot(using: scopedChangeFetcher(recoveryFetcher))
+        let recoveryRequests = await recoveryFetcher.observedRequests()
+        XCTAssertEqual(
+            recoveryRequests.map(\.zonePreparation),
+            [.requireExisting]
+        )
+        try await saveInitialBootstrap(
+            recoveredPublication,
+            fixture: interruptedFixture,
+            at: Date(timeIntervalSince1970: 3_114.6998)
+        )
+        let recoveredAuthority = try replicaAuthorityJSONObject(
+            at: interruptedLocations.authority
+        )
+        let recoveredReservation = try XCTUnwrap(
+            recoveredAuthority["initialBootstrapReservation"]
+                as? [String: Any]
+        )
+        XCTAssertEqual(
+            recoveredReservation["phase"] as? String,
+            "consumedByCheckpoint"
+        )
+        XCTAssertEqual(
+            (recoveredReservation["activeAttemptSequence"] as? NSNumber)?
+                .uint64Value,
+            2
+        )
+
+        let consumedFixture = try await initialBootstrapFixture(
+            root: consumedRoot
+        )
+        let consumedContext = try await beginInitialBootstrap(
+            consumedFixture,
+            at: Date(timeIntervalSince1970: 3_114.6999)
+        )
+        let consumedPublication = try await consumedContext
+            .fetchCompleteSnapshot(
+                using: scopedChangeFetcher(
+                    ScriptedReconstructionChangeFetcher(
+                        pages: [
+                            page(
+                                accountID: accountA,
+                                cursor: "consumed-generation-one",
+                                moreComing: false
+                            ).page,
+                        ]
+                    )
+                )
+            )
+        try await saveInitialBootstrap(
+            consumedPublication,
+            fixture: consumedFixture,
+            at: Date(timeIntervalSince1970: 3_114.7000)
+        )
+        let ordinaryFixture = ReconstructionFixture(
+            authority: consumedFixture.authority,
+            store: consumedFixture.store,
+            generation: consumedFixture.generation,
+            acceptedCheckpoint: consumedPublication.checkpoint
+        )
+        let ordinaryContext = try await beginOrdinaryPublication(
+            ordinaryFixture,
+            at: Date(timeIntervalSince1970: 3_114.7001)
+        )
+        let ordinaryPublication = try await ordinaryContext
+            .fetchCompleteChanges(
+                using: scopedChangeFetcher(
+                    ScriptedReconstructionChangeFetcher(
+                        pages: [
+                            page(
+                                accountID: accountA,
+                                cursor: "consumed-generation-two",
+                                moreComing: false
+                            ).page,
+                        ]
+                    )
+                )
+            )
+        try await saveOrdinaryPublication(
+            ordinaryPublication,
+            fixture: ordinaryFixture,
+            at: Date(timeIntervalSince1970: 3_114.7002)
+        )
+        let consumedLocations = storageLocations(
+            root: consumedRoot,
+            accountID: accountA
+        )
+        let consumedAuthority = try replicaAuthorityJSONObject(
+            at: consumedLocations.authority
+        )
+        let consumedReservation = try XCTUnwrap(
+            consumedAuthority["initialBootstrapReservation"]
+                as? [String: Any]
+        )
+        XCTAssertEqual(
+            consumedReservation["phase"] as? String,
+            "consumedByCheckpoint"
+        )
+        XCTAssertEqual(
+            (consumedReservation["activeAttemptSequence"] as? NSNumber)?
+                .uint64Value,
+            1
+        )
+        let consumedWatermark = consumedAuthority[
+            "checkpointHighWatermark"
+        ] as? [String: Any]
+        XCTAssertEqual(
+            (consumedWatermark?["generation"] as? NSNumber)?.uint64Value,
+            2
+        )
+
+        let revokedFixture = try await initialBootstrapFixture(
+            root: revokedRoot
+        )
+        let revokedContext = try await beginInitialBootstrap(
+            revokedFixture,
+            at: Date(timeIntervalSince1970: 3_114.7003)
+        )
+        do {
+            _ = try await revokedContext.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(
+                    ScriptedReconstructionChangeFetcher(failure: .sentinel)
+                )
+            )
+            XCTFail("The scripted fetch must leave an ambiguous reservation")
+        } catch {
+            XCTAssertEqual(error as? ReconstructionFetchSentinelError, .sentinel)
+        }
+        let revokedLocations = storageLocations(
+            root: revokedRoot,
+            accountID: accountA
+        )
+        XCTAssertNotNil(
+            try replicaAuthorityJSONObject(at: revokedLocations.authority)[
+                "initialBootstrapReservation"
+            ]
+        )
+        try await revokedFixture.store.remove(
+            for: accountA,
+            revoking: epoch
+        )
+        let revokedAuthority = try replicaAuthorityJSONObject(
+            at: revokedLocations.authority
+        )
+        XCTAssertEqual(revokedAuthority["state"] as? String, "revoked")
+        XCTAssertNil(revokedAuthority["initialBootstrapReservation"])
+        XCTAssertNoThrow(
+            try AtomicCloudReplicaCheckpointDiskStore
+                ._testOnlyRoundTripReplicaAuthority(
+                    try replicaAuthorityData(revokedAuthority)
+                )
+        )
+    }
+
+    func testInitialBootstrapReservationIssuerRejectsZeroAndHistoryCap()
+        async throws
+    {
+        let zeroRoot = temporaryDirectory()
+        let capRoot = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: zeroRoot)
+            try? FileManager.default.removeItem(at: capRoot)
+        }
+
+        let zeroFixture = try await initialBootstrapFixture(
+            root: zeroRoot,
+            reservationUUIDFactory: {
+                UUID(
+                    uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                )
+            }
+        )
+        let zeroLocations = storageLocations(
+            root: zeroRoot,
+            accountID: accountA
+        )
+        let zeroAuthorityBefore = try Data(contentsOf: zeroLocations.authority)
+        do {
+            _ = try await beginInitialBootstrap(
+                zeroFixture,
+                at: Date(timeIntervalSince1970: 3_114.7004)
+            )
+            XCTFail("A zero reservation identity must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        XCTAssertEqual(
+            try Data(contentsOf: zeroLocations.authority),
+            zeroAuthorityBefore
+        )
+
+        let issuedID = UUID(
+            uuidString: "11111111-2222-4333-8444-555555555555"
+        )!
+        let capFixture = try await initialBootstrapFixture(
+            root: capRoot,
+            reservationUUIDFactory: { issuedID },
+            maximumIssuedReservationCount: 1
+        )
+        let retainedContext = try await beginInitialBootstrap(
+            capFixture,
+            at: Date(timeIntervalSince1970: 3_114.7005)
+        )
+        _ = retainedContext
+        let capLocations = storageLocations(root: capRoot, accountID: accountA)
+        let capAuthorityBefore = try Data(contentsOf: capLocations.authority)
+        do {
+            _ = try await beginInitialBootstrap(
+                capFixture,
+                at: Date(timeIntervalSince1970: 3_114.7006)
+            )
+            XCTFail("Reservation history exhaustion must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        XCTAssertEqual(
+            try Data(contentsOf: capLocations.authority),
+            capAuthorityBefore
+        )
+    }
+
+    func testInitialBootstrapPhysicalAliasesShareReservationCollisionHistory()
+        async throws
+    {
+        let realRoot = temporaryDirectory()
+        let aliasRoot = realRoot.deletingLastPathComponent()
+            .appendingPathComponent(
+                "CloudReplicaCheckpointAlias-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: realRoot,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: aliasRoot,
+            withDestinationURL: realRoot
+        )
+        defer {
+            try? FileManager.default.removeItem(at: aliasRoot)
+            try? FileManager.default.removeItem(at: realRoot)
+        }
+
+        let repeatedID = UUID(
+            uuidString: "22222222-3333-4444-8555-666666666666"
+        )!
+        let authority = CloudAccountGenerationAuthority()
+        let realStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: realRoot,
+            accountGenerationAuthority: authority,
+            initialBootstrapReservationUUIDFactory: { repeatedID },
+            maximumIssuedInitialBootstrapReservationCount: 4
+        )
+        let aliasStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: aliasRoot,
+            accountGenerationAuthority: authority,
+            initialBootstrapReservationUUIDFactory: { repeatedID },
+            maximumIssuedInitialBootstrapReservationCount: 4
+        )
+        for store in [realStore, aliasStore] {
+            try await store.activate(
+                replicaEpoch: epoch,
+                configurationScopeFingerprint: scopeFingerprint(),
+                for: accountA
+            )
+        }
+        let generation = try await authority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        let realFixture = InitialBootstrapFixture(
+            authority: authority,
+            store: realStore,
+            generation: generation
+        )
+        let aliasFixture = InitialBootstrapFixture(
+            authority: authority,
+            store: aliasStore,
+            generation: generation
+        )
+        let retainedContext = try await beginInitialBootstrap(
+            realFixture,
+            at: Date(timeIntervalSince1970: 3_114.7007)
+        )
+        _ = retainedContext
+        let locations = storageLocations(root: realRoot, accountID: accountA)
+        let authorityBefore = try Data(contentsOf: locations.authority)
+        do {
+            _ = try await beginInitialBootstrap(
+                aliasFixture,
+                at: Date(timeIntervalSince1970: 3_114.7008)
+            )
+            XCTFail("A path alias must not bypass reservation collision history")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        XCTAssertEqual(
+            try Data(contentsOf: locations.authority),
+            authorityBefore
+        )
+    }
+
+    func testInitialBootstrapAuthorityRecreationRejectsRepeatedReservationABA()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repeatedID = UUID(
+            uuidString: "33333333-4444-4555-8666-777777777777"
+        )!
+        let fixture = try await initialBootstrapFixture(
+            root: root,
+            reservationUUIDFactory: { repeatedID }
+        )
+        let context = try await beginInitialBootstrap(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_114.7009)
+        )
+        let oldPublication = try await context.fetchCompleteSnapshot(
+            using: scopedChangeFetcher(
+                ScriptedReconstructionChangeFetcher(
+                    pages: [
+                        page(
+                            accountID: accountA,
+                            cursor: "old-authority-publication",
+                            moreComing: false
+                        ).page,
+                    ]
+                )
+            )
+        )
+
+        let locations = storageLocations(root: root, accountID: accountA)
+        try FileManager.default.removeItem(at: locations.authority)
+        let replacementStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: fixture.authority,
+            initialBootstrapReservationUUIDFactory: { repeatedID }
+        )
+        try await replacementStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let replacementFixture = InitialBootstrapFixture(
+            authority: fixture.authority,
+            store: replacementStore,
+            generation: fixture.generation
+        )
+        let recreatedAuthority = try Data(contentsOf: locations.authority)
+        do {
+            _ = try await beginInitialBootstrap(
+                replacementFixture,
+                at: Date(timeIntervalSince1970: 3_114.7010)
+            )
+            XCTFail("A recreated authority must not reuse an issued reservation")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        XCTAssertEqual(
+            try Data(contentsOf: locations.authority),
+            recreatedAuthority
+        )
+
+        do {
+            try await saveInitialBootstrap(
+                oldPublication,
+                fixture: fixture,
+                at: Date(timeIntervalSince1970: 3_114.7011)
+            )
+            XCTFail("Old publication authority must not survive recreation")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+    }
+
+    func testInitialBootstrapAuthorityRecreationCannotOverlapWithNewReservation()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let uuidFactory = ScriptedReservationUUIDFactory([
+            UUID(uuidString: "44444444-5555-4666-8777-888888888888")!,
+            UUID(uuidString: "55555555-6666-4777-8888-999999999999")!,
+            UUID(uuidString: "66666666-7777-4888-8999-AAAAAAAAAAAA")!,
+        ])
+        let fixture = try await initialBootstrapFixture(
+            root: root,
+            reservationUUIDFactory: { uuidFactory.next() }
+        )
+        let context = try await beginInitialBootstrap(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_114.7012)
+        )
+        var retainedPublication: CloudReplicaInitialBootstrapPublicationV1? =
+            try await context.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(
+                    ScriptedReconstructionChangeFetcher(
+                        pages: [
+                            page(
+                                accountID: accountA,
+                                cursor: "authority-loss-live-publication",
+                                moreComing: false
+                            ).page,
+                        ]
+                    )
+                )
+            )
+        XCTAssertNotNil(retainedPublication)
+
+        let locations = storageLocations(root: root, accountID: accountA)
+        try FileManager.default.removeItem(at: locations.authority)
+        let replacementStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            accountGenerationAuthority: fixture.authority,
+            initialBootstrapReservationUUIDFactory: { uuidFactory.next() }
+        )
+        try await replacementStore.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let replacementFixture = InitialBootstrapFixture(
+            authority: fixture.authority,
+            store: replacementStore,
+            generation: fixture.generation
+        )
+        let overlappingContext = try await beginInitialBootstrap(
+            replacementFixture,
+            at: Date(timeIntervalSince1970: 3_114.7013)
+        )
+        let blockedFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "new-reservation-must-not-overlap",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let authorityBeforeBlockedFetch = try Data(
+            contentsOf: locations.authority
+        )
+        do {
+            _ = try await overlappingContext.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(blockedFetcher)
+            )
+            XCTFail("A live publication must block even a new reservation ID")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        let blockedRequests = await blockedFetcher.observedRequests()
+        XCTAssertTrue(blockedRequests.isEmpty)
+        XCTAssertEqual(
+            try Data(contentsOf: locations.authority),
+            authorityBeforeBlockedFetch
+        )
+
+        retainedPublication = nil
+        let recoveredContext = try await beginInitialBootstrap(
+            replacementFixture,
+            at: Date(timeIntervalSince1970: 3_114.7014)
+        )
+        let recoveredFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "new-reservation-after-release",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let recoveredPublication = try await recoveredContext
+            .fetchCompleteSnapshot(using: scopedChangeFetcher(recoveredFetcher))
+        let recoveredRequests = await recoveredFetcher.observedRequests()
+        XCTAssertEqual(
+            recoveredRequests.map(\.zonePreparation),
+            [.createIfMissingForInitialBootstrap]
+        )
+        try await saveInitialBootstrap(
+            recoveredPublication,
+            fixture: replacementFixture,
+            at: Date(timeIntervalSince1970: 3_114.7015)
+        )
+    }
+
+    func testInitialBootstrapFetchFailuresAndCancellationDoNotMutateStore()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try await initialBootstrapFixture(root: root)
+        let context = try await beginInitialBootstrap(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_114.7)
+        )
+
+        let alternateConfiguration = try productionConfiguration(
+            zoneName: "OtherZone"
+        )
+        let mismatchedFetcher = ScriptedReconstructionChangeFetcher()
+        do {
+            _ = try await context.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(
+                    mismatchedFetcher,
+                    configuration: alternateConfiguration
+                )
+            )
+            XCTFail("A differently configured scope must fail before network")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .configurationScopeMismatch
+            )
+        }
+        let mismatchedRequests = await mismatchedFetcher.observedRequests()
+        XCTAssertTrue(mismatchedRequests.isEmpty)
+
+        let missingAfterFirstPage = MissingZoneReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "bootstrap-before-zone-loss",
+                    moreComing: true
+                ).page,
+            ]
+        )
+        do {
+            _ = try await context.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(missingAfterFirstPage)
+            )
+            XCTFail("A zone missing after page one must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudKitCloudSyncError,
+                .zoneResetRequired
+            )
+        }
+        let missingRequests = await missingAfterFirstPage.observedRequests()
+        XCTAssertEqual(missingRequests.count, 2)
+        XCTAssertNil(missingRequests[0].cursor)
+        XCTAssertEqual(
+            missingRequests[1].cursor,
+            cursor("bootstrap-before-zone-loss")
+        )
+        XCTAssertEqual(
+            missingRequests.map(\.zonePreparation),
+            [.createIfMissingForInitialBootstrap, .requireExisting]
+        )
+        try await assertNoDurableCheckpoint(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_114.8)
+        )
+
+        let wrongAccountFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountB,
+                    cursor: "bootstrap-wrong-account",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let wrongAccountContext = try await beginInitialBootstrap(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_114.85)
+        )
+        do {
+            _ = try await wrongAccountContext.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(wrongAccountFetcher)
+            )
+            XCTFail("A page for another account must fail unchanged")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaAccumulatorError,
+                .accountMismatch
+            )
+        }
+        try await assertNoDurableCheckpoint(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_114.9)
+        )
+
+        let blockingFetcher = BlockingReconstructionChangeFetcher()
+        let cancellationContext = try await beginInitialBootstrap(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_114.95)
+        )
+        let cancelled = Task {
+            try await cancellationContext.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(blockingFetcher)
+            )
+        }
+        let fetchStarted = await waitUntilAsync {
+            await blockingFetcher.hasStarted()
+        }
+        XCTAssertTrue(fetchStarted)
+        cancelled.cancel()
+        do {
+            _ = try await cancelled.value
+            XCTFail("Cancellation must emerge unchanged")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        try await assertNoDurableCheckpoint(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_115.0)
+        )
+    }
+
+    func testInitialBootstrapBeginRejectsAcceptedAndPendingHistoryWithoutMutation()
+        async throws
+    {
+        let acceptedRoot = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: acceptedRoot) }
+        let acceptedFixture = try await initialBootstrapFixture(
+            root: acceptedRoot
+        )
+        let accepted = try checkpoint(modifications: [])
+        try await acceptedFixture.store._testOnlySaveRawCheckpoint(
+            accepted,
+            at: Date(timeIntervalSince1970: 3_115.01)
+        )
+        let beforeAcceptedBegin = try directorySnapshot(at: acceptedRoot)
+        do {
+            _ = try await beginInitialBootstrap(
+                acceptedFixture,
+                at: Date(timeIntervalSince1970: 3_115.02)
+            )
+            XCTFail("Accepted history must permanently close genesis")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        XCTAssertEqual(
+            try directorySnapshot(at: acceptedRoot),
+            beforeAcceptedBegin
+        )
+        let acceptedResumeValue = try await acceptedFixture.store
+            .resumeActiveReplicaEpoch(
+                for: accountA,
+                configurationScopeFingerprint: scopeFingerprint()
+            )
+        let acceptedResume = try XCTUnwrap(acceptedResumeValue)
+        XCTAssertEqual(acceptedResume.acceptedHistory?.generation, 1)
+        XCTAssertFalse(acceptedResume.hasDurableCheckpointIntent)
+
+        let pendingRoot = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: pendingRoot) }
+        let pendingFileSystem = FaultInjectingCheckpointFileSystem()
+        let pendingFixture = try await initialBootstrapFixture(
+            root: pendingRoot,
+            fileSystem: pendingFileSystem
+        )
+        pendingFileSystem.failNextWrite(named: "checkpoint.watermark.json")
+        do {
+            try await pendingFixture.store._testOnlySaveRawCheckpoint(
+                try checkpoint(modifications: []),
+                at: Date(timeIntervalSince1970: 3_115.04)
+            )
+            XCTFail("The fault must leave a durable pending genesis")
+        } catch {
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+        let beforePendingBegin = try directorySnapshot(at: pendingRoot)
+        do {
+            _ = try await beginInitialBootstrap(
+                pendingFixture,
+                at: Date(timeIntervalSince1970: 3_115.03)
+            )
+            XCTFail("Pending publication must close genesis")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .checkpointPublicationPending
+            )
+        }
+        XCTAssertEqual(
+            try directorySnapshot(at: pendingRoot),
+            beforePendingBegin
+        )
+        let pendingResumeValue = try await pendingFixture.store
+            .resumeActiveReplicaEpoch(
+                for: accountA,
+                configurationScopeFingerprint: scopeFingerprint()
+            )
+        let pendingResume = try XCTUnwrap(pendingResumeValue)
+        XCTAssertNil(pendingResume.acceptedHistory)
+        XCTAssertTrue(pendingResume.hasDurableCheckpointIntent)
+    }
+
+    func testInitialBootstrapPreflightPreservesEveryPriorEvidenceShape()
+        async throws
+    {
+        let seedARoot = temporaryDirectory()
+        let seedBRoot = temporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: seedARoot)
+            try? FileManager.default.removeItem(at: seedBRoot)
+        }
+        let seedA = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: seedARoot
+        )
+        let seedB = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: seedBRoot
+        )
+        for seed in [seedA, seedB] {
+            try await seed.activate(
+                replicaEpoch: epoch,
+                configurationScopeFingerprint: scopeFingerprint(),
+                for: accountA
+            )
+        }
+        try await seedA._testOnlySaveRawCheckpoint(
+            try checkpoint(
+                modifications: [
+                    discovered(id: "seed-a", locator: "provider-seed-a"),
+                ]
+            ),
+            at: Date(timeIntervalSince1970: 3_115.05)
+        )
+        try await seedB._testOnlySaveRawCheckpoint(
+            try checkpoint(
+                modifications: [
+                    discovered(id: "seed-b", locator: "provider-seed-b"),
+                ]
+            ),
+            at: Date(timeIntervalSince1970: 3_115.06)
+        )
+        let validEnvelopeA = try Data(
+            contentsOf: storageLocations(root: seedARoot, accountID: accountA)
+                .primary
+        )
+        let validEnvelopeB = try Data(
+            contentsOf: storageLocations(root: seedBRoot, accountID: accountA)
+                .primary
+        )
+
+        for (index, scenario) in InitialBootstrapEvidenceScenario.allCases
+            .enumerated()
+        {
+            let root = temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let fixture = try await initialBootstrapFixture(root: root)
+            try installInitialBootstrapEvidence(
+                scenario,
+                root: root,
+                validEnvelopeA: validEnvelopeA,
+                validEnvelopeB: validEnvelopeB
+            )
+            let before = try directorySnapshot(at: root)
+
+            do {
+                _ = try await beginInitialBootstrap(
+                    fixture,
+                    at: Date(
+                        timeIntervalSince1970: 3_115.07 + Double(index) / 100
+                    )
+                )
+                XCTFail("\(scenario) evidence must permanently close genesis")
+            } catch {
+                XCTAssertEqual(
+                    error as? CloudReplicaCheckpointStoreError,
+                    .initialBootstrapUnavailable,
+                    "Unexpected result for \(scenario)"
+                )
+            }
+
+            XCTAssertEqual(
+                try directorySnapshot(at: root),
+                before,
+                "Preflight mutated \(scenario) evidence"
+            )
+            let resumeValue = try await fixture.store.resumeActiveReplicaEpoch(
+                for: accountA,
+                configurationScopeFingerprint: scopeFingerprint()
+            )
+            let resume = try XCTUnwrap(resumeValue)
+            XCTAssertNil(resume.acceptedHistory)
+            XCTAssertFalse(resume.hasDurableCheckpointIntent)
+        }
+    }
+
+    func testInitialBootstrapRejectsForgedBindingsGenerationAndStaleAuthority()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixture = try await initialBootstrapFixture(root: root)
+        let context = try await beginInitialBootstrap(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_115.07)
+        )
+        let publication = try await context.fetchCompleteSnapshot(
+            using: scopedChangeFetcher(
+                ScriptedReconstructionChangeFetcher(
+                    pages: [
+                        page(
+                            accountID: accountA,
+                            cursor: "bootstrap-branded",
+                            moreComing: false
+                        ).page,
+                    ]
+                )
+            )
+        )
+
+        let wrongAccount = try checkpoint(
+            accountID: accountB,
+            modifications: []
+        )
+        let wrongScope = try CloudReplicaCheckpointV1(
+            accountID: accountA,
+            configurationScopeFingerprint: alternateScopeFingerprint(),
+            generation: 1,
+            finalCursor: publication.checkpoint.finalCursor,
+            recordsByLogicalID: publication.checkpoint.recordsByLogicalID,
+            providerLocatorByLogicalID:
+                publication.checkpoint.providerLocatorByLogicalID,
+            logicalIDByProviderLocator:
+                publication.checkpoint.logicalIDByProviderLocator,
+            tombstonesByProviderLocator:
+                publication.checkpoint.tombstonesByProviderLocator,
+            replicaEpoch: epoch
+        )
+        let wrongEpoch = try checkpoint(
+            replicaEpoch: UUID(),
+            modifications: []
+        )
+        for forgedCheckpoint in [wrongAccount, wrongScope, wrongEpoch] {
+            let forged = publication._testOnlyReplacingCheckpoint(
+                forgedCheckpoint
+            )
+            do {
+                try await saveInitialBootstrap(
+                    forged,
+                    fixture: fixture,
+                    at: Date(timeIntervalSince1970: 3_115.08)
+                )
+                XCTFail("Cross-bound checkpoint data must be rejected")
+            } catch {
+                XCTAssertEqual(
+                    error as? CloudReplicaCheckpointStoreError,
+                    .accountGenerationMismatch
+                )
+            }
+        }
+        for invalidGeneration in [UInt64(2), UInt64(3)] {
+            let forged = publication._testOnlyReplacingCheckpoint(
+                try checkpointCopy(
+                    publication.checkpoint,
+                    generation: invalidGeneration
+                )
+            )
+            do {
+                try await saveInitialBootstrap(
+                    forged,
+                    fixture: fixture,
+                    at: Date(timeIntervalSince1970: 3_115.09)
+                )
+                XCTFail("Initial bootstrap can publish only generation one")
+            } catch {
+                XCTAssertEqual(
+                    error as? CloudReplicaCheckpointStoreError,
+                    .generationGap
+                )
+            }
+        }
+        try await assertNoDurableCheckpoint(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_115.1)
+        )
+
+        let blockedByGenuinePublication = try await beginInitialBootstrap(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_115.101)
+        )
+        let blockedProbe = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "forged-save-must-retain-live-lease",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        do {
+            _ = try await blockedByGenuinePublication.fetchCompleteSnapshot(
+                using: scopedChangeFetcher(blockedProbe)
+            )
+            XCTFail("A rejected forged save must not release the genuine lease")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        let blockedProbeRequests = await blockedProbe.observedRequests()
+        XCTAssertTrue(blockedProbeRequests.isEmpty)
+
+        let foreignAuthority = CloudAccountGenerationAuthority()
+        let foreignGeneration = try await foreignAuthority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        do {
+            _ = try await foreignAuthority.withCurrentGeneration(
+                foreignGeneration
+            ) { lease in
+                try await fixture.store.beginInitialBootstrapPublication(
+                    generationLease: lease,
+                    at: Date(timeIntervalSince1970: 3_115.105)
+                )
+            }
+            XCTFail("A foreign authority cannot mint a genesis context")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .accountGenerationAuthorityMismatch
+            )
+        }
+        do {
+            try await foreignAuthority.withCurrentGeneration(foreignGeneration) {
+                lease in
+                try await fixture.store.saveInitialBootstrapPublication(
+                    publication,
+                    generationLease: lease,
+                    at: Date(timeIntervalSince1970: 3_115.11)
+                )
+            }
+            XCTFail("A foreign authority cannot publish genesis")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .accountGenerationAuthorityMismatch
+            )
+        }
+        try await assertNoDurableCheckpoint(
+            fixture,
+            at: Date(timeIntervalSince1970: 3_115.12)
+        )
+
+        try await fixture.authority.invalidate(fixture.generation)
+        let reactivated = try await fixture.authority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        do {
+            try await fixture.authority.withCurrentGeneration(reactivated) {
+                lease in
+                try await fixture.store.saveInitialBootstrapPublication(
+                    publication,
+                    generationLease: lease,
+                    at: Date(timeIntervalSince1970: 3_115.13)
+                )
+            }
+            XCTFail("Same-binding reactivation must invalidate fetched work")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .accountGenerationMismatch
+            )
+        }
+        let resumedValue = try await fixture.store.resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        let resumed = try XCTUnwrap(resumedValue)
+        XCTAssertNil(resumed.acceptedHistory)
+        XCTAssertFalse(resumed.hasDurableCheckpointIntent)
+    }
+
+    func testInitialBootstrapSaveRejectsHistoryPendingAndEvidenceWithoutMutation()
+        async throws
+    {
+        let acceptedRoot = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: acceptedRoot) }
+        let acceptedFixture = try await initialBootstrapFixture(
+            root: acceptedRoot
+        )
+        let acceptedContext = try await beginInitialBootstrap(
+            acceptedFixture,
+            at: Date(timeIntervalSince1970: 3_115.14)
+        )
+        let stalePublication = try await acceptedContext.fetchCompleteSnapshot(
+            using: scopedChangeFetcher(
+                ScriptedReconstructionChangeFetcher(
+                    pages: [
+                        page(
+                            accountID: accountA,
+                            cursor: "bootstrap-stale",
+                            moreComing: false
+                        ).page,
+                    ]
+                )
+            )
+        )
+        let acceptedFirst = try checkpoint(
+            modifications: [
+                discovered(id: "accepted", locator: "provider-accepted"),
+            ]
+        )
+        try await acceptedFixture.store._testOnlySaveRawCheckpoint(
+            acceptedFirst,
+            at: Date(timeIntervalSince1970: 3_115.15)
+        )
+        do {
+            try await saveInitialBootstrap(
+                stalePublication,
+                fixture: acceptedFixture,
+                at: Date(timeIntervalSince1970: 3_115.16)
+            )
+            XCTFail("Accepted history must reject a stale genesis result")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        let acceptedLoaded = try await acceptedFixture.store.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: Date(timeIntervalSince1970: 3_115.17)
+        )
+        XCTAssertEqual(acceptedLoaded.checkpoint, acceptedFirst)
+
+        let pendingRoot = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: pendingRoot) }
+        let pendingFileSystem = FaultInjectingCheckpointFileSystem()
+        let pendingFixture = try await initialBootstrapFixture(
+            root: pendingRoot,
+            fileSystem: pendingFileSystem
+        )
+        let pendingContext = try await beginInitialBootstrap(
+            pendingFixture,
+            at: Date(timeIntervalSince1970: 3_115.18)
+        )
+        let pendingPublication = try await pendingContext.fetchCompleteSnapshot(
+            using: scopedChangeFetcher(
+                ScriptedReconstructionChangeFetcher(
+                    pages: [
+                        page(
+                            accountID: accountA,
+                            cursor: "bootstrap-after-pending",
+                            moreComing: false
+                        ).page,
+                    ]
+                )
+            )
+        )
+        pendingFileSystem.failNextWrite(named: "checkpoint.watermark.json")
+        do {
+            try await pendingFixture.store._testOnlySaveRawCheckpoint(
+                try checkpoint(modifications: []),
+                at: Date(timeIntervalSince1970: 3_115.19)
+            )
+            XCTFail("The fault must leave pending intent")
+        } catch {
+            XCTAssertEqual(error as? CloudReplicaCheckpointStoreError, .ioFailure)
+        }
+        do {
+            try await saveInitialBootstrap(
+                pendingPublication,
+                fixture: pendingFixture,
+                at: Date(timeIntervalSince1970: 3_115.2)
+            )
+            XCTFail("Typed genesis cannot retry an unrelated pending result")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .checkpointPublicationPending
+            )
+        }
+        let pendingResumeValue = try await pendingFixture.store
+            .resumeActiveReplicaEpoch(
+                for: accountA,
+                configurationScopeFingerprint: scopeFingerprint()
+            )
+        let pendingResume = try XCTUnwrap(pendingResumeValue)
+        XCTAssertNil(pendingResume.acceptedHistory)
+        XCTAssertTrue(pendingResume.hasDurableCheckpointIntent)
+
+        let evidenceRoot = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: evidenceRoot) }
+        let evidenceFixture = try await initialBootstrapFixture(
+            root: evidenceRoot
+        )
+        let evidenceContext = try await beginInitialBootstrap(
+            evidenceFixture,
+            at: Date(timeIntervalSince1970: 3_115.21)
+        )
+        let evidencePublication = try await evidenceContext
+            .fetchCompleteSnapshot(
+                using: scopedChangeFetcher(
+                    ScriptedReconstructionChangeFetcher(
+                        pages: [
+                            page(
+                                accountID: accountA,
+                                cursor: "bootstrap-after-evidence",
+                                moreComing: false
+                            ).page,
+                        ]
+                    )
+                )
+            )
+        let evidenceLocations = storageLocations(
+            root: evidenceRoot,
+            accountID: accountA
+        )
+        try FileManager.default.createDirectory(
+            at: evidenceLocations.directory,
+            withIntermediateDirectories: true
+        )
+        try Data("noncooperative-evidence".utf8).write(
+            to: evidenceLocations.primary,
+            options: .atomic
+        )
+        let beforeEvidenceSave = try directorySnapshot(at: evidenceRoot)
+        do {
+            try await saveInitialBootstrap(
+                evidencePublication,
+                fixture: evidenceFixture,
+                at: Date(timeIntervalSince1970: 3_115.22)
+            )
+            XCTFail("Reappeared evidence must close the typed save gate")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        XCTAssertEqual(
+            try directorySnapshot(at: evidenceRoot),
+            beforeEvidenceSave
+        )
+        let evidenceResumeValue = try await evidenceFixture.store
+            .resumeActiveReplicaEpoch(
+                for: accountA,
+                configurationScopeFingerprint: scopeFingerprint()
+            )
+        let evidenceResume = try XCTUnwrap(evidenceResumeValue)
+        XCTAssertNil(evidenceResume.acceptedHistory)
+        XCTAssertFalse(evidenceResume.hasDurableCheckpointIntent)
+
+        try FileManager.default.removeItem(at: evidenceLocations.primary)
+        try FileManager.default.createDirectory(
+            at: evidenceLocations.quarantine,
+            withIntermediateDirectories: true
+        )
+        try Data("reappeared-quarantine-evidence".utf8).write(
+            to: evidenceLocations.quarantine.appendingPathComponent(
+                "checkpoint-primary-corrupt.json"
+            ),
+            options: .atomic
+        )
+        let beforeQuarantineSave = try directorySnapshot(at: evidenceRoot)
+        do {
+            try await saveInitialBootstrap(
+                evidencePublication,
+                fixture: evidenceFixture,
+                at: Date(timeIntervalSince1970: 3_115.23)
+            )
+            XCTFail("Quarantine evidence must close the typed save gate")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .initialBootstrapUnavailable
+            )
+        }
+        XCTAssertEqual(
+            try directorySnapshot(at: evidenceRoot),
+            beforeQuarantineSave
+        )
+    }
+
     func testOrdinaryPublicationRequiresAcceptedCheckpointAndUsesRequireExisting()
         async throws
     {
@@ -2341,6 +4565,18 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             using: scopedChangeFetcher(rawFetcher)
         )
 
+        XCTAssertEqual(
+            publication.predecessorCheckpointIdentity,
+            ProfileHydrationCheckpointIdentityV1(
+                checkpoint: fixture.acceptedCheckpoint
+            )
+        )
+        XCTAssertEqual(
+            publication.targetCheckpointIdentity,
+            ProfileHydrationCheckpointIdentityV1(
+                checkpoint: publication.checkpoint
+            )
+        )
         XCTAssertEqual(
             publication.checkpoint.generation,
             fixture.acceptedCheckpoint.generation + 1
@@ -5434,6 +7670,163 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(FileManager.default.fileExists(atPath: locations.authority.path))
     }
 
+    private enum InitialBootstrapEvidenceScenario: String, CaseIterable {
+        case corruptWatermark
+        case loneValidPrimary
+        case loneInvalidBackup
+        case divergentCopies
+        case priorQuarantine
+    }
+
+    private func installInitialBootstrapEvidence(
+        _ scenario: InitialBootstrapEvidenceScenario,
+        root: URL,
+        validEnvelopeA: Data,
+        validEnvelopeB: Data
+    ) throws {
+        let locations = storageLocations(root: root, accountID: accountA)
+        switch scenario {
+        case .corruptWatermark:
+            try FileManager.default.createDirectory(
+                at: locations.directory,
+                withIntermediateDirectories: true
+            )
+            try Data("corrupt-watermark".utf8).write(
+                to: locations.watermark,
+                options: .atomic
+            )
+        case .loneValidPrimary:
+            try FileManager.default.createDirectory(
+                at: locations.directory,
+                withIntermediateDirectories: true
+            )
+            try validEnvelopeA.write(to: locations.primary, options: .atomic)
+        case .loneInvalidBackup:
+            try FileManager.default.createDirectory(
+                at: locations.directory,
+                withIntermediateDirectories: true
+            )
+            try Data("invalid-backup".utf8).write(
+                to: locations.backup,
+                options: .atomic
+            )
+        case .divergentCopies:
+            try FileManager.default.createDirectory(
+                at: locations.directory,
+                withIntermediateDirectories: true
+            )
+            try validEnvelopeA.write(to: locations.primary, options: .atomic)
+            try validEnvelopeB.write(to: locations.backup, options: .atomic)
+        case .priorQuarantine:
+            try FileManager.default.createDirectory(
+                at: locations.quarantine,
+                withIntermediateDirectories: true
+            )
+            try Data("prior-corrupt-checkpoint".utf8).write(
+                to: locations.quarantine.appendingPathComponent(
+                    "checkpoint-primary-corrupt.json"
+                ),
+                options: .atomic
+            )
+        }
+    }
+
+    private struct InitialBootstrapFixture {
+        let authority: CloudAccountGenerationAuthority
+        let store: AtomicCloudReplicaCheckpointDiskStore
+        let generation: ActiveCloudAccountGeneration
+    }
+
+    private func initialBootstrapFixture(
+        root: URL,
+        fileSystem: any CloudReplicaCheckpointFileSystem =
+            FoundationCloudReplicaCheckpointFileSystem(),
+        limits: CloudReplicaResourceLimits = .production,
+        reservationUUIDFactory: @escaping @Sendable () -> UUID = { UUID() },
+        maximumIssuedReservationCount: Int = 4_096
+    ) async throws -> InitialBootstrapFixture {
+        let authority = CloudAccountGenerationAuthority()
+        let store = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root,
+            fileSystem: fileSystem,
+            limits: limits,
+            accountGenerationAuthority: authority,
+            initialBootstrapReservationUUIDFactory: reservationUUIDFactory,
+            maximumIssuedInitialBootstrapReservationCount:
+                maximumIssuedReservationCount
+        )
+        try await store.activate(
+            replicaEpoch: epoch,
+            configurationScopeFingerprint: scopeFingerprint(),
+            for: accountA
+        )
+        let generation = try await authority.activate(
+            accountID: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            replicaEpoch: epoch
+        )
+        return InitialBootstrapFixture(
+            authority: authority,
+            store: store,
+            generation: generation
+        )
+    }
+
+    private func beginInitialBootstrap(
+        _ fixture: InitialBootstrapFixture,
+        at date: Date
+    ) async throws -> CloudReplicaInitialBootstrapPublicationContextV1 {
+        try await fixture.authority.withCurrentGeneration(
+            fixture.generation
+        ) { lease in
+            try await fixture.store.beginInitialBootstrapPublication(
+                generationLease: lease,
+                at: date
+            )
+        }
+    }
+
+    private func saveInitialBootstrap(
+        _ publication: CloudReplicaInitialBootstrapPublicationV1,
+        fixture: InitialBootstrapFixture,
+        at date: Date
+    ) async throws {
+        try await fixture.authority.withCurrentGeneration(
+            fixture.generation
+        ) { lease in
+            try await fixture.store.saveInitialBootstrapPublication(
+                publication,
+                generationLease: lease,
+                at: date
+            )
+        }
+    }
+
+    private func assertNoDurableCheckpoint(
+        _ fixture: InitialBootstrapFixture,
+        at date: Date,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws {
+        let resumedValue = try await fixture.store.resumeActiveReplicaEpoch(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint()
+        )
+        let resumed = try XCTUnwrap(resumedValue, file: file, line: line)
+        XCTAssertNil(resumed.acceptedHistory, file: file, line: line)
+        XCTAssertFalse(
+            resumed.hasDurableCheckpointIntent,
+            file: file,
+            line: line
+        )
+        let loaded = try await fixture.store.load(
+            for: accountA,
+            configurationScopeFingerprint: scopeFingerprint(),
+            at: date
+        )
+        XCTAssertNil(loaded.checkpoint, file: file, line: line)
+    }
+
     private struct ReconstructionFixture {
         let authority: CloudAccountGenerationAuthority
         let store: AtomicCloudReplicaCheckpointDiskStore
@@ -5595,6 +7988,16 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             try? await Task.sleep(for: .milliseconds(1))
         }
         return predicate()
+    }
+
+    private func waitUntilAsync(
+        _ predicate: @escaping @Sendable () async -> Bool
+    ) async -> Bool {
+        for _ in 0 ..< 5_000 {
+            if await predicate() { return true }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        return await predicate()
     }
 
     private func accumulator(
@@ -5790,6 +8193,106 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    private struct DirectorySnapshot: Equatable {
+        let directories: Set<String>
+        let files: [String: Data]
+    }
+
+    private func directorySnapshot(at root: URL) throws -> DirectorySnapshot {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: root.path) else {
+            return DirectorySnapshot(directories: [], files: [:])
+        }
+        let standardizedRoot = root.standardizedFileURL
+        let pathPrefix = standardizedRoot.path + "/"
+        var directories: Set<String> = [""]
+        var files: [String: Data] = [:]
+        guard let enumerator = fileManager.enumerator(
+            at: standardizedRoot,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: []
+        ) else {
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+        for case let url as URL in enumerator {
+            let standardizedURL = url.standardizedFileURL
+            guard standardizedURL.path.hasPrefix(pathPrefix) else {
+                throw CloudReplicaCheckpointStoreError.ioFailure
+            }
+            let relativePath = String(
+                standardizedURL.path.dropFirst(pathPrefix.count)
+            )
+            let values = try standardizedURL.resourceValues(
+                forKeys: [.isDirectoryKey]
+            )
+            if values.isDirectory == true {
+                directories.insert(relativePath)
+            } else {
+                files[relativePath] = try Data(contentsOf: standardizedURL)
+            }
+        }
+        return DirectorySnapshot(directories: directories, files: files)
+    }
+
+    private func replicaAuthorityJSONObject(
+        at url: URL
+    ) throws -> [String: Any] {
+        try replicaAuthorityJSONObject(from: Data(contentsOf: url))
+    }
+
+    private func replicaAuthorityJSONObject(
+        from data: Data
+    ) throws -> [String: Any] {
+        try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+    }
+
+    private func replicaAuthorityData(
+        _ object: [String: Any]
+    ) throws -> Data {
+        try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.sortedKeys]
+        )
+    }
+
+    private func initialBootstrapReservationJSONObject(
+        reservationID: UUID = UUID(),
+        activeAttemptSequence: UInt64,
+        phase: String
+    ) -> [String: Any] {
+        [
+            "formatVersion": 1,
+            "reservationID": reservationID.uuidString,
+            "activeAttemptSequence": NSNumber(
+                value: activeAttemptSequence
+            ),
+            "phase": phase,
+        ]
+    }
+
+    private func assertInvalidReplicaAuthority(
+        _ object: [String: Any],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let data = try replicaAuthorityData(object)
+        XCTAssertThrowsError(
+            try AtomicCloudReplicaCheckpointDiskStore
+                ._testOnlyRoundTripReplicaAuthority(data),
+            file: file,
+            line: line
+        ) { error in
+            XCTAssertEqual(
+                error as? CloudReplicaCheckpointStoreError,
+                .invalidCheckpoint,
+                file: file,
+                line: line
+            )
+        }
+    }
+
     private func storageLocations(
         root: URL,
         accountID: CloudAccountID
@@ -5843,6 +8346,22 @@ private enum ReconstructionFetchSentinelError: Error, Equatable, Sendable {
     case sentinel
     case scriptExhausted
     case unexpectedReturn
+}
+
+private final class ScriptedReservationUUIDFactory: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [UUID]
+
+    init(_ values: [UUID]) {
+        self.values = values
+    }
+
+    func next() -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        precondition(!values.isEmpty, "Reservation UUID script exhausted")
+        return values.removeFirst()
+    }
 }
 
 private actor ScriptedReconstructionChangeFetcher: CloudSyncChangeFetching {
@@ -5905,7 +8424,12 @@ private actor MissingZoneReconstructionChangeFetcher: CloudSyncChangeFetching {
         let zonePreparation: CloudZonePreparationPolicy
     }
 
+    private var pages: [CloudRecordChangePage]
     private var requests: [Request] = []
+
+    init(pages: [CloudRecordChangePage] = []) {
+        self.pages = pages
+    }
 
     func recordChanges(
         accountID: CloudAccountID,
@@ -5919,6 +8443,9 @@ private actor MissingZoneReconstructionChangeFetcher: CloudSyncChangeFetching {
                 zonePreparation: zonePreparation
             )
         )
+        if !pages.isEmpty {
+            return pages.removeFirst()
+        }
         throw CloudKitCloudSyncError.zoneResetRequired
     }
 

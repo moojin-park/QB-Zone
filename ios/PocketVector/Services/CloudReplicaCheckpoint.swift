@@ -170,6 +170,414 @@ struct CloudReplicaScopeFingerprint: RawRepresentable, Codable, Equatable, Hasha
     }
 }
 
+/// Process-local state is keyed by the physical authority directory and lock
+/// file rather than their lexical paths. Symlink and case aliases therefore
+/// share issuance history and one live network-attempt slot.
+fileprivate struct CloudReplicaPhysicalAuthorityIdentityV1:
+    Equatable,
+    Hashable,
+    Sendable
+{
+    let directoryDevice: UInt64
+    let directoryInode: UInt64
+    let lockDevice: UInt64
+    let lockInode: UInt64
+}
+
+fileprivate final class CloudReplicaInitialBootstrapAttemptTokenV1:
+    @unchecked Sendable
+{}
+
+fileprivate final class CloudReplicaInitialBootstrapProcessAuthorityV1:
+    @unchecked Sendable
+{
+    typealias ReservationUUIDFactory = @Sendable () -> UUID
+    private static let zeroUUID = UUID(
+        uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    )
+
+    private struct WeakAttemptToken {
+        weak var value: CloudReplicaInitialBootstrapAttemptTokenV1?
+    }
+
+    let accountID: CloudAccountID
+    let physicalIdentity: CloudReplicaPhysicalAuthorityIdentityV1
+    private let reservationUUIDFactory: ReservationUUIDFactory
+    private let maximumIssuedReservationCount: Int
+    private let lock = NSLock()
+    private var issuedReservationIDs: Set<UUID> = []
+    private var liveAttempt: WeakAttemptToken?
+
+    init(
+        accountID: CloudAccountID,
+        physicalIdentity: CloudReplicaPhysicalAuthorityIdentityV1,
+        reservationUUIDFactory: @escaping ReservationUUIDFactory,
+        maximumIssuedReservationCount: Int
+    ) {
+        precondition(maximumIssuedReservationCount > 0)
+        self.accountID = accountID
+        self.physicalIdentity = physicalIdentity
+        self.reservationUUIDFactory = reservationUUIDFactory
+        self.maximumIssuedReservationCount = maximumIssuedReservationCount
+    }
+
+    func issueReservationID() throws -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        guard issuedReservationIDs.count < maximumIssuedReservationCount else {
+            throw CloudReplicaCheckpointStoreError
+                .initialBootstrapUnavailable
+        }
+        let reservationID = reservationUUIDFactory()
+        guard reservationID != Self.zeroUUID,
+              !issuedReservationIDs.contains(reservationID) else {
+            throw CloudReplicaCheckpointStoreError
+                .initialBootstrapUnavailable
+        }
+        issuedReservationIDs.insert(reservationID)
+        return reservationID
+    }
+
+    func adoptDurableReservationID(_ reservationID: UUID) throws {
+        guard reservationID != Self.zeroUUID else {
+            throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        if issuedReservationIDs.contains(reservationID) { return }
+        guard issuedReservationIDs.count < maximumIssuedReservationCount else {
+            throw CloudReplicaCheckpointStoreError
+                .initialBootstrapUnavailable
+        }
+        issuedReservationIDs.insert(reservationID)
+    }
+
+    func claimAttempt(
+        reservationID: UUID,
+        attemptSequence: UInt64
+    ) throws -> CloudReplicaInitialBootstrapNetworkAttemptLeaseV1 {
+        lock.lock()
+        defer { lock.unlock() }
+        pruneReleasedAttempts()
+        guard attemptSequence > 0,
+              issuedReservationIDs.contains(reservationID),
+              liveAttempt?.value == nil else {
+            throw CloudReplicaCheckpointStoreError
+                .initialBootstrapUnavailable
+        }
+        let token = CloudReplicaInitialBootstrapAttemptTokenV1()
+        liveAttempt = WeakAttemptToken(
+            value: token
+        )
+        return CloudReplicaInitialBootstrapNetworkAttemptLeaseV1(
+            processAuthority: self,
+            token: token,
+            reservationID: reservationID,
+            attemptSequence: attemptSequence
+        )
+    }
+
+    func isCurrent(
+        token: CloudReplicaInitialBootstrapAttemptTokenV1,
+        reservationID: UUID
+    ) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        pruneReleasedAttempts()
+        _ = reservationID
+        return liveAttempt?.value === token
+    }
+
+    func releaseAttempt(
+        token: CloudReplicaInitialBootstrapAttemptTokenV1,
+        reservationID: UUID
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        _ = reservationID
+        guard liveAttempt?.value === token else {
+            pruneReleasedAttempts()
+            return
+        }
+        liveAttempt = nil
+    }
+
+    private func pruneReleasedAttempts() {
+        if liveAttempt?.value == nil {
+            liveAttempt = nil
+        }
+    }
+}
+
+fileprivate final class CloudReplicaInitialBootstrapNetworkAttemptLeaseV1:
+    @unchecked Sendable
+{
+    let reservationID: UUID
+    let attemptSequence: UInt64
+    private let processAuthority:
+        CloudReplicaInitialBootstrapProcessAuthorityV1
+    private let token: CloudReplicaInitialBootstrapAttemptTokenV1
+
+    init(
+        processAuthority: CloudReplicaInitialBootstrapProcessAuthorityV1,
+        token: CloudReplicaInitialBootstrapAttemptTokenV1,
+        reservationID: UUID,
+        attemptSequence: UInt64
+    ) {
+        self.processAuthority = processAuthority
+        self.token = token
+        self.reservationID = reservationID
+        self.attemptSequence = attemptSequence
+    }
+
+    deinit {
+        release()
+    }
+
+    func isCurrent() -> Bool {
+        processAuthority.isCurrent(
+            token: token,
+            reservationID: reservationID
+        )
+    }
+
+    func release() {
+        processAuthority.releaseAttempt(
+            token: token,
+            reservationID: reservationID
+        )
+    }
+
+    func authorizes(
+        reservationID: UUID,
+        attemptSequence: UInt64,
+        processAuthority: CloudReplicaInitialBootstrapProcessAuthorityV1
+    ) -> Bool {
+        self.reservationID == reservationID
+            && self.attemptSequence == attemptSequence
+            && self.processAuthority === processAuthority
+            && isCurrent()
+    }
+}
+
+fileprivate final class CloudReplicaInitialBootstrapProcessAuthorityRegistryV1:
+    @unchecked Sendable
+{
+    static let shared =
+        CloudReplicaInitialBootstrapProcessAuthorityRegistryV1()
+
+    private struct WeakProcessAuthority {
+        weak var value: CloudReplicaInitialBootstrapProcessAuthorityV1?
+    }
+
+    private let lock = NSLock()
+    private var authorityByPhysicalDirectory:
+        [CloudReplicaPhysicalAuthorityIdentityV1: WeakProcessAuthority] = [:]
+
+    func processAuthority(
+        for physicalIdentity: CloudReplicaPhysicalAuthorityIdentityV1,
+        accountID: CloudAccountID,
+        reservationUUIDFactory: @escaping
+            CloudReplicaInitialBootstrapProcessAuthorityV1
+                .ReservationUUIDFactory,
+        maximumIssuedReservationCount: Int
+    ) throws -> CloudReplicaInitialBootstrapProcessAuthorityV1 {
+        lock.lock()
+        defer { lock.unlock() }
+        authorityByPhysicalDirectory = authorityByPhysicalDirectory.filter {
+            $0.value.value != nil
+        }
+        if let existing = authorityByPhysicalDirectory[physicalIdentity]?.value {
+            guard existing.accountID == accountID else {
+                throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+            }
+            return existing
+        }
+        let created = CloudReplicaInitialBootstrapProcessAuthorityV1(
+            accountID: accountID,
+            physicalIdentity: physicalIdentity,
+            reservationUUIDFactory: reservationUUIDFactory,
+            maximumIssuedReservationCount: maximumIssuedReservationCount
+        )
+        authorityByPhysicalDirectory[physicalIdentity] = WeakProcessAuthority(
+            value: created
+        )
+        return created
+    }
+}
+
+/// A shared, single-use gate retained by every copy of one store-issued
+/// context. It marks itself consumed before awaiting the durable reservation,
+/// so concurrent calls, cancellation, and ambiguous failures cannot reuse the
+/// same context for a second network attempt.
+fileprivate actor CloudReplicaInitialBootstrapFetchPermitV1 {
+    typealias DurableReservation = @Sendable () async throws
+        -> CloudReplicaInitialBootstrapNetworkAttemptLeaseV1
+
+    fileprivate let reservationID: UUID
+    fileprivate let attemptSequence: UInt64
+    fileprivate let networkPolicy: CloudReplicaInitialBootstrapNetworkPolicyV1
+    private let reserveDurably: DurableReservation
+    private var isConsumed = false
+
+    fileprivate init(
+        reservationID: UUID,
+        attemptSequence: UInt64,
+        networkPolicy: CloudReplicaInitialBootstrapNetworkPolicyV1,
+        reserveDurably: @escaping DurableReservation
+    ) {
+        self.reservationID = reservationID
+        self.attemptSequence = attemptSequence
+        self.networkPolicy = networkPolicy
+        self.reserveDurably = reserveDurably
+    }
+
+    fileprivate func consumeAndReserveBeforeNetwork()
+        async throws -> CloudReplicaInitialBootstrapReservedFetchV1
+    {
+        guard !isConsumed else {
+            throw CloudReplicaCheckpointStoreError.initialBootstrapUnavailable
+        }
+        isConsumed = true
+        let attemptLease = try await reserveDurably()
+        return CloudReplicaInitialBootstrapReservedFetchV1(
+            reservationID: reservationID,
+            attemptSequence: attemptSequence,
+            networkPolicy: networkPolicy,
+            attemptLease: attemptLease
+        )
+    }
+}
+
+enum CloudReplicaInitialBootstrapNetworkPolicyV1: Sendable {
+    case mayCreateZoneOnFirstRequest
+    case requireExistingZoneRecovery
+}
+
+/// Proof that one durable cross-store reservation completed before transport
+/// admission. Its initializer is file-scoped and it never escapes the sealed
+/// context's internally controlled fetch loop.
+struct CloudReplicaInitialBootstrapReservedFetchV1: Sendable {
+    let reservationID: UUID
+    let attemptSequence: UInt64
+    let networkPolicy: CloudReplicaInitialBootstrapNetworkPolicyV1
+    fileprivate let attemptLease:
+        CloudReplicaInitialBootstrapNetworkAttemptLeaseV1
+
+    fileprivate init(
+        reservationID: UUID,
+        attemptSequence: UInt64,
+        networkPolicy: CloudReplicaInitialBootstrapNetworkPolicyV1,
+        attemptLease: CloudReplicaInitialBootstrapNetworkAttemptLeaseV1
+    ) {
+        self.reservationID = reservationID
+        self.attemptSequence = attemptSequence
+        self.networkPolicy = networkPolicy
+        self.attemptLease = attemptLease
+    }
+}
+
+/// A configuration-derived change-fetch capability for checkpoint publication.
+/// Release callers can obtain one only by supplying the complete validated
+/// cloud-write configuration; they cannot pair an asserted replica scope with
+/// an unrelated transport. The raw transport rejects zone creation; only the
+/// sealed publication context below can present its opaque creation permit.
+struct CloudReplicaScopedChangeFetcherV1: Sendable {
+    let configurationScopeFingerprint: CloudReplicaScopeFingerprint
+    private let changeFetcher: any CloudSyncChangeFetching
+    private let initialBootstrapFetch: @Sendable (
+        CloudAccountID,
+        CloudChangeCursor?,
+        CloudReplicaInitialBootstrapReservedFetchV1
+    ) async throws -> CloudRecordChangePage
+
+    private init(
+        configuration: ProductionCloudWriteConfiguration,
+        changeFetcher: any CloudSyncChangeFetching,
+        initialBootstrapFetch: @escaping @Sendable (
+            CloudAccountID,
+            CloudChangeCursor?,
+            CloudReplicaInitialBootstrapReservedFetchV1
+        ) async throws -> CloudRecordChangePage
+    ) {
+        configurationScopeFingerprint = CloudReplicaScopeFingerprint.make(
+            for: configuration
+        )
+        self.changeFetcher = changeFetcher
+        self.initialBootstrapFetch = initialBootstrapFetch
+    }
+
+    static func live(
+        configuration: ProductionCloudWriteConfiguration
+    ) -> CloudReplicaScopedChangeFetcherV1 {
+        let transport = CloudKitCloudSyncTransport.live(
+            configuration: configuration.transport
+        )
+        return CloudReplicaScopedChangeFetcherV1(
+            configuration: configuration,
+            changeFetcher: transport,
+            initialBootstrapFetch: { accountID, cursor, authorization in
+                try await transport.recordInitialBootstrapChanges(
+                    accountID: accountID,
+                    after: cursor,
+                    authorization: authorization
+                )
+            }
+        )
+    }
+
+    #if DEBUG
+    /// Test seams still derive their scope from the complete production
+    /// configuration. Only the network behavior may be replaced.
+    static func _testOnly(
+        configuration: ProductionCloudWriteConfiguration,
+        changeFetcher: any CloudSyncChangeFetching
+    ) -> CloudReplicaScopedChangeFetcherV1 {
+        CloudReplicaScopedChangeFetcherV1(
+            configuration: configuration,
+            changeFetcher: changeFetcher,
+            initialBootstrapFetch: { accountID, cursor, authorization in
+                let zonePreparation: CloudZonePreparationPolicy
+                switch authorization.networkPolicy {
+                case .mayCreateZoneOnFirstRequest where cursor == nil:
+                    zonePreparation = .createIfMissingForInitialBootstrap
+                case .mayCreateZoneOnFirstRequest,
+                     .requireExistingZoneRecovery:
+                    zonePreparation = .requireExisting
+                }
+                return try await changeFetcher.recordChanges(
+                    accountID: accountID,
+                    after: cursor,
+                    zonePreparation: zonePreparation
+                )
+            }
+        )
+    }
+    #endif
+
+    fileprivate func recordChangesRequiringExistingZone(
+        accountID: CloudAccountID,
+        after cursor: CloudChangeCursor?
+    ) async throws -> CloudRecordChangePage {
+        try await changeFetcher.recordChanges(
+            accountID: accountID,
+            after: cursor,
+            zonePreparation: .requireExisting
+        )
+    }
+
+    /// Initial bootstrap owns the only Release path that may create a zone.
+    /// A nil cursor can occur only on its first internally controlled request;
+    /// every continuation page must observe an already-existing zone.
+    fileprivate func recordChangesForInitialBootstrap(
+        accountID: CloudAccountID,
+        after cursor: CloudChangeCursor?,
+        authorization: CloudReplicaInitialBootstrapReservedFetchV1
+    ) async throws -> CloudRecordChangePage {
+        try await initialBootstrapFetch(accountID, cursor, authorization)
+    }
+}
+
 /// The page plus the exact request context that produced it. A provider cursor
 /// is meaningful only for that predecessor and configuration scope, so the
 /// accumulator never accepts a raw page detached from either binding.
@@ -980,6 +1388,159 @@ struct CloudReplicaAcceptedHistoryV1: Equatable, Sendable {
     }
 }
 
+/// A sealed capability for the first complete replica publication in one exact
+/// account generation. The checkpoint store issues it only after recovering
+/// local state and proving that the active epoch has no accepted checkpoint,
+/// pending publication, or remaining checkpoint evidence.
+struct CloudReplicaInitialBootstrapPublicationContextV1: Sendable {
+    fileprivate let generationToken: AccountGenerationToken
+    fileprivate let accountID: CloudAccountID
+    fileprivate let configurationScopeFingerprint: CloudReplicaScopeFingerprint
+    fileprivate let replicaEpoch: UUID
+    fileprivate let limits: CloudReplicaResourceLimits
+    fileprivate let reservationID: UUID
+    fileprivate let attemptSequence: UInt64
+    private let processAuthority:
+        CloudReplicaInitialBootstrapProcessAuthorityV1
+    private let zoneCreationPermit: CloudReplicaInitialBootstrapFetchPermitV1
+
+    fileprivate init(
+        generationToken: AccountGenerationToken,
+        accountID: CloudAccountID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint,
+        replicaEpoch: UUID,
+        limits: CloudReplicaResourceLimits,
+        reservationID: UUID,
+        attemptSequence: UInt64,
+        processAuthority:
+            CloudReplicaInitialBootstrapProcessAuthorityV1,
+        zoneCreationPermit: CloudReplicaInitialBootstrapFetchPermitV1
+    ) {
+        self.generationToken = generationToken
+        self.accountID = accountID
+        self.configurationScopeFingerprint = configurationScopeFingerprint
+        self.replicaEpoch = replicaEpoch
+        self.limits = limits
+        self.reservationID = reservationID
+        self.attemptSequence = attemptSequence
+        self.processAuthority = processAuthority
+        self.zoneCreationPermit = zoneCreationPermit
+    }
+
+    /// Fetches the complete generation-one replica. The first nil-cursor
+    /// request may create the private zone; every continuation request requires
+    /// that exact zone to keep existing. Neither cursor nor policy is exposed.
+    func fetchCompleteSnapshot(
+        using changeFetcher: CloudReplicaScopedChangeFetcherV1
+    ) async throws -> CloudReplicaInitialBootstrapPublicationV1 {
+        guard changeFetcher.configurationScopeFingerprint
+            == configurationScopeFingerprint else {
+            throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
+        }
+        try Task.checkCancellation()
+        let networkAuthorization = try await zoneCreationPermit
+            .consumeAndReserveBeforeNetwork()
+
+        var accumulator = CloudReplicaStagedAccumulator(
+            accountID: accountID,
+            configurationScopeFingerprint: configurationScopeFingerprint,
+            replicaEpoch: replicaEpoch,
+            limits: limits
+        )
+        var requestedAfterCursor: CloudChangeCursor?
+
+        while true {
+            if requestedAfterCursor != nil {
+                try Task.checkCancellation()
+            }
+            let page = try await changeFetcher.recordChangesForInitialBootstrap(
+                accountID: accountID,
+                after: requestedAfterCursor,
+                authorization: networkAuthorization
+            )
+            let fetchedPage = CloudReplicaFetchedPage(
+                requestedAfterCursor: requestedAfterCursor,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                page: page
+            )
+            if let checkpoint = try accumulator.apply(fetchedPage) {
+                return CloudReplicaInitialBootstrapPublicationV1(
+                    checkpoint: checkpoint,
+                    generationToken: generationToken,
+                    accountID: accountID,
+                    configurationScopeFingerprint:
+                        configurationScopeFingerprint,
+                    replicaEpoch: replicaEpoch,
+                    reservationID: networkAuthorization.reservationID,
+                    attemptSequence: networkAuthorization.attemptSequence,
+                    attemptLease: networkAuthorization.attemptLease
+                )
+            }
+            requestedAfterCursor = page.nextCursor
+        }
+    }
+
+}
+
+/// The only Release-visible value accepted by generation-one checkpoint
+/// publication. Its initializer is sealed to the fixed-policy context above.
+struct CloudReplicaInitialBootstrapPublicationV1: Sendable {
+    let checkpoint: CloudReplicaCheckpointV1
+    fileprivate let generationToken: AccountGenerationToken
+    fileprivate let accountID: CloudAccountID
+    fileprivate let configurationScopeFingerprint: CloudReplicaScopeFingerprint
+    fileprivate let replicaEpoch: UUID
+    fileprivate let reservationID: UUID
+    fileprivate let attemptSequence: UInt64
+    fileprivate let attemptLease:
+        CloudReplicaInitialBootstrapNetworkAttemptLeaseV1
+
+    fileprivate init(
+        checkpoint: CloudReplicaCheckpointV1,
+        generationToken: AccountGenerationToken,
+        accountID: CloudAccountID,
+        configurationScopeFingerprint: CloudReplicaScopeFingerprint,
+        replicaEpoch: UUID,
+        reservationID: UUID,
+        attemptSequence: UInt64,
+        attemptLease: CloudReplicaInitialBootstrapNetworkAttemptLeaseV1
+    ) {
+        self.checkpoint = checkpoint
+        self.generationToken = generationToken
+        self.accountID = accountID
+        self.configurationScopeFingerprint = configurationScopeFingerprint
+        self.replicaEpoch = replicaEpoch
+        self.reservationID = reservationID
+        self.attemptSequence = attemptSequence
+        self.attemptLease = attemptLease
+    }
+
+    /// Stable identity for future hydration composition. This is descriptive
+    /// transition data, not profile-file mutation authority.
+    var targetCheckpointIdentity: ProfileHydrationCheckpointIdentityV1 {
+        ProfileHydrationCheckpointIdentityV1(checkpoint: checkpoint)
+    }
+
+    #if DEBUG
+    /// Lets invariant tests replace only checkpoint bytes while retaining the
+    /// genuine post-fetch live attempt lease.
+    func _testOnlyReplacingCheckpoint(
+        _ checkpoint: CloudReplicaCheckpointV1
+    ) -> CloudReplicaInitialBootstrapPublicationV1 {
+        CloudReplicaInitialBootstrapPublicationV1(
+            checkpoint: checkpoint,
+            generationToken: generationToken,
+            accountID: accountID,
+            configurationScopeFingerprint: configurationScopeFingerprint,
+            replicaEpoch: replicaEpoch,
+            reservationID: reservationID,
+            attemptSequence: attemptSequence,
+            attemptLease: attemptLease
+        )
+    }
+    #endif
+}
+
 /// A sealed, process-local recovery capability for one exact accepted cloud
 /// history and account generation. The checkpoint store is the only issuer.
 /// Fetching is intentionally separate from issuance and durable commit. The
@@ -1120,7 +1681,11 @@ struct CloudReplicaIncrementalOrdinaryPublicationContextV1: Sendable {
                 return CloudReplicaOrdinaryPublicationV1(
                     checkpoint: checkpoint,
                     generationToken: generationToken,
-                    predecessorHistory: predecessorHistory
+                    predecessorHistory: predecessorHistory,
+                    predecessorCheckpointIdentity:
+                        ProfileHydrationCheckpointIdentityV1(
+                            checkpoint: predecessor
+                        )
                 )
             }
             requestedAfterCursor = page.nextCursor
@@ -1133,17 +1698,26 @@ struct CloudReplicaIncrementalOrdinaryPublicationContextV1: Sendable {
 /// authorized its fixed-policy fetch.
 struct CloudReplicaOrdinaryPublicationV1: Sendable {
     let checkpoint: CloudReplicaCheckpointV1
+    let predecessorCheckpointIdentity: ProfileHydrationCheckpointIdentityV1
     fileprivate let generationToken: AccountGenerationToken
     fileprivate let predecessorHistory: CloudReplicaAcceptedHistoryV1
 
     fileprivate init(
         checkpoint: CloudReplicaCheckpointV1,
         generationToken: AccountGenerationToken,
-        predecessorHistory: CloudReplicaAcceptedHistoryV1
+        predecessorHistory: CloudReplicaAcceptedHistoryV1,
+        predecessorCheckpointIdentity: ProfileHydrationCheckpointIdentityV1
     ) {
         self.checkpoint = checkpoint
         self.generationToken = generationToken
         self.predecessorHistory = predecessorHistory
+        self.predecessorCheckpointIdentity = predecessorCheckpointIdentity
+    }
+
+    /// Stable identity for future hydration composition. Publication still
+    /// requires the store's borrowed freshness and generation authorities.
+    var targetCheckpointIdentity: ProfileHydrationCheckpointIdentityV1 {
+        ProfileHydrationCheckpointIdentityV1(checkpoint: checkpoint)
     }
 }
 
@@ -1220,6 +1794,7 @@ enum CloudReplicaCheckpointStoreError: Error, Equatable, Sendable {
     case accountGenerationAuthorityNotBound
     case accountGenerationAuthorityMismatch
     case accountGenerationMismatch
+    case initialBootstrapUnavailable
     case acceptedHistoryUnavailable
     case acceptedHistoryMismatch
     case acceptedCheckpointStillAvailable
@@ -1259,6 +1834,17 @@ protocol CloudReplicaCheckpointStoring: Sendable {
             borrowing CloudReplicaCheckpointFreshnessLeaseV1
         ) throws -> Output
     ) async throws -> Output
+
+    func beginInitialBootstrapPublication(
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date
+    ) async throws -> CloudReplicaInitialBootstrapPublicationContextV1
+
+    func saveInitialBootstrapPublication(
+        _ publication: CloudReplicaInitialBootstrapPublicationV1,
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date
+    ) async throws
 
     func beginRequireExistingFullSnapshotReconstruction(
         generationLease: borrowing AccountGenerationCommitLease,
@@ -1869,11 +2455,101 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         }
     }
 
+    /// Durable single-use admission for generation-one network work. The
+    /// before-network phase is safely replaceable because no transport call is
+    /// allowed until the second phase is durable. Once network may have been
+    /// invoked, recovery can only claim a new require-existing attempt.
+    private struct InitialBootstrapReservationV1: Codable, Equatable {
+        static let formatVersion = 1
+        static let zeroUUID = UUID(
+            uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        )
+
+        enum Phase: String, Codable, Equatable {
+            case reservedBeforeNetwork
+            case networkMayHaveBeenInvoked
+            case consumedByCheckpoint
+        }
+
+        let reservationID: UUID
+        let activeAttemptSequence: UInt64
+        let phase: Phase
+
+        init(
+            reservationID: UUID,
+            activeAttemptSequence: UInt64,
+            phase: Phase
+        ) throws {
+            self.reservationID = reservationID
+            self.activeAttemptSequence = activeAttemptSequence
+            self.phase = phase
+            try validate()
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case formatVersion
+            case reservationID
+            case activeAttemptSequence
+            case phase
+        }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            guard try container.decode(Int.self, forKey: .formatVersion)
+                == Self.formatVersion else {
+                throw CloudReplicaCheckpointValidationError
+                    .unsupportedFormatVersion
+            }
+            reservationID = try container.decode(
+                UUID.self,
+                forKey: .reservationID
+            )
+            activeAttemptSequence = try container.decode(
+                UInt64.self,
+                forKey: .activeAttemptSequence
+            )
+            phase = try container.decode(Phase.self, forKey: .phase)
+            try validate()
+        }
+
+        func encode(to encoder: any Encoder) throws {
+            try validate()
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(Self.formatVersion, forKey: .formatVersion)
+            try container.encode(reservationID, forKey: .reservationID)
+            try container.encode(
+                activeAttemptSequence,
+                forKey: .activeAttemptSequence
+            )
+            try container.encode(phase, forKey: .phase)
+        }
+
+        func validate() throws {
+            guard reservationID != Self.zeroUUID,
+                  activeAttemptSequence > 0 else {
+                throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+            }
+        }
+
+        func consumingByCheckpoint() throws -> Self {
+            guard phase == .networkMayHaveBeenInvoked else {
+                throw CloudReplicaCheckpointStoreError
+                    .initialBootstrapUnavailable
+            }
+            return try Self(
+                reservationID: reservationID,
+                activeAttemptSequence: activeAttemptSequence,
+                phase: .consumedByCheckpoint
+            )
+        }
+    }
+
     /// A single fixed-size authority record owns the current replica epoch for
     /// an account. The bounded revoked-epoch filter has no false negatives;
     /// saturation can only reject a fresh epoch, never resurrect an old one.
     private struct ReplicaEpochAuthorityV2: Codable, Equatable {
-        static let formatVersion = 2
+        static let formatVersion = 3
+        static let legacyFormatVersion = 2
         static let revokedEpochFilterByteCount = 32 * 1_024
         static let revokedEpochHashCount = 7
 
@@ -1890,6 +2566,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         let revokedEpochFilter: Data
         let checkpointHighWatermark: WatermarkV1?
         let pendingCheckpointHighWatermark: WatermarkV1?
+        let initialBootstrapReservation: InitialBootstrapReservationV1?
 
         init(
             active replicaEpoch: UUID,
@@ -1907,6 +2584,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             )
             checkpointHighWatermark = nil
             pendingCheckpointHighWatermark = nil
+            initialBootstrapReservation = nil
         }
 
         init(revoked replicaEpoch: UUID, for accountID: CloudAccountID) {
@@ -1929,6 +2607,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             revokedEpochFilter = filter
             checkpointHighWatermark = nil
             pendingCheckpointHighWatermark = nil
+            initialBootstrapReservation = nil
         }
 
         private init(
@@ -1939,7 +2618,8 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             state: State,
             revokedEpochFilter: Data,
             checkpointHighWatermark: WatermarkV1?,
-            pendingCheckpointHighWatermark: WatermarkV1?
+            pendingCheckpointHighWatermark: WatermarkV1?,
+            initialBootstrapReservation: InitialBootstrapReservationV1?
         ) {
             self.accountID = accountID
             self.replicaEpoch = replicaEpoch
@@ -1949,6 +2629,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             self.revokedEpochFilter = revokedEpochFilter
             self.checkpointHighWatermark = checkpointHighWatermark
             self.pendingCheckpointHighWatermark = pendingCheckpointHighWatermark
+            self.initialBootstrapReservation = initialBootstrapReservation
         }
 
         private enum CodingKeys: String, CodingKey {
@@ -1961,12 +2642,17 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             case revokedEpochFilter
             case checkpointHighWatermark
             case pendingCheckpointHighWatermark
+            case initialBootstrapReservation
         }
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            guard try container.decode(Int.self, forKey: .formatVersion)
-                == Self.formatVersion else {
+            let decodedFormatVersion = try container.decode(
+                Int.self,
+                forKey: .formatVersion
+            )
+            guard decodedFormatVersion == Self.formatVersion
+                    || decodedFormatVersion == Self.legacyFormatVersion else {
                 throw CloudReplicaCheckpointValidationError.unsupportedFormatVersion
             }
             accountID = try container.decode(CloudAccountID.self, forKey: .accountID)
@@ -1989,6 +2675,13 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 WatermarkV1.self,
                 forKey: .pendingCheckpointHighWatermark
             )
+            initialBootstrapReservation = decodedFormatVersion
+                == Self.legacyFormatVersion
+                ? nil
+                : try container.decodeIfPresent(
+                    InitialBootstrapReservationV1.self,
+                    forKey: .initialBootstrapReservation
+                )
             try validate()
         }
 
@@ -2012,6 +2705,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             try container.encodeIfPresent(
                 pendingCheckpointHighWatermark,
                 forKey: .pendingCheckpointHighWatermark
+            )
+            try container.encodeIfPresent(
+                initialBootstrapReservation,
+                forKey: .initialBootstrapReservation
             )
         }
 
@@ -2051,6 +2748,27 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                     }
                 }
             }
+            if let initialBootstrapReservation {
+                try initialBootstrapReservation.validate()
+                guard state == .active else {
+                    throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+                }
+                switch initialBootstrapReservation.phase {
+                case .reservedBeforeNetwork:
+                    guard checkpointHighWatermark == nil,
+                          pendingCheckpointHighWatermark == nil else {
+                        throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+                    }
+                case .networkMayHaveBeenInvoked:
+                    guard checkpointHighWatermark == nil else {
+                        throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+                    }
+                case .consumedByCheckpoint:
+                    guard checkpointHighWatermark != nil else {
+                        throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+                    }
+                }
+            }
             switch state {
             case .active:
                 guard configurationScopeFingerprint != nil,
@@ -2061,6 +2779,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 guard configurationScopeFingerprint == nil,
                       checkpointHighWatermark == nil,
                       pendingCheckpointHighWatermark == nil,
+                      initialBootstrapReservation == nil,
                       containsRevoked(replicaEpoch) else {
                     throw CloudReplicaCheckpointStoreError.invalidCheckpoint
                 }
@@ -2095,7 +2814,8 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 state: .revoked,
                 revokedEpochFilter: filter,
                 checkpointHighWatermark: nil,
-                pendingCheckpointHighWatermark: nil
+                pendingCheckpointHighWatermark: nil,
+                initialBootstrapReservation: nil
             )
         }
 
@@ -2114,7 +2834,121 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 state: .active,
                 revokedEpochFilter: revokedEpochFilter,
                 checkpointHighWatermark: nil,
-                pendingCheckpointHighWatermark: nil
+                pendingCheckpointHighWatermark: nil,
+                initialBootstrapReservation: nil
+            )
+        }
+
+        func reservingInitialBootstrap(
+            reservationID: UUID,
+            attemptSequence: UInt64
+        ) throws -> Self {
+            guard state == .active,
+                  checkpointHighWatermark == nil,
+                  pendingCheckpointHighWatermark == nil,
+                  initialBootstrapReservation == nil else {
+                throw CloudReplicaCheckpointStoreError
+                    .initialBootstrapUnavailable
+            }
+            let reservation = try InitialBootstrapReservationV1(
+                reservationID: reservationID,
+                activeAttemptSequence: attemptSequence,
+                phase: .reservedBeforeNetwork
+            )
+            return Self(
+                accountID: accountID,
+                replicaEpoch: replicaEpoch,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                revision: try incrementedRevision(),
+                state: state,
+                revokedEpochFilter: revokedEpochFilter,
+                checkpointHighWatermark: nil,
+                pendingCheckpointHighWatermark: nil,
+                initialBootstrapReservation: reservation
+            )
+        }
+
+        func markingInitialBootstrapNetworkMayHaveBeenInvoked(
+            reservationID: UUID,
+            attemptSequence: UInt64
+        ) throws -> Self {
+            guard let reservation = initialBootstrapReservation,
+                  reservation.reservationID == reservationID,
+                  reservation.activeAttemptSequence == attemptSequence,
+                  reservation.phase == .reservedBeforeNetwork else {
+                throw CloudReplicaCheckpointStoreError
+                    .initialBootstrapUnavailable
+            }
+            return Self(
+                accountID: accountID,
+                replicaEpoch: replicaEpoch,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                revision: try incrementedRevision(),
+                state: state,
+                revokedEpochFilter: revokedEpochFilter,
+                checkpointHighWatermark: checkpointHighWatermark,
+                pendingCheckpointHighWatermark: pendingCheckpointHighWatermark,
+                initialBootstrapReservation:
+                    try InitialBootstrapReservationV1(
+                        reservationID: reservationID,
+                        activeAttemptSequence: attemptSequence,
+                        phase: .networkMayHaveBeenInvoked
+                    )
+            )
+        }
+
+        func claimingInitialBootstrapRecovery(
+            reservationID: UUID,
+            expectedAttemptSequence: UInt64,
+            candidateAttemptSequence: UInt64
+        ) throws -> Self {
+            let nextSequence = expectedAttemptSequence
+                .addingReportingOverflow(1)
+            guard let reservation = initialBootstrapReservation,
+                  !nextSequence.overflow,
+                  reservation.reservationID == reservationID,
+                  reservation.phase == .networkMayHaveBeenInvoked,
+                  reservation.activeAttemptSequence
+                    == expectedAttemptSequence,
+                  candidateAttemptSequence == nextSequence.partialValue,
+                  checkpointHighWatermark == nil,
+                  pendingCheckpointHighWatermark == nil else {
+                throw CloudReplicaCheckpointStoreError
+                    .initialBootstrapUnavailable
+            }
+            return Self(
+                accountID: accountID,
+                replicaEpoch: replicaEpoch,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                revision: try incrementedRevision(),
+                state: state,
+                revokedEpochFilter: revokedEpochFilter,
+                checkpointHighWatermark: nil,
+                pendingCheckpointHighWatermark: nil,
+                initialBootstrapReservation:
+                    try InitialBootstrapReservationV1(
+                        reservationID: reservationID,
+                        activeAttemptSequence: candidateAttemptSequence,
+                        phase: .networkMayHaveBeenInvoked
+                    )
+            )
+        }
+
+        func abortingUnstartedInitialBootstrapReservation() throws -> Self {
+            guard let reservation = initialBootstrapReservation,
+                  reservation.phase == .reservedBeforeNetwork else {
+                return self
+            }
+            return Self(
+                accountID: accountID,
+                replicaEpoch: replicaEpoch,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                revision: try incrementedRevision(),
+                state: state,
+                revokedEpochFilter: revokedEpochFilter,
+                checkpointHighWatermark: checkpointHighWatermark,
+                pendingCheckpointHighWatermark: pendingCheckpointHighWatermark,
+                initialBootstrapReservation: nil
             )
         }
 
@@ -2156,7 +2990,8 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 state: state,
                 revokedEpochFilter: revokedEpochFilter,
                 checkpointHighWatermark: checkpointHighWatermark,
-                pendingCheckpointHighWatermark: watermark
+                pendingCheckpointHighWatermark: watermark,
+                initialBootstrapReservation: initialBootstrapReservation
             )
         }
 
@@ -2185,6 +3020,17 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                     throw CloudReplicaCheckpointStoreError.generationCollision
                 }
             }
+            let acceptedReservation: InitialBootstrapReservationV1?
+            if let initialBootstrapReservation,
+               watermark.generation == 1,
+               initialBootstrapReservation.phase
+                == .networkMayHaveBeenInvoked
+            {
+                acceptedReservation = try initialBootstrapReservation
+                    .consumingByCheckpoint()
+            } else {
+                acceptedReservation = initialBootstrapReservation
+            }
             return Self(
                 accountID: accountID,
                 replicaEpoch: replicaEpoch,
@@ -2193,7 +3039,8 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 state: state,
                 revokedEpochFilter: revokedEpochFilter,
                 checkpointHighWatermark: watermark,
-                pendingCheckpointHighWatermark: nil
+                pendingCheckpointHighWatermark: nil,
+                initialBootstrapReservation: acceptedReservation
             )
         }
 
@@ -2212,7 +3059,8 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 state: state,
                 revokedEpochFilter: revokedEpochFilter,
                 checkpointHighWatermark: checkpointHighWatermark,
-                pendingCheckpointHighWatermark: nil
+                pendingCheckpointHighWatermark: nil,
+                initialBootstrapReservation: initialBootstrapReservation
             )
         }
 
@@ -2244,6 +3092,17 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 }
                 return self
             }
+            let acceptedReservation: InitialBootstrapReservationV1?
+            if let initialBootstrapReservation,
+               watermark.generation == 1,
+               initialBootstrapReservation.phase
+                == .networkMayHaveBeenInvoked
+            {
+                acceptedReservation = try initialBootstrapReservation
+                    .consumingByCheckpoint()
+            } else {
+                acceptedReservation = initialBootstrapReservation
+            }
             return Self(
                 accountID: accountID,
                 replicaEpoch: replicaEpoch,
@@ -2252,7 +3111,8 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 state: state,
                 revokedEpochFilter: revokedEpochFilter,
                 checkpointHighWatermark: watermark,
-                pendingCheckpointHighWatermark: nil
+                pendingCheckpointHighWatermark: nil,
+                initialBootstrapReservation: acceptedReservation
             )
         }
 
@@ -2315,19 +3175,33 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
     private let fileSystem: any CloudReplicaCheckpointFileSystem
     private let limits: CloudReplicaResourceLimits
     private let accountGenerationAuthority: CloudAccountGenerationAuthority?
+    private let initialBootstrapReservationUUIDFactory:
+        CloudReplicaInitialBootstrapProcessAuthorityV1.ReservationUUIDFactory
+    private let maximumIssuedInitialBootstrapReservationCount: Int
     private var activeEpochByAccount: [CloudAccountID: UUID] = [:]
+    private var initialBootstrapProcessAuthorityByAccount:
+        [CloudAccountID: CloudReplicaInitialBootstrapProcessAuthorityV1] = [:]
 
     init(
         rootDirectoryURL: URL,
         fileSystem: any CloudReplicaCheckpointFileSystem =
             FoundationCloudReplicaCheckpointFileSystem(),
         limits: CloudReplicaResourceLimits = .production,
-        accountGenerationAuthority: CloudAccountGenerationAuthority? = nil
+        accountGenerationAuthority: CloudAccountGenerationAuthority? = nil,
+        initialBootstrapReservationUUIDFactory: @escaping @Sendable () -> UUID = {
+            UUID()
+        },
+        maximumIssuedInitialBootstrapReservationCount: Int = 4_096
     ) {
+        precondition(maximumIssuedInitialBootstrapReservationCount > 0)
         self.rootDirectoryURL = rootDirectoryURL
         self.fileSystem = fileSystem
         self.limits = limits
         self.accountGenerationAuthority = accountGenerationAuthority
+        self.initialBootstrapReservationUUIDFactory =
+            initialBootstrapReservationUUIDFactory
+        self.maximumIssuedInitialBootstrapReservationCount =
+            maximumIssuedInitialBootstrapReservationCount
     }
 
     func activate(
@@ -2337,6 +3211,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
     ) throws {
         let locations = locations(for: accountID)
         try withAccountLock(locations: locations) {
+            let processAuthority = try initialBootstrapProcessAuthorityLocked(
+                accountID: accountID,
+                locations: locations
+            )
             let existing = try readAuthority(
                 for: accountID,
                 locations: locations
@@ -2389,6 +3267,8 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 throw CloudReplicaCheckpointStoreError.invalidCheckpoint
             }
             activeEpochByAccount[accountID] = replicaEpoch
+            initialBootstrapProcessAuthorityByAccount[accountID] =
+                processAuthority
         }
     }
 
@@ -2775,6 +3655,318 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         return try callbackOutcome.get()
     }
 
+    /// Mints the sole zone-creating fetch context only when a read-only,
+    /// account-locked preflight proves that this remembered epoch has no
+    /// accepted history, publication intent, checkpoint files, or quarantine
+    /// evidence. It deliberately does not call `load`, whose recovery behavior
+    /// may repair, quarantine, or remove the very evidence that closes genesis.
+    func beginInitialBootstrapPublication(
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date
+    ) throws -> CloudReplicaInitialBootstrapPublicationContextV1 {
+        _ = date
+        guard let accountGenerationAuthority else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityNotBound
+        }
+        guard generationLease.wasIssued(by: accountGenerationAuthority) else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityMismatch
+        }
+
+        let accountID = generationLease.accountID
+        let configurationScopeFingerprint =
+            generationLease.configurationScopeFingerprint
+        let replicaEpoch = generationLease.replicaEpoch
+        let generationToken = generationLease.generationToken
+        let locations = locations(for: accountID)
+
+        let contextBindings = try withAccountLock(locations: locations) {
+            var authority = try validatedActiveAuthorityLocked(
+                accountID: accountID,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                replicaEpoch: replicaEpoch,
+                locations: locations,
+                requireRememberedEpoch: true
+            )
+            let processAuthority = try initialBootstrapProcessAuthorityLocked(
+                accountID: accountID,
+                locations: locations
+            )
+            try requireInitialBootstrapAvailabilityLocked(
+                authority: authority,
+                locations: locations
+            )
+
+            var replacementReservationID: UUID?
+            if let unstartedReservation =
+                authority.initialBootstrapReservation,
+               unstartedReservation.phase == .reservedBeforeNetwork {
+                try processAuthority.adoptDurableReservationID(
+                    unstartedReservation.reservationID
+                )
+                // Issue before clearing durable state. Zero, collision, and
+                // cap failures therefore leave the replaceable reservation
+                // byte-for-byte intact.
+                replacementReservationID = try processAuthority
+                    .issueReservationID()
+                let cleared = try authority
+                    .abortingUnstartedInitialBootstrapReservation()
+                try writeAuthority(cleared, locations: locations)
+                guard try readAuthority(
+                    for: accountID,
+                    locations: locations
+                ) == cleared else {
+                    throw CloudReplicaCheckpointStoreError.invalidCheckpoint
+                }
+                authority = cleared
+            }
+
+            if let reservation = authority.initialBootstrapReservation {
+                guard reservation.phase == .networkMayHaveBeenInvoked else {
+                    throw CloudReplicaCheckpointStoreError
+                        .initialBootstrapUnavailable
+                }
+                try processAuthority.adoptDurableReservationID(
+                    reservation.reservationID
+                )
+                let nextSequence = reservation.activeAttemptSequence
+                    .addingReportingOverflow(1)
+                guard !nextSequence.overflow else {
+                    throw CloudReplicaCheckpointStoreError
+                        .initialBootstrapUnavailable
+                }
+                return (
+                    reservationID: reservation.reservationID,
+                    expectedAttemptSequence:
+                        Optional(reservation.activeAttemptSequence),
+                    attemptSequence: nextSequence.partialValue,
+                    networkPolicy:
+                        CloudReplicaInitialBootstrapNetworkPolicyV1
+                            .requireExistingZoneRecovery,
+                    processAuthority: processAuthority
+                )
+            }
+
+            let reservationID: UUID
+            if let replacementReservationID {
+                reservationID = replacementReservationID
+            } else {
+                reservationID = try processAuthority.issueReservationID()
+            }
+            return (
+                reservationID: reservationID,
+                expectedAttemptSequence: Optional<UInt64>.none,
+                attemptSequence: UInt64(1),
+                networkPolicy:
+                    CloudReplicaInitialBootstrapNetworkPolicyV1
+                        .mayCreateZoneOnFirstRequest,
+                processAuthority: processAuthority
+            )
+        }
+
+        let permit = CloudReplicaInitialBootstrapFetchPermitV1(
+            reservationID: contextBindings.reservationID,
+            attemptSequence: contextBindings.attemptSequence,
+            networkPolicy: contextBindings.networkPolicy,
+            reserveDurably: { [self] in
+                do {
+                    return try await accountGenerationAuthority
+                        .withCurrentGeneration(
+                        matching: generationToken
+                    ) { lease in
+                        try await self.admitInitialBootstrapNetworkAttempt(
+                            reservationID: contextBindings.reservationID,
+                            expectedAttemptSequence:
+                                contextBindings.expectedAttemptSequence,
+                            attemptSequence: contextBindings.attemptSequence,
+                            networkPolicy: contextBindings.networkPolicy,
+                            processAuthority:
+                                contextBindings.processAuthority,
+                            generationLease: lease
+                        )
+                    }
+                } catch is CloudAccountGenerationAuthorityError {
+                    throw CloudReplicaCheckpointStoreError
+                        .accountGenerationMismatch
+                }
+            }
+        )
+        return CloudReplicaInitialBootstrapPublicationContextV1(
+            generationToken: generationToken,
+            accountID: accountID,
+            configurationScopeFingerprint: configurationScopeFingerprint,
+            replicaEpoch: replicaEpoch,
+            limits: limits,
+            reservationID: contextBindings.reservationID,
+            attemptSequence: contextBindings.attemptSequence,
+            processAuthority: contextBindings.processAuthority,
+            zoneCreationPermit: permit
+        )
+    }
+
+    /// Claims one durable attempt while the matching process-local generation
+    /// gate and cross-store account lock are both held. New bootstrap writes a
+    /// before-network reservation and then durably advances it to the
+    /// ambiguous-network phase. Recovery can only rotate the active attempt of
+    /// an existing ambiguous reservation and never regains zone creation.
+    private func admitInitialBootstrapNetworkAttempt(
+        reservationID: UUID,
+        expectedAttemptSequence: UInt64?,
+        attemptSequence: UInt64,
+        networkPolicy: CloudReplicaInitialBootstrapNetworkPolicyV1,
+        processAuthority:
+            CloudReplicaInitialBootstrapProcessAuthorityV1,
+        generationLease: borrowing AccountGenerationCommitLease
+    ) throws -> CloudReplicaInitialBootstrapNetworkAttemptLeaseV1 {
+        guard let accountGenerationAuthority else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityNotBound
+        }
+        guard generationLease.wasIssued(by: accountGenerationAuthority) else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityMismatch
+        }
+        let accountID = generationLease.accountID
+        let configurationScopeFingerprint =
+            generationLease.configurationScopeFingerprint
+        let replicaEpoch = generationLease.replicaEpoch
+        let locations = locations(for: accountID)
+
+        return try withAccountLock(locations: locations) {
+            let authority = try validatedActiveAuthorityLocked(
+                accountID: accountID,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                replicaEpoch: replicaEpoch,
+                locations: locations,
+                requireRememberedEpoch: true
+            )
+            let currentProcessAuthority = try
+                initialBootstrapProcessAuthorityLocked(
+                    accountID: accountID,
+                    locations: locations
+                )
+            guard currentProcessAuthority === processAuthority else {
+                throw CloudReplicaCheckpointStoreError
+                    .initialBootstrapUnavailable
+            }
+            try requireInitialBootstrapAvailabilityLocked(
+                authority: authority,
+                locations: locations
+            )
+            let attemptLease = try processAuthority.claimAttempt(
+                reservationID: reservationID,
+                attemptSequence: attemptSequence
+            )
+
+            do {
+                switch networkPolicy {
+                case .mayCreateZoneOnFirstRequest:
+                    guard expectedAttemptSequence == nil,
+                          attemptSequence == 1,
+                          authority.initialBootstrapReservation == nil else {
+                        throw CloudReplicaCheckpointStoreError
+                            .initialBootstrapUnavailable
+                    }
+                    let reserved = try authority.reservingInitialBootstrap(
+                        reservationID: reservationID,
+                        attemptSequence: attemptSequence
+                    )
+                    try writeAuthority(reserved, locations: locations)
+                    guard try readAuthority(
+                        for: accountID,
+                        locations: locations
+                    ) == reserved else {
+                        throw CloudReplicaCheckpointStoreError
+                            .invalidCheckpoint
+                    }
+
+                    let networkAdmitted = try reserved
+                        .markingInitialBootstrapNetworkMayHaveBeenInvoked(
+                            reservationID: reservationID,
+                            attemptSequence: attemptSequence
+                        )
+                    try writeAuthority(networkAdmitted, locations: locations)
+                    guard try readAuthority(
+                        for: accountID,
+                        locations: locations
+                    ) == networkAdmitted else {
+                        throw CloudReplicaCheckpointStoreError
+                            .invalidCheckpoint
+                    }
+
+                case .requireExistingZoneRecovery:
+                    guard let expectedAttemptSequence else {
+                        throw CloudReplicaCheckpointStoreError
+                            .initialBootstrapUnavailable
+                    }
+                    let networkAdmitted = try authority
+                        .claimingInitialBootstrapRecovery(
+                            reservationID: reservationID,
+                            expectedAttemptSequence: expectedAttemptSequence,
+                            candidateAttemptSequence: attemptSequence
+                        )
+                    try writeAuthority(networkAdmitted, locations: locations)
+                    guard try readAuthority(
+                        for: accountID,
+                        locations: locations
+                    ) == networkAdmitted else {
+                        throw CloudReplicaCheckpointStoreError
+                            .invalidCheckpoint
+                    }
+                }
+                return attemptLease
+            } catch {
+                attemptLease.release()
+                throw error
+            }
+        }
+    }
+
+    /// Publishes only a generation-one result minted by the matching canonical
+    /// account generation. The private disk engine rechecks durable genesis
+    /// absence beneath the same account lock that records publication intent.
+    func saveInitialBootstrapPublication(
+        _ publication: CloudReplicaInitialBootstrapPublicationV1,
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date
+    ) throws {
+        guard let accountGenerationAuthority else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityNotBound
+        }
+        guard generationLease.wasIssued(by: accountGenerationAuthority) else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityMismatch
+        }
+        guard generationLease.generationToken == publication.generationToken,
+              generationLease.accountID == publication.accountID,
+              generationLease.configurationScopeFingerprint
+                == publication.configurationScopeFingerprint,
+              generationLease.replicaEpoch == publication.replicaEpoch,
+              publication.checkpoint.accountID == publication.accountID,
+              publication.checkpoint.configurationScopeFingerprint
+                == publication.configurationScopeFingerprint,
+              publication.checkpoint.replicaEpoch == publication.replicaEpoch
+        else {
+            throw CloudReplicaCheckpointStoreError.accountGenerationMismatch
+        }
+        guard publication.checkpoint.generation == 1 else {
+            throw CloudReplicaCheckpointStoreError.generationGap
+        }
+
+        try saveRawCheckpoint(
+            publication.checkpoint,
+            succeeding: nil,
+            requiredInitialBootstrapReservationID: publication.reservationID,
+            requiredInitialBootstrapAttemptSequence:
+                publication.attemptSequence,
+            requiredInitialBootstrapAttemptLease:
+                publication.attemptLease,
+            at: date
+        )
+    }
+
     /// Mints a network-safe recovery context only while the canonical account
     /// generation is current and durable accepted history has lost every
     /// usable local checkpoint copy. The returned value is designed to escape
@@ -2991,6 +4183,10 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
     private func saveRawCheckpoint(
         _ checkpoint: CloudReplicaCheckpointV1,
         succeeding predecessorHistory: CloudReplicaAcceptedHistoryV1?,
+        requiredInitialBootstrapReservationID: UUID? = nil,
+        requiredInitialBootstrapAttemptSequence: UInt64? = nil,
+        requiredInitialBootstrapAttemptLease:
+            CloudReplicaInitialBootstrapNetworkAttemptLeaseV1? = nil,
         at date: Date
     ) throws {
         do {
@@ -3024,6 +4220,51 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                     == checkpoint.configurationScopeFingerprint else {
                     throw CloudReplicaCheckpointStoreError
                         .configurationScopeMismatch
+                }
+
+                if requiredInitialBootstrapReservationID != nil
+                    || requiredInitialBootstrapAttemptSequence != nil
+                    || requiredInitialBootstrapAttemptLease != nil
+                {
+                    guard let requiredInitialBootstrapReservationID,
+                          let requiredInitialBootstrapAttemptSequence,
+                          let requiredInitialBootstrapAttemptLease else {
+                        throw CloudReplicaCheckpointStoreError
+                            .initialBootstrapUnavailable
+                    }
+                    guard predecessorHistory == nil,
+                          checkpoint.generation == 1 else {
+                        throw CloudReplicaCheckpointStoreError.generationGap
+                    }
+                    let processAuthority = try
+                        initialBootstrapProcessAuthorityLocked(
+                            accountID: checkpoint.accountID,
+                            locations: locations
+                        )
+                    guard requiredInitialBootstrapAttemptLease.authorizes(
+                        reservationID:
+                            requiredInitialBootstrapReservationID,
+                        attemptSequence:
+                            requiredInitialBootstrapAttemptSequence,
+                        processAuthority: processAuthority
+                    ) else {
+                        throw CloudReplicaCheckpointStoreError
+                            .initialBootstrapUnavailable
+                    }
+                    try requireInitialBootstrapAvailabilityLocked(
+                        authority: durableAuthority,
+                        locations: locations
+                    )
+                    guard let reservation = durableAuthority
+                        .initialBootstrapReservation,
+                          reservation.reservationID
+                            == requiredInitialBootstrapReservationID,
+                          reservation.activeAttemptSequence
+                            == requiredInitialBootstrapAttemptSequence,
+                          reservation.phase == .networkMayHaveBeenInvoked else {
+                        throw CloudReplicaCheckpointStoreError
+                            .initialBootstrapUnavailable
+                    }
                 }
 
                 let candidateWatermark = WatermarkV1(checkpoint: checkpoint)
@@ -3234,6 +4475,7 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 ) == committedAuthority else {
                     throw CloudReplicaCheckpointStoreError.replicaEpochMismatch
                 }
+                requiredInitialBootstrapAttemptLease?.release()
             } catch let error as CloudReplicaCheckpointStoreError {
                 throw error
             } catch {
@@ -3467,6 +4709,22 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         return builder.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
+    #if DEBUG
+    /// Direct format/migration seam for durable-authority invariant tests.
+    /// Release callers cannot decode, construct, or rewrite authority values.
+    nonisolated static func _testOnlyRoundTripReplicaAuthority(
+        _ data: Data
+    ) throws -> Data {
+        let authority = try JSONDecoder().decode(
+            ReplicaEpochAuthorityV2.self,
+            from: data
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(authority)
+    }
+    #endif
+
     private func locations(for accountID: CloudAccountID) -> Locations {
         let checkpointRoot = rootDirectoryURL
             .appendingPathComponent("CloudReplicaCheckpoints", isDirectory: true)
@@ -3522,6 +4780,67 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         }
     }
 
+    /// Resolves the already-created authority directory and lock file while
+    /// the advisory lock is held. `stat` follows path aliases, so symlink and
+    /// case aliases converge on the same process authority instead of
+    /// bypassing it through distinct standardized URLs.
+    private func physicalAuthorityIdentityLocked(
+        locations: Locations
+    ) throws -> CloudReplicaPhysicalAuthorityIdentityV1 {
+        var directoryMetadata = stat()
+        let directoryResult = locations.authorityDirectory.path.withCString {
+            stat($0, &directoryMetadata)
+        }
+        var lockMetadata = stat()
+        let lockResult = locations.authorityLock.path.withCString {
+            stat($0, &lockMetadata)
+        }
+        guard directoryResult == 0,
+              directoryMetadata.st_mode & S_IFMT == S_IFDIR,
+              directoryMetadata.st_ino != 0,
+              lockResult == 0,
+              lockMetadata.st_mode & S_IFMT == S_IFREG,
+              lockMetadata.st_ino != 0 else {
+            throw CloudReplicaCheckpointStoreError.ioFailure
+        }
+        return CloudReplicaPhysicalAuthorityIdentityV1(
+            directoryDevice: UInt64(directoryMetadata.st_dev),
+            directoryInode: UInt64(directoryMetadata.st_ino),
+            lockDevice: UInt64(lockMetadata.st_dev),
+            lockInode: UInt64(lockMetadata.st_ino)
+        )
+    }
+
+    /// Called only beneath the account file lock. A store that already
+    /// retained an authority identity refuses to follow a replaced physical
+    /// directory, while a distinct store can adopt the new physical domain.
+    private func initialBootstrapProcessAuthorityLocked(
+        accountID: CloudAccountID,
+        locations: Locations
+    ) throws -> CloudReplicaInitialBootstrapProcessAuthorityV1 {
+        let physicalIdentity = try physicalAuthorityIdentityLocked(
+            locations: locations
+        )
+        if let retained = initialBootstrapProcessAuthorityByAccount[accountID] {
+            guard retained.physicalIdentity == physicalIdentity else {
+                throw CloudReplicaCheckpointStoreError
+                    .initialBootstrapUnavailable
+            }
+            return retained
+        }
+        let authority = try CloudReplicaInitialBootstrapProcessAuthorityRegistryV1
+            .shared.processAuthority(
+                for: physicalIdentity,
+                accountID: accountID,
+                reservationUUIDFactory:
+                    initialBootstrapReservationUUIDFactory,
+                maximumIssuedReservationCount:
+                    maximumIssuedInitialBootstrapReservationCount
+            )
+        initialBootstrapProcessAuthorityByAccount[accountID] = authority
+        return authority
+    }
+
     private func validatedActiveAuthorityLocked(
         accountID: CloudAccountID,
         configurationScopeFingerprint: CloudReplicaScopeFingerprint,
@@ -3555,6 +4874,33 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
             throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
         }
         return authority
+    }
+
+    /// This gate is intentionally metadata-only. In particular it does not
+    /// invoke durable reconciliation, decode files, or call `load`, because
+    /// genesis must remain permanently closed when any prior replica evidence
+    /// exists, regardless of whether that evidence is valid or recoverable.
+    private func requireInitialBootstrapAvailabilityLocked(
+        authority: ReplicaEpochAuthorityV2,
+        locations: Locations
+    ) throws {
+        guard authority.pendingCheckpointHighWatermark == nil else {
+            throw CloudReplicaCheckpointStoreError.checkpointPublicationPending
+        }
+        guard authority.checkpointHighWatermark == nil else {
+            throw CloudReplicaCheckpointStoreError.initialBootstrapUnavailable
+        }
+        for evidenceURL in [
+            locations.watermark,
+            locations.primary,
+            locations.backup,
+            locations.quarantineDirectory,
+        ] {
+            guard try fileSystem.itemStatus(at: evidenceURL) == .missing else {
+                throw CloudReplicaCheckpointStoreError
+                    .initialBootstrapUnavailable
+            }
+        }
     }
 
     private func makeCurrentObservationLocked(
