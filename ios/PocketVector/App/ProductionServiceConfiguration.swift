@@ -436,23 +436,22 @@ private extension ProductionServiceConfiguration {
             in: dictionary
         )
 
-        let fields: [ParsedField<String>] = [
-            containerIdentifier,
-            zoneName,
-            payloadFieldName,
-            operationRecordType,
-            accountNamespace,
-            recordNamespace,
-            economyRecordID,
-            economyRecordType,
-            economyPayloadFieldName,
-            profileRootRecordType,
-            profileSettingsRecordType,
-            profileSelectionRecordType,
-            profileRunRecordType,
-            profilePayloadFieldName,
-        ]
-        let issues = fields.compactMap(\.issue)
+        let issues = [
+            containerIdentifier.issue,
+            zoneName.issue,
+            payloadFieldName.issue,
+            operationRecordType.issue,
+            accountNamespace.issue,
+            recordNamespace.issue,
+            economyRecordID.issue,
+            economyRecordType.issue,
+            economyPayloadFieldName.issue,
+            profileRootRecordType.issue,
+            profileSettingsRecordType.issue,
+            profileSelectionRecordType.issue,
+            profileRunRecordType.issue,
+            profilePayloadFieldName.issue,
+        ].compactMap { $0 }
         guard issues.isEmpty,
               let containerIdentifier = containerIdentifier.value,
               let zoneName = zoneName.value,
@@ -493,7 +492,7 @@ private extension ProductionServiceConfiguration {
 
         let transport: CloudKitCloudSyncConfiguration
         do {
-            transport = try CloudKitCloudSyncConfiguration(
+            transport = try CloudKitCloudSyncConfiguration.buildSealed(
                 containerIdentifier: containerIdentifier,
                 zoneName: zoneName,
                 payloadFieldName: payloadFieldName,

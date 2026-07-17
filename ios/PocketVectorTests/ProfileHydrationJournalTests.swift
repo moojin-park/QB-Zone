@@ -354,7 +354,10 @@ final class ProfileHydrationJournalTests: XCTestCase, @unchecked Sendable {
             for: accountID
         )
         for checkpoint in checkpoints {
-            try await store.save(checkpoint, at: fixture.date)
+            try await store._testOnlySaveRawCheckpoint(
+                checkpoint,
+                at: fixture.date
+            )
         }
         return try await store.observeCurrentCheckpoint(
             for: accountID,

@@ -192,6 +192,15 @@ struct AccountGenerationCommitLease: ~Copyable, Sendable {
         generation.replicaEpoch
     }
 
+    /// Opaque process-local provenance for capabilities that intentionally
+    /// outlive this bounded commit body while network work occurs. A later
+    /// commit lease must present this exact token before any fetched result can
+    /// become durable. The token is not persistable or constructible by
+    /// callers, and equality retains the issuing authority's identity.
+    var generationToken: AccountGenerationToken {
+        generation.token
+    }
+
     func wasIssued(
         by authority: CloudAccountGenerationAuthority
     ) -> Bool {

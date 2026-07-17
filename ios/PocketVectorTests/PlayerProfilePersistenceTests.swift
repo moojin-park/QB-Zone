@@ -498,7 +498,10 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             configurationScopeFingerprint: fixture.scope,
             for: fixture.cloudAccountID
         )
-        try await checkpointStore.save(fixture.targetCheckpoint, at: fixture.date)
+        try await checkpointStore._testOnlySaveRawCheckpoint(
+            fixture.targetCheckpoint,
+            at: fixture.date
+        )
         let generation = try await accountAuthority.activate(
             accountID: fixture.cloudAccountID,
             configurationScopeFingerprint: fixture.scope,

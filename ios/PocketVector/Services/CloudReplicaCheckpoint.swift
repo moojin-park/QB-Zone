@@ -586,7 +586,7 @@ struct CloudReplicaStagedAccumulator: Sendable {
     /// fetch after the local cache was lost while durable accepted history
     /// remains. The caller must fetch with `.requireExisting`; this is never an
     /// initial-bootstrap create path.
-    init(
+    fileprivate init(
         reconstructingFullSnapshotFrom acceptedHistory: CloudReplicaAcceptedHistoryV1,
         limits: CloudReplicaResourceLimits = .production
     ) {
@@ -955,9 +955,9 @@ struct CloudReplicaCheckpointLoadResult: Equatable, Sendable {
     let quarantinedFileCount: Int
 }
 
-/// A sealed durable high-watermark token minted only by the checkpoint store.
-/// Possession requires recovery from CloudKit with `.requireExisting`; callers
-/// must never use this token to bootstrap an empty cloud replica.
+/// Durable accepted-watermark evidence minted only by the checkpoint store.
+/// Possession can authorize creation of a require-existing fetch context, but
+/// does not itself prove that any CloudKit fetch has occurred.
 struct CloudReplicaAcceptedHistoryV1: Equatable, Sendable {
     let accountID: CloudAccountID
     let configurationScopeFingerprint: CloudReplicaScopeFingerprint
@@ -977,6 +977,173 @@ struct CloudReplicaAcceptedHistoryV1: Equatable, Sendable {
         self.replicaEpoch = replicaEpoch
         self.generation = generation
         self.checkpointDigest = checkpointDigest
+    }
+}
+
+/// A sealed, process-local recovery capability for one exact accepted cloud
+/// history and account generation. The checkpoint store is the only issuer.
+/// Fetching is intentionally separate from issuance and durable commit. The
+/// API is designed for callers to leave their bounded generation-gate callback
+/// before fetching; this value cannot observe or enforce callback lifetime.
+struct CloudReplicaRequireExistingReconstructionContextV1: Sendable {
+    fileprivate let generationToken: AccountGenerationToken
+    fileprivate let acceptedHistory: CloudReplicaAcceptedHistoryV1
+    fileprivate let limits: CloudReplicaResourceLimits
+
+    fileprivate init(
+        generationToken: AccountGenerationToken,
+        acceptedHistory: CloudReplicaAcceptedHistoryV1,
+        limits: CloudReplicaResourceLimits
+    ) {
+        self.generationToken = generationToken
+        self.acceptedHistory = acceptedHistory
+        self.limits = limits
+    }
+
+    /// Fetches one complete nil-cursor snapshot without ever granting zone
+    /// creation authority. The request cursor is owned by this loop: callers
+    /// cannot start from a stale cursor, skip a page, or change preparation
+    /// policy between pages. Transport, cancellation, and accumulator errors
+    /// intentionally emerge unchanged.
+    func fetchCompleteSnapshot(
+        using changeFetcher: CloudReplicaScopedChangeFetcherV1
+    ) async throws -> CloudReplicaReconstructedFullSnapshotV1 {
+        guard changeFetcher.configurationScopeFingerprint
+            == acceptedHistory.configurationScopeFingerprint else {
+            throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
+        }
+
+        var accumulator = CloudReplicaStagedAccumulator(
+            reconstructingFullSnapshotFrom: acceptedHistory,
+            limits: limits
+        )
+        var requestedAfterCursor: CloudChangeCursor?
+
+        while true {
+            try Task.checkCancellation()
+            let page = try await changeFetcher.recordChangesRequiringExistingZone(
+                accountID: acceptedHistory.accountID,
+                after: requestedAfterCursor
+            )
+            let fetchedPage = CloudReplicaFetchedPage(
+                requestedAfterCursor: requestedAfterCursor,
+                configurationScopeFingerprint:
+                    acceptedHistory.configurationScopeFingerprint,
+                page: page
+            )
+            if let checkpoint = try accumulator.apply(fetchedPage) {
+                return CloudReplicaReconstructedFullSnapshotV1(
+                    checkpoint: checkpoint,
+                    generationToken: generationToken,
+                    acceptedHistory: acceptedHistory
+                )
+            }
+            requestedAfterCursor = page.nextCursor
+        }
+    }
+}
+
+/// The only value accepted by cache-loss reconstruction publication. Its
+/// initializer is sealed to the scoped production wrapper above, which requests
+/// `.requireExisting`; raw change pages and manually assembled checkpoints
+/// cannot be presented through this publication API.
+struct CloudReplicaReconstructedFullSnapshotV1: Sendable {
+    let checkpoint: CloudReplicaCheckpointV1
+    fileprivate let generationToken: AccountGenerationToken
+    fileprivate let acceptedHistory: CloudReplicaAcceptedHistoryV1
+
+    fileprivate init(
+        checkpoint: CloudReplicaCheckpointV1,
+        generationToken: AccountGenerationToken,
+        acceptedHistory: CloudReplicaAcceptedHistoryV1
+    ) {
+        self.checkpoint = checkpoint
+        self.generationToken = generationToken
+        self.acceptedHistory = acceptedHistory
+    }
+}
+
+/// A sealed capability for advancing one exact, usable accepted checkpoint.
+/// The predecessor and account generation are captured while both durable
+/// checkpoint authority and the canonical generation lease are current.
+struct CloudReplicaIncrementalOrdinaryPublicationContextV1: Sendable {
+    fileprivate let generationToken: AccountGenerationToken
+    fileprivate let predecessor: CloudReplicaCheckpointV1
+    fileprivate let predecessorHistory: CloudReplicaAcceptedHistoryV1
+    fileprivate let limits: CloudReplicaResourceLimits
+
+    fileprivate init(
+        generationToken: AccountGenerationToken,
+        predecessor: CloudReplicaCheckpointV1,
+        predecessorHistory: CloudReplicaAcceptedHistoryV1,
+        limits: CloudReplicaResourceLimits
+    ) {
+        self.generationToken = generationToken
+        self.predecessor = predecessor
+        self.predecessorHistory = predecessorHistory
+        self.limits = limits
+    }
+
+    /// Fetches every incremental page after the sealed predecessor. The scoped
+    /// wrapper derives its scope from complete production configuration and
+    /// always requests an existing zone.
+    func fetchCompleteChanges(
+        using changeFetcher: CloudReplicaScopedChangeFetcherV1
+    ) async throws -> CloudReplicaOrdinaryPublicationV1 {
+        guard changeFetcher.configurationScopeFingerprint
+            == predecessorHistory.configurationScopeFingerprint else {
+            throw CloudReplicaCheckpointStoreError.configurationScopeMismatch
+        }
+
+        var accumulator = try CloudReplicaStagedAccumulator(
+            accountID: predecessorHistory.accountID,
+            configurationScopeFingerprint:
+                predecessorHistory.configurationScopeFingerprint,
+            checkpoint: predecessor,
+            limits: limits
+        )
+        var requestedAfterCursor: CloudChangeCursor? = predecessor.finalCursor
+
+        while true {
+            try Task.checkCancellation()
+            let page = try await changeFetcher.recordChangesRequiringExistingZone(
+                accountID: predecessorHistory.accountID,
+                after: requestedAfterCursor
+            )
+            let fetchedPage = CloudReplicaFetchedPage(
+                requestedAfterCursor: requestedAfterCursor,
+                configurationScopeFingerprint:
+                    predecessorHistory.configurationScopeFingerprint,
+                page: page
+            )
+            if let checkpoint = try accumulator.apply(fetchedPage) {
+                return CloudReplicaOrdinaryPublicationV1(
+                    checkpoint: checkpoint,
+                    generationToken: generationToken,
+                    predecessorHistory: predecessorHistory
+                )
+            }
+            requestedAfterCursor = page.nextCursor
+        }
+    }
+}
+
+/// The only Release-visible value accepted by ordinary incremental
+/// publication. It is branded with the exact generation and predecessor that
+/// authorized its fixed-policy fetch.
+struct CloudReplicaOrdinaryPublicationV1: Sendable {
+    let checkpoint: CloudReplicaCheckpointV1
+    fileprivate let generationToken: AccountGenerationToken
+    fileprivate let predecessorHistory: CloudReplicaAcceptedHistoryV1
+
+    fileprivate init(
+        checkpoint: CloudReplicaCheckpointV1,
+        generationToken: AccountGenerationToken,
+        predecessorHistory: CloudReplicaAcceptedHistoryV1
+    ) {
+        self.checkpoint = checkpoint
+        self.generationToken = generationToken
+        self.predecessorHistory = predecessorHistory
     }
 }
 
@@ -1052,6 +1219,8 @@ enum CloudReplicaCheckpointStoreError: Error, Equatable, Sendable {
     case checkpointPublicationPending
     case accountGenerationAuthorityNotBound
     case accountGenerationAuthorityMismatch
+    case accountGenerationMismatch
+    case acceptedHistoryUnavailable
     case acceptedHistoryMismatch
     case acceptedCheckpointStillAvailable
     case staleGeneration
@@ -1091,10 +1260,24 @@ protocol CloudReplicaCheckpointStoring: Sendable {
         ) throws -> Output
     ) async throws -> Output
 
-    func save(_ checkpoint: CloudReplicaCheckpointV1, at date: Date) async throws
+    func beginRequireExistingFullSnapshotReconstruction(
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date
+    ) async throws -> CloudReplicaRequireExistingReconstructionContextV1
+
+    func beginIncrementalOrdinaryPublication(
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date
+    ) async throws -> CloudReplicaIncrementalOrdinaryPublicationContextV1
+
+    func saveOrdinaryPublication(
+        _ publication: CloudReplicaOrdinaryPublicationV1,
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date
+    ) async throws
     func saveReconstructedFullSnapshot(
-        _ checkpoint: CloudReplicaCheckpointV1,
-        replacing acceptedHistory: CloudReplicaAcceptedHistoryV1,
+        _ reconstruction: CloudReplicaReconstructedFullSnapshotV1,
+        generationLease: borrowing AccountGenerationCommitLease,
         at date: Date
     ) async throws
     func remove(for accountID: CloudAccountID, revoking replicaEpoch: UUID) async throws
@@ -2592,7 +2775,224 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         return try callbackOutcome.get()
     }
 
-    func save(_ checkpoint: CloudReplicaCheckpointV1, at date: Date) throws {
+    /// Mints a network-safe recovery context only while the canonical account
+    /// generation is current and durable accepted history has lost every
+    /// usable local checkpoint copy. The returned value is designed to escape
+    /// the bounded caller before network work; this actor cannot enforce when
+    /// the caller releases its outer generation gate.
+    func beginRequireExistingFullSnapshotReconstruction(
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date
+    ) throws -> CloudReplicaRequireExistingReconstructionContextV1 {
+        guard let accountGenerationAuthority else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityNotBound
+        }
+        guard generationLease.wasIssued(by: accountGenerationAuthority) else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityMismatch
+        }
+
+        let accountID = generationLease.accountID
+        let configurationScopeFingerprint =
+            generationLease.configurationScopeFingerprint
+        let replicaEpoch = generationLease.replicaEpoch
+        let generationToken = generationLease.generationToken
+        let locations = locations(for: accountID)
+
+        try withAccountLock(locations: locations) {
+            _ = try validatedActiveAuthorityLocked(
+                accountID: accountID,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                replicaEpoch: replicaEpoch,
+                locations: locations,
+                requireRememberedEpoch: true
+            )
+        }
+
+        // Loading may resolve an interrupted publication or quarantine broken
+        // cache evidence, so it cannot run beneath an already-held account
+        // lock. A second locked inspection below closes the cross-store race.
+        let loaded = try load(
+            for: accountID,
+            configurationScopeFingerprint: configurationScopeFingerprint,
+            at: date
+        )
+
+        return try withAccountLock(locations: locations) {
+            let authority = try validatedActiveAuthorityLocked(
+                accountID: accountID,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                replicaEpoch: replicaEpoch,
+                locations: locations,
+                requireRememberedEpoch: true
+            )
+            guard loaded.checkpoint == nil else {
+                throw CloudReplicaCheckpointStoreError
+                    .acceptedCheckpointStillAvailable
+            }
+            guard let acceptedWatermark = authority.checkpointHighWatermark else {
+                throw CloudReplicaCheckpointStoreError
+                    .acceptedHistoryUnavailable
+            }
+
+            try fileSystem.createDirectory(at: locations.accountDirectory)
+            var quarantinedCount = 0
+            let primary = try validatedCopy(
+                at: locations.primary,
+                source: .primary,
+                accountID: accountID,
+                fingerprint: configurationScopeFingerprint,
+                locations: locations,
+                quarantinedCount: &quarantinedCount
+            )
+            let backup = try validatedCopy(
+                at: locations.backup,
+                source: .backup,
+                accountID: accountID,
+                fingerprint: configurationScopeFingerprint,
+                locations: locations,
+                quarantinedCount: &quarantinedCount
+            )
+            let usableAcceptedCheckpoint = try resolve(
+                primary: primary,
+                backup: backup,
+                watermark: acceptedWatermark,
+                preserving: authority.pendingCheckpointHighWatermark,
+                locations: locations,
+                quarantinedCount: &quarantinedCount
+            )
+            guard usableAcceptedCheckpoint == nil else {
+                throw CloudReplicaCheckpointStoreError
+                    .acceptedCheckpointStillAvailable
+            }
+
+            return CloudReplicaRequireExistingReconstructionContextV1(
+                generationToken: generationToken,
+                acceptedHistory: acceptedWatermark.acceptedHistory,
+                limits: limits
+            )
+        }
+    }
+
+    /// Mints a fixed-policy incremental fetch context from one exact, usable
+    /// accepted checkpoint. This path cannot create a genesis checkpoint or
+    /// reconstruct missing accepted cache.
+    func beginIncrementalOrdinaryPublication(
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date
+    ) throws -> CloudReplicaIncrementalOrdinaryPublicationContextV1 {
+        guard let accountGenerationAuthority else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityNotBound
+        }
+        guard generationLease.wasIssued(by: accountGenerationAuthority) else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityMismatch
+        }
+
+        let accountID = generationLease.accountID
+        let configurationScopeFingerprint =
+            generationLease.configurationScopeFingerprint
+        let replicaEpoch = generationLease.replicaEpoch
+        let generationToken = generationLease.generationToken
+        let locations = locations(for: accountID)
+
+        try withAccountLock(locations: locations) {
+            _ = try validatedActiveAuthorityLocked(
+                accountID: accountID,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                replicaEpoch: replicaEpoch,
+                locations: locations,
+                requireRememberedEpoch: true
+            )
+        }
+
+        // Loading may repair an interrupted publication, so the actor does not
+        // nest it beneath another account lock. The second locked inspection
+        // rejects any cross-store predecessor change before minting the context.
+        let loaded = try load(
+            for: accountID,
+            configurationScopeFingerprint: configurationScopeFingerprint,
+            at: date
+        )
+
+        return try withAccountLock(locations: locations) {
+            _ = try makeCurrentObservationLocked(
+                accountID: accountID,
+                configurationScopeFingerprint: configurationScopeFingerprint,
+                replicaEpoch: replicaEpoch,
+                loaded: loaded,
+                locations: locations,
+                requireRememberedEpoch: true
+            )
+            guard let predecessor = loaded.checkpoint else {
+                throw CloudReplicaCheckpointStoreError
+                    .acceptedHistoryUnavailable
+            }
+            let predecessorHistory = WatermarkV1(
+                checkpoint: predecessor
+            ).acceptedHistory
+            return CloudReplicaIncrementalOrdinaryPublicationContextV1(
+                generationToken: generationToken,
+                predecessor: predecessor,
+                predecessorHistory: predecessorHistory,
+                limits: limits
+            )
+        }
+    }
+
+    /// Publishes only an incremental result branded by the same canonical
+    /// account generation and exact accepted predecessor.
+    func saveOrdinaryPublication(
+        _ publication: CloudReplicaOrdinaryPublicationV1,
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date
+    ) throws {
+        guard let accountGenerationAuthority else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityNotBound
+        }
+        guard generationLease.wasIssued(by: accountGenerationAuthority) else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityMismatch
+        }
+        guard generationLease.generationToken == publication.generationToken,
+              generationLease.accountID
+                == publication.predecessorHistory.accountID,
+              generationLease.configurationScopeFingerprint
+                == publication.predecessorHistory
+                    .configurationScopeFingerprint,
+              generationLease.replicaEpoch
+                == publication.predecessorHistory.replicaEpoch else {
+            throw CloudReplicaCheckpointStoreError.accountGenerationMismatch
+        }
+
+        try saveRawCheckpoint(
+            publication.checkpoint,
+            succeeding: publication.predecessorHistory,
+            at: date
+        )
+    }
+
+    #if DEBUG
+    /// Fault-injection and migration tests need direct access to the durable
+    /// disk engine. This API is not compiled into Release builds.
+    func _testOnlySaveRawCheckpoint(
+        _ checkpoint: CloudReplicaCheckpointV1,
+        at date: Date
+    ) throws {
+        try saveRawCheckpoint(checkpoint, succeeding: nil, at: date)
+    }
+    #endif
+
+    /// Private disk engine retained for legacy-cache migration and Debug fault
+    /// tests. Release publication reaches it only through a branded result.
+    private func saveRawCheckpoint(
+        _ checkpoint: CloudReplicaCheckpointV1,
+        succeeding predecessorHistory: CloudReplicaAcceptedHistoryV1?,
+        at date: Date
+    ) throws {
         do {
             try checkpoint.validate(limits: limits)
         } catch {
@@ -2624,6 +3024,22 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                     == checkpoint.configurationScopeFingerprint else {
                     throw CloudReplicaCheckpointStoreError
                         .configurationScopeMismatch
+                }
+
+                let candidateWatermark = WatermarkV1(checkpoint: checkpoint)
+                if let predecessorHistory {
+                    guard let acceptedWatermark =
+                            durableAuthority.checkpointHighWatermark,
+                          acceptedWatermark.matches(predecessorHistory) else {
+                        throw CloudReplicaCheckpointStoreError
+                            .acceptedHistoryMismatch
+                    }
+                    if let pending =
+                            durableAuthority.pendingCheckpointHighWatermark,
+                       pending != candidateWatermark {
+                        throw CloudReplicaCheckpointStoreError
+                            .checkpointPublicationPending
+                    }
                 }
 
                 try fileSystem.createDirectory(at: locations.accountDirectory)
@@ -2721,7 +3137,6 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                 }
                 let effectiveWatermark = resolutionWatermark
                     ?? current.map { WatermarkV1(checkpoint: $0.envelope.checkpoint) }
-                let candidateWatermark = WatermarkV1(checkpoint: checkpoint)
 
                 if let effectiveWatermark {
                     guard effectiveWatermark.replicaEpoch == checkpoint.replicaEpoch else {
@@ -2827,11 +3242,45 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
         }
     }
 
-    /// Publishes generation N+1 reconstructed from a nil-cursor CloudKit full
-    /// snapshot when the sealed token proves generation N was durably accepted
-    /// but no usable local generation-N cache remains. The upstream fetch must
-    /// use `.requireExisting`; this method is never a bootstrap-create path.
+    /// Publishes only a snapshot produced by the sealed fixed-policy fetch
+    /// context. A fresh canonical generation lease must match the exact opaque
+    /// generation that minted that context, closing stale, cross-authority,
+    /// and same-binding reactivation races before durable checkpoint work.
     func saveReconstructedFullSnapshot(
+        _ reconstruction: CloudReplicaReconstructedFullSnapshotV1,
+        generationLease: borrowing AccountGenerationCommitLease,
+        at date: Date
+    ) throws {
+        guard let accountGenerationAuthority else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityNotBound
+        }
+        guard generationLease.wasIssued(by: accountGenerationAuthority) else {
+            throw CloudReplicaCheckpointStoreError
+                .accountGenerationAuthorityMismatch
+        }
+        guard generationLease.generationToken
+                == reconstruction.generationToken,
+              generationLease.accountID
+                == reconstruction.acceptedHistory.accountID,
+              generationLease.configurationScopeFingerprint
+                == reconstruction.acceptedHistory
+                    .configurationScopeFingerprint,
+              generationLease.replicaEpoch
+                == reconstruction.acceptedHistory.replicaEpoch else {
+            throw CloudReplicaCheckpointStoreError.accountGenerationMismatch
+        }
+
+        try saveReconstructedCheckpoint(
+            reconstruction.checkpoint,
+            replacing: reconstruction.acceptedHistory,
+            at: date
+        )
+    }
+
+    /// The raw accepted-history transition is deliberately private. Only the
+    /// sealed reconstruction result above can reach it.
+    private func saveReconstructedCheckpoint(
         _ checkpoint: CloudReplicaCheckpointV1,
         replacing acceptedHistory: CloudReplicaAcceptedHistoryV1,
         at date: Date

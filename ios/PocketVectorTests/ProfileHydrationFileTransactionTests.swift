@@ -3162,7 +3162,10 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 for: accountID
             )
             for checkpoint in checkpoints {
-                try await store.save(checkpoint, at: fixture.date)
+                try await store._testOnlySaveRawCheckpoint(
+                    checkpoint,
+                    at: fixture.date
+                )
             }
             return CheckpointLeaseHarness(
                 rootDirectoryURL: root,

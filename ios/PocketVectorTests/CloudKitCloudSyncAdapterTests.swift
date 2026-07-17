@@ -8,8 +8,9 @@ import XCTest
 final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
     func testConfigurationRequiresAllProductionSchemaIdentifiers() throws {
         XCTAssertThrowsError(
-            try CloudKitCloudSyncConfiguration(
+            try CloudKitCloudSyncConfiguration._testOnly(
                 containerIdentifier: "",
+                containerEnvironment: .development,
                 zoneName: "TestZone",
                 payloadFieldName: "payload",
                 operationRecordType: "Operation",
@@ -23,8 +24,9 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
             )
         }
         XCTAssertThrowsError(
-            try CloudKitCloudSyncConfiguration(
+            try CloudKitCloudSyncConfiguration._testOnly(
                 containerIdentifier: "iCloud.test.container",
+                containerEnvironment: .development,
                 zoneName: "TestZone",
                 payloadFieldName: "invalid-field-name",
                 operationRecordType: "Operation",
@@ -42,8 +44,9 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
     func testTransportFingerprintMaterialBindsExactSchemaAndAddressContracts()
         throws
     {
-        let configuration = try CloudKitCloudSyncConfiguration(
+        let configuration = try CloudKitCloudSyncConfiguration._testOnly(
             containerIdentifier: "iCloud.test.container",
+            containerEnvironment: .development,
             zoneName: "TestZone",
             payloadFieldName: "payload",
             operationRecordType: "OperationMarker",
@@ -54,8 +57,9 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(
             configuration.fingerprintMaterial,
             [
-                "pocket-vector-cloudkit-transport-schema-v1",
+                "pocket-vector-cloudkit-transport-schema-v2",
                 "containerIdentifier", "iCloud.test.container",
+                "containerEnvironment", "Development",
                 "zoneName", "TestZone",
                 "payloadFieldName", "payload",
                 "operationRecordType", "OperationMarker",
@@ -91,6 +95,88 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
                 "uint64-big-endian-as-length-prefixed-eight-byte-component-v1",
                 "digestHexEncoding", "lowercase-two-digit-hex-per-byte-v1",
             ]
+        )
+    }
+
+    func testScopedCheckpointFetcherBindsCompleteProductionConfiguration()
+        throws
+    {
+        let base = try productionConfiguration()
+        let alternateZone = try productionConfiguration(zoneName: "OtherZone")
+        let alternateContainer = try productionConfiguration(
+            containerIdentifier: "iCloud.test.other-container"
+        )
+        let alternateEnvironment = try productionConfiguration(
+            containerEnvironment: .production
+        )
+        let alternateProfile = try productionConfiguration(
+            profilePayloadFieldName: "otherProfilePayload"
+        )
+
+        let fakeChangeFetcher = CloudKitCloudSyncTransport(
+            configuration: base.transport,
+            client: FakeCloudKitPrivateDatabaseClient(
+                userRecordName: "provider-user-a"
+            )
+        )
+        let scopedBase = CloudReplicaScopedChangeFetcherV1._testOnly(
+            configuration: base,
+            changeFetcher: fakeChangeFetcher
+        )
+        let scopedZone = CloudReplicaScopedChangeFetcherV1._testOnly(
+            configuration: alternateZone,
+            changeFetcher: fakeChangeFetcher
+        )
+        let scopedContainer = CloudReplicaScopedChangeFetcherV1._testOnly(
+            configuration: alternateContainer,
+            changeFetcher: fakeChangeFetcher
+        )
+        let scopedEnvironment = CloudReplicaScopedChangeFetcherV1._testOnly(
+            configuration: alternateEnvironment,
+            changeFetcher: fakeChangeFetcher
+        )
+        XCTAssertEqual(
+            scopedBase.configurationScopeFingerprint,
+            CloudReplicaScopeFingerprint.make(for: base)
+        )
+        XCTAssertEqual(
+            scopedZone.configurationScopeFingerprint,
+            CloudReplicaScopeFingerprint.make(for: alternateZone)
+        )
+        XCTAssertEqual(
+            scopedContainer.configurationScopeFingerprint,
+            CloudReplicaScopeFingerprint.make(for: alternateContainer)
+        )
+        XCTAssertNotEqual(
+            scopedBase.configurationScopeFingerprint,
+            scopedZone.configurationScopeFingerprint
+        )
+        XCTAssertNotEqual(
+            scopedBase.configurationScopeFingerprint,
+            scopedContainer.configurationScopeFingerprint
+        )
+        XCTAssertNotEqual(
+            scopedBase.configurationScopeFingerprint,
+            scopedEnvironment.configurationScopeFingerprint
+        )
+
+        let injectedTransport = CloudKitCloudSyncTransport(
+            configuration: alternateProfile.transport,
+            client: FakeCloudKitPrivateDatabaseClient(
+                userRecordName: "provider-user-a"
+            )
+        )
+        let debugFetcher = CloudReplicaScopedChangeFetcherV1._testOnly(
+            configuration: alternateProfile,
+            changeFetcher: injectedTransport
+        )
+        XCTAssertEqual(
+            debugFetcher.configurationScopeFingerprint,
+            CloudReplicaScopeFingerprint.make(for: alternateProfile)
+        )
+        XCTAssertNotEqual(
+            debugFetcher.configurationScopeFingerprint,
+            scopedBase.configurationScopeFingerprint
         )
     }
 
@@ -1242,15 +1328,52 @@ final class CloudKitCloudSyncAdapterTests: XCTestCase, @unchecked Sendable {
         client: FakeCloudKitPrivateDatabaseClient
     ) throws -> CloudKitCloudSyncTransport {
         CloudKitCloudSyncTransport(
-            configuration: try CloudKitCloudSyncConfiguration(
-                containerIdentifier: "iCloud.test.container",
-                zoneName: "TestZone",
-                payloadFieldName: "payload",
-                operationRecordType: "OperationMarker",
-                accountIdentifierNamespace: "test-account-namespace",
-                recordNameNamespace: "test-record-namespace"
-            ),
+            configuration: try cloudKitConfiguration(),
             client: client
+        )
+    }
+
+    private func cloudKitConfiguration(
+        containerIdentifier: String = "iCloud.test.container",
+        containerEnvironment: CloudKitContainerEnvironment = .development,
+        zoneName: String = "TestZone"
+    ) throws -> CloudKitCloudSyncConfiguration {
+        try CloudKitCloudSyncConfiguration._testOnly(
+            containerIdentifier: containerIdentifier,
+            containerEnvironment: containerEnvironment,
+            zoneName: zoneName,
+            payloadFieldName: "payload",
+            operationRecordType: "OperationMarker",
+            accountIdentifierNamespace: "test-account-namespace",
+            recordNameNamespace: "test-record-namespace"
+        )
+    }
+
+    private func productionConfiguration(
+        containerIdentifier: String = "iCloud.test.container",
+        containerEnvironment: CloudKitContainerEnvironment = .development,
+        zoneName: String = "TestZone",
+        profilePayloadFieldName: String = "profilePayload"
+    ) throws -> ProductionCloudWriteConfiguration {
+        try ProductionCloudWriteConfiguration(
+            transport: try cloudKitConfiguration(
+                containerIdentifier: containerIdentifier,
+                containerEnvironment: containerEnvironment,
+                zoneName: zoneName
+            ),
+            economy: try DurableEconomyCloudConfiguration(
+                recordID: CloudRecordID("economy-head"),
+                recordType: "EconomyRecord",
+                payloadFieldName: "economyPayload",
+                conflictRetryLimit: 3
+            ),
+            profile: try CloudProfileSchemaConfiguration(
+                rootRecordType: "ProfileRoot",
+                settingsRecordType: "ProfileSettings",
+                selectionRecordType: "ProfileSelection",
+                runRecordType: "ProfileRun",
+                payloadFieldName: profilePayloadFieldName
+            )
         )
     }
 

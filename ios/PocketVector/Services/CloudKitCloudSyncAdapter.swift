@@ -3,7 +3,7 @@ import CryptoKit
 @preconcurrency import CloudKit
 
 enum CloudKitCloudSchema {
-    static let schemaIdentifier = "pocket-vector-cloudkit-transport-schema-v1"
+    static let schemaIdentifier = "pocket-vector-cloudkit-transport-schema-v2"
     static let recordEnvelopeSchemaVersion = 3
     static let operationMarkerSchemaVersion = 2
     static var recordEnvelopeFields: String {
@@ -40,19 +40,47 @@ enum CloudKitCloudSyncConfigurationError: Error, Equatable, Sendable {
     case emptyRecordNameNamespace
 }
 
+/// The CloudKit backend selected by the app's signed
+/// `com.apple.developer.icloud-container-environment` entitlement. The build
+/// seals the matching value into replica scope so a development cursor can
+/// never be interpreted as production history, or vice versa.
+enum CloudKitContainerEnvironment: String, Equatable, Sendable {
+    case development = "Development"
+    case production = "Production"
+}
+
+/// The CloudKit environment is a sealed property of the current build. The
+/// same configuration-specific build setting expands into both this compiler
+/// condition and the signed iCloud container environment entitlement.
+enum CloudKitBuildEnvironment {
+    #if POCKET_VECTOR_CLOUDKIT_ENVIRONMENT_Development && POCKET_VECTOR_CLOUDKIT_ENVIRONMENT_Production
+    #error("Pocket Vector CloudKit build environment is ambiguous")
+    static let current = CloudKitContainerEnvironment.development
+    #elseif POCKET_VECTOR_CLOUDKIT_ENVIRONMENT_Development
+    static let current = CloudKitContainerEnvironment.development
+    #elseif POCKET_VECTOR_CLOUDKIT_ENVIRONMENT_Production
+    static let current = CloudKitContainerEnvironment.production
+    #else
+    #error("Pocket Vector CloudKit build environment is missing or invalid")
+    static let current = CloudKitContainerEnvironment.development
+    #endif
+}
+
 /// Every identifier that affects the production CloudKit container or schema
 /// is supplied by release composition. This type intentionally has no shipping
 /// defaults, test container names, or placeholder identifiers.
 struct CloudKitCloudSyncConfiguration: Equatable, Sendable {
     let containerIdentifier: String
+    let containerEnvironment: CloudKitContainerEnvironment
     let zoneName: String
     let payloadFieldName: String
     let operationRecordType: String
     let accountIdentifierNamespace: String
     let recordNameNamespace: String
 
-    init(
+    private init(
         containerIdentifier: String,
+        containerEnvironment: CloudKitContainerEnvironment,
         zoneName: String,
         payloadFieldName: String,
         operationRecordType: String,
@@ -79,6 +107,7 @@ struct CloudKitCloudSyncConfiguration: Equatable, Sendable {
         }
 
         self.containerIdentifier = containerIdentifier
+        self.containerEnvironment = containerEnvironment
         self.zoneName = zoneName
         self.payloadFieldName = payloadFieldName
         self.operationRecordType = operationRecordType
@@ -86,10 +115,55 @@ struct CloudKitCloudSyncConfiguration: Equatable, Sendable {
         self.recordNameNamespace = recordNameNamespace
     }
 
+    /// Shipping composition cannot assert a backend environment. It is sealed
+    /// to the build value that also supplies the signed entitlement.
+    static func buildSealed(
+        containerIdentifier: String,
+        zoneName: String,
+        payloadFieldName: String,
+        operationRecordType: String,
+        accountIdentifierNamespace: String,
+        recordNameNamespace: String
+    ) throws -> Self {
+        try Self(
+            containerIdentifier: containerIdentifier,
+            containerEnvironment: CloudKitBuildEnvironment.current,
+            zoneName: zoneName,
+            payloadFieldName: payloadFieldName,
+            operationRecordType: operationRecordType,
+            accountIdentifierNamespace: accountIdentifierNamespace,
+            recordNameNamespace: recordNameNamespace
+        )
+    }
+
+    #if DEBUG
+    /// Tests may exercise scope separation without opening a live container.
+    static func _testOnly(
+        containerIdentifier: String,
+        containerEnvironment: CloudKitContainerEnvironment,
+        zoneName: String,
+        payloadFieldName: String,
+        operationRecordType: String,
+        accountIdentifierNamespace: String,
+        recordNameNamespace: String
+    ) throws -> Self {
+        try Self(
+            containerIdentifier: containerIdentifier,
+            containerEnvironment: containerEnvironment,
+            zoneName: zoneName,
+            payloadFieldName: payloadFieldName,
+            operationRecordType: operationRecordType,
+            accountIdentifierNamespace: accountIdentifierNamespace,
+            recordNameNamespace: recordNameNamespace
+        )
+    }
+    #endif
+
     var fingerprintMaterial: [String] {
         [
             CloudKitCloudSchema.schemaIdentifier,
             "containerIdentifier", containerIdentifier,
+            "containerEnvironment", containerEnvironment.rawValue,
             "zoneName", zoneName,
             "payloadFieldName", payloadFieldName,
             "operationRecordType", operationRecordType,
@@ -1475,6 +1549,62 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
     private func unique(_ ids: [CloudRecordID]) -> [CloudRecordID] {
         var seen: Set<CloudRecordID> = []
         return ids.filter { seen.insert($0).inserted }
+    }
+}
+
+/// A configuration-derived change-fetch capability for checkpoint publication.
+/// Release callers can obtain one only by supplying the complete validated
+/// cloud-write configuration; they cannot pair an asserted replica scope with
+/// an unrelated transport.
+struct CloudReplicaScopedChangeFetcherV1: Sendable {
+    let configurationScopeFingerprint: CloudReplicaScopeFingerprint
+    private let changeFetcher: any CloudSyncChangeFetching
+
+    private init(
+        configuration: ProductionCloudWriteConfiguration,
+        changeFetcher: any CloudSyncChangeFetching
+    ) {
+        configurationScopeFingerprint = CloudReplicaScopeFingerprint.make(
+            for: configuration
+        )
+        self.changeFetcher = changeFetcher
+    }
+
+    static func live(
+        configuration: ProductionCloudWriteConfiguration
+    ) -> CloudReplicaScopedChangeFetcherV1 {
+        CloudReplicaScopedChangeFetcherV1(
+            configuration: configuration,
+            changeFetcher: CloudKitCloudSyncTransport.live(
+                configuration: configuration.transport
+            )
+        )
+    }
+
+    #if DEBUG
+    /// Test seams still derive their scope from the complete production
+    /// configuration. Only the network behavior may be replaced.
+    static func _testOnly(
+        configuration: ProductionCloudWriteConfiguration,
+        changeFetcher: any CloudSyncChangeFetching
+    ) -> CloudReplicaScopedChangeFetcherV1 {
+        CloudReplicaScopedChangeFetcherV1(
+            configuration: configuration,
+            changeFetcher: changeFetcher
+        )
+    }
+    #endif
+
+    /// Checkpoint publication never grants zone-creation authority.
+    func recordChangesRequiringExistingZone(
+        accountID: CloudAccountID,
+        after cursor: CloudChangeCursor?
+    ) async throws -> CloudRecordChangePage {
+        try await changeFetcher.recordChanges(
+            accountID: accountID,
+            after: cursor,
+            zonePreparation: .requireExisting
+        )
     }
 }
 

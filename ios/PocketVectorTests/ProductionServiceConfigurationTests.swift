@@ -177,6 +177,26 @@ final class ProductionServiceConfigurationTests: XCTestCase {
         )
     }
 
+    func testCloudContainerEnvironmentComesOnlyFromSealedBuild() throws {
+        let info = updatingService("CloudKit", in: validInfoDictionary()) {
+            $0["ContainerEnvironment"] = "attacker-controlled"
+        }
+
+        let configuration = ProductionServiceConfiguration.parse(
+            infoDictionary: info
+        )
+
+        guard case let .validated(cloudWrite) = configuration.cloudWrite else {
+            return XCTFail(
+                "The complete CloudKit write configuration should validate"
+            )
+        }
+        XCTAssertEqual(
+            cloudWrite.transport.containerEnvironment,
+            CloudKitBuildEnvironment.current
+        )
+    }
+
     func testNonStringIdentifierMapValuesFailClosed() {
         var info = validInfoDictionary()
         info = updatingService("GameCenter", in: info) { service in
@@ -402,6 +422,10 @@ final class ProductionServiceConfigurationTests: XCTestCase {
         XCTAssertEqual(
             cloudWrite.transport.containerIdentifier,
             "iCloud.test.pocket-vector"
+        )
+        XCTAssertEqual(
+            cloudWrite.transport.containerEnvironment,
+            CloudKitBuildEnvironment.current
         )
         XCTAssertEqual(cloudWrite.transport.zoneName, "PocketVectorPrivateZone")
         XCTAssertEqual(cloudWrite.transport.payloadFieldName, "payload")
