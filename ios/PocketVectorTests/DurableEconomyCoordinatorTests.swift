@@ -660,6 +660,7 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
             [
                 .deliveredAndFinished(
                     transactionID: transaction.transactionID,
+                    packID: pack.id,
                     ledgerEntryID: CoinLedgerID.storeKit(
                         transactionID: transaction.transactionID
                     ),
@@ -3697,8 +3698,12 @@ private actor DurableEconomyTestStoreKitClient: StoreKit2PlatformClient {
         unfinished
     }
 
-    func transactionUpdates() -> AsyncStream<StoreKit2PlatformVerification> {
-        AsyncStream { continuation in continuation.finish() }
+    func transactionUpdates() -> StoreKit2OwnedUpdateListener<StoreKit2PlatformVerification> {
+        let pair = AsyncStream<StoreKit2PlatformVerification>.makeStream()
+        pair.continuation.finish()
+        return StoreKit2OwnedUpdateListener(updates: pair.stream) {
+            pair.continuation.finish()
+        }
     }
 
     func finish(transactionID: UInt64) {

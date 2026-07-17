@@ -96,6 +96,26 @@ enum StoreKit2PlatformFailure: Error, Equatable, Sendable {
     case transactionUnavailable
 }
 
+/// Couples an update stream to the producer task that owns it. Callers use
+/// `cancelAndWait()` when retiring account authority so a successor cannot
+/// overlap an older StoreKit producer.
+struct StoreKit2OwnedUpdateListener<Element: Sendable>: Sendable {
+    let updates: AsyncStream<Element>
+    private let cancelAndWaitOperation: @Sendable () async -> Void
+
+    init(
+        updates: AsyncStream<Element>,
+        cancelAndWait: @escaping @Sendable () async -> Void
+    ) {
+        self.updates = updates
+        cancelAndWaitOperation = cancelAndWait
+    }
+
+    func cancelAndWait() async {
+        await cancelAndWaitOperation()
+    }
+}
+
 /// Protocol isolation keeps StoreKit values out of deterministic unit tests.
 /// The live implementation is the only type that imports and retains Product
 /// and Transaction instances.
@@ -106,7 +126,7 @@ protocol StoreKit2PlatformClient: Sendable {
         appAccountToken: UUID
     ) async throws -> StoreKit2PlatformPurchaseResult
     func unfinishedTransactions() async -> [StoreKit2PlatformVerification]
-    func transactionUpdates() async -> AsyncStream<StoreKit2PlatformVerification>
+    func transactionUpdates() async -> StoreKit2OwnedUpdateListener<StoreKit2PlatformVerification>
     func finish(transactionID: UInt64) async throws
 }
 
@@ -163,19 +183,23 @@ actor LiveStoreKit2PlatformClient: StoreKit2PlatformClient {
         return results
     }
 
-    func transactionUpdates() -> AsyncStream<StoreKit2PlatformVerification> {
-        AsyncStream { continuation in
-            let task = Task { [weak self] in
-                for await verification in Transaction.updates {
-                    guard !Task.isCancelled, let self else { break }
-                    let result = await self.capture(verification)
-                    continuation.yield(result)
-                }
-                continuation.finish()
+    func transactionUpdates() -> StoreKit2OwnedUpdateListener<StoreKit2PlatformVerification> {
+        let pair = AsyncStream<StoreKit2PlatformVerification>.makeStream()
+        let task = Task<Void, Never> { [weak self] in
+            for await verification in Transaction.updates {
+                guard !Task.isCancelled else { break }
+                guard let result = await self?.capture(verification) else { break }
+                pair.continuation.yield(result)
             }
-            continuation.onTermination = { @Sendable _ in
-                task.cancel()
-            }
+            pair.continuation.finish()
+        }
+        pair.continuation.onTermination = { @Sendable _ in
+            task.cancel()
+        }
+        return StoreKit2OwnedUpdateListener(updates: pair.stream) {
+            pair.continuation.finish()
+            task.cancel()
+            await task.value
         }
     }
 
@@ -344,6 +368,7 @@ enum StoreKit2TransactionDeferral: Equatable, Sendable {
 enum StoreKit2TransactionProcessingResult: Equatable, Sendable {
     case deliveredAndFinished(
         transactionID: UInt64,
+        packID: CoinPackID,
         ledgerEntryID: LedgerEntryID,
         deliveryStatus: StoreKit2DurableDeliveryStatus
     )
@@ -433,20 +458,28 @@ actor StoreKit2CoinTransactionAdapter {
 
     func transactionUpdates(
         session: StoreActiveSession
-    ) async -> AsyncStream<StoreKit2TransactionProcessingResult> {
+    ) async -> StoreKit2OwnedUpdateListener<StoreKit2TransactionProcessingResult> {
         let upstream = await platformClient.transactionUpdates()
-        return AsyncStream { continuation in
-            let task = Task { [weak self] in
-                for await verification in upstream {
-                    guard !Task.isCancelled, let self else { break }
-                    let result = await self.process(verification, session: session)
-                    continuation.yield(result)
-                }
-                continuation.finish()
+        let pair = AsyncStream<StoreKit2TransactionProcessingResult>.makeStream()
+        let task = Task<Void, Never> { [weak self] in
+            for await verification in upstream.updates {
+                guard !Task.isCancelled else { break }
+                guard let result = await self?.process(
+                    verification,
+                    session: session
+                ) else { break }
+                pair.continuation.yield(result)
             }
-            continuation.onTermination = { @Sendable _ in
-                task.cancel()
-            }
+            pair.continuation.finish()
+        }
+        pair.continuation.onTermination = { @Sendable _ in
+            task.cancel()
+        }
+        return StoreKit2OwnedUpdateListener(updates: pair.stream) {
+            pair.continuation.finish()
+            task.cancel()
+            await upstream.cancelAndWait()
+            await task.value
         }
     }
 
@@ -601,6 +634,7 @@ actor StoreKit2CoinTransactionAdapter {
         finishedTransactionIDs.insert(transaction.transactionID)
         return .deliveredAndFinished(
             transactionID: transaction.transactionID,
+            packID: packID,
             ledgerEntryID: ledgerEntry.id,
             deliveryStatus: acknowledgement.status
         )

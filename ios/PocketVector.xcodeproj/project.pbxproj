@@ -118,6 +118,8 @@
 		1F0000000000000000000008 /* ProfileHydrationFileTransactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000008 /* ProfileHydrationFileTransactionTests.swift */; };
 		1F0000000000000000000009 /* CloudProfileHydrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000009 /* CloudProfileHydrator.swift */; };
 		1F000000000000000000000A /* CloudProfileHydratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000A /* CloudProfileHydratorTests.swift */; };
+		1F000000000000000000000F /* StoreKitRuntimeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000F /* StoreKitRuntimeCoordinator.swift */; };
+		1F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift */; };
 		120000000000000000000007 /* GameCenterServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000007 /* GameCenterServiceTests.swift */; };
 		120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000008 /* StoreTransactionServiceTests.swift */; };
 		120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000009 /* RewardedAdServiceTests.swift */; };
@@ -251,6 +253,8 @@
 		2F0000000000000000000008 /* ProfileHydrationFileTransactionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileHydrationFileTransactionTests.swift; sourceTree = "<group>"; };
 		2F0000000000000000000009 /* CloudProfileHydrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudProfileHydrator.swift; sourceTree = "<group>"; };
 		2F000000000000000000000A /* CloudProfileHydratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudProfileHydratorTests.swift; sourceTree = "<group>"; };
+		2F000000000000000000000F /* StoreKitRuntimeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitRuntimeCoordinator.swift; sourceTree = "<group>"; };
+		2F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitRuntimeCoordinatorTests.swift; sourceTree = "<group>"; };
 		220000000000000000000007 /* GameCenterServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000008 /* StoreTransactionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTransactionServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000009 /* RewardedAdServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdServiceTests.swift; sourceTree = "<group>"; };
@@ -399,6 +403,7 @@
 				270000000000000000000002 /* ProductionAppCompositionTests.swift */,
 				270000000000000000000004 /* CloudKitCloudSyncAdapterTests.swift */,
 				270000000000000000000006 /* StoreKit2TransactionAdapterTests.swift */,
+				2F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift */,
 				290000000000000000000003 /* TutorialPrivacyCoordinatorTests.swift */,
 				2A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift */,
 				2B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift */,
@@ -475,6 +480,7 @@
 				250000000000000000000001 /* GameKitGameCenterAdapter.swift */,
 				220000000000000000000002 /* StoreTransactionServices.swift */,
 				270000000000000000000005 /* StoreKit2TransactionAdapter.swift */,
+				2F000000000000000000000F /* StoreKitRuntimeCoordinator.swift */,
 				220000000000000000000003 /* RewardedAdServices.swift */,
 				220000000000000000000004 /* CloudSyncServices.swift */,
 				270000000000000000000003 /* CloudKitCloudSyncAdapter.swift */,
@@ -703,6 +709,7 @@
 				1F0000000000000000000005 /* ProfileHydrationJournal.swift in Sources */,
 				1F0000000000000000000006 /* ProfileHydrationFileSystem.swift in Sources */,
 				170000000000000000000005 /* StoreKit2TransactionAdapter.swift in Sources */,
+				1F000000000000000000000F /* StoreKitRuntimeCoordinator.swift in Sources */,
 				130000000000000000000001 /* PersistenceModels.swift in Sources */,
 				130000000000000000000002 /* PlayerProfileFactory.swift in Sources */,
 				130000000000000000000003 /* PlayerProfileMigration.swift in Sources */,
@@ -760,6 +767,7 @@
 				170000000000000000000002 /* ProductionAppCompositionTests.swift in Sources */,
 				170000000000000000000004 /* CloudKitCloudSyncAdapterTests.swift in Sources */,
 				170000000000000000000006 /* StoreKit2TransactionAdapterTests.swift in Sources */,
+				1F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift in Sources */,
 				190000000000000000000003 /* TutorialPrivacyCoordinatorTests.swift in Sources */,
 				1A0000000000000000000002 /* DurableEconomyCoordinatorTests.swift in Sources */,
 				1B0000000000000000000002 /* AppleDiagnosticsAdapterTests.swift in Sources */,

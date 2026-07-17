@@ -190,6 +190,7 @@ final class StoreKit2TransactionAdapterTests: XCTestCase {
             .processed(
                 .deliveredAndFinished(
                     transactionID: 42,
+                    packID: packID,
                     ledgerEntryID: CoinLedgerID.storeKit(transactionID: 42),
                     deliveryStatus: .committed
                 )
@@ -252,6 +253,7 @@ final class StoreKit2TransactionAdapterTests: XCTestCase {
             [
                 .deliveredAndFinished(
                     transactionID: 51,
+                    packID: EconomyConfiguration.coinPacks[0].id,
                     ledgerEntryID: CoinLedgerID.storeKit(transactionID: 51),
                     deliveryStatus: .committed
                 ),
@@ -302,6 +304,7 @@ final class StoreKit2TransactionAdapterTests: XCTestCase {
             [
                 .deliveredAndFinished(
                     transactionID: 61,
+                    packID: EconomyConfiguration.coinPacks[3].id,
                     ledgerEntryID: CoinLedgerID.storeKit(transactionID: 61),
                     deliveryStatus: .alreadyCommitted
                 ),
@@ -357,23 +360,53 @@ final class StoreKit2TransactionAdapterTests: XCTestCase {
             configuration: fixture.configuration,
             appAccountToken: fixture.session.binding.appAccountToken
         )
-        let stream = await fixture.adapter.transactionUpdates(session: fixture.session)
-        var iterator = stream.makeAsyncIterator()
+        let listener = await fixture.adapter.transactionUpdates(session: fixture.session)
+        var iterator = listener.updates.makeAsyncIterator()
 
         await fixture.platform.emitUpdate(.verified(transaction))
         let result = await iterator.next()
         await fixture.platform.finishUpdates()
+        await listener.cancelAndWait()
 
         XCTAssertEqual(
             result,
             .deliveredAndFinished(
                 transactionID: 71,
+                packID: EconomyConfiguration.coinPacks[2].id,
                 ledgerEntryID: CoinLedgerID.storeKit(transactionID: 71),
                 deliveryStatus: .committed
             )
         )
         let finishedIDs = await fixture.platform.finishedTransactionIDs()
         XCTAssertEqual(finishedIDs, [71])
+    }
+
+    func testOwnedListenerCancellationAwaitsPlatformProducerTermination() async throws {
+        let fixture = try makeFixture()
+        let stopGate = StoreKit2TestGate()
+        let cancellationFinished = StoreKit2TestFlag()
+        await fixture.platform.setNextListenerStopGate(stopGate)
+        let listener = await fixture.adapter.transactionUpdates(session: fixture.session)
+
+        let cancellation = Task {
+            await listener.cancelAndWait()
+            await cancellationFinished.setTrue()
+        }
+        for _ in 0 ..< 10_000 {
+            if await fixture.platform.listenerStoppingCount() == 1 { break }
+            await Task.yield()
+        }
+        let stoppingCount = await fixture.platform.listenerStoppingCount()
+        let finishedBeforeGate = await cancellationFinished.value()
+        XCTAssertEqual(stoppingCount, 1)
+        XCTAssertFalse(finishedBeforeGate)
+
+        await stopGate.open()
+        await cancellation.value
+        let stoppedCount = await fixture.platform.listenerStoppedCount()
+        let finishedAfterGate = await cancellationFinished.value()
+        XCTAssertEqual(stoppedCount, 1)
+        XCTAssertTrue(finishedAfterGate)
     }
 
     private func makeFixture(
@@ -477,6 +510,32 @@ private actor StoreKit2TestEventRecorder {
     }
 }
 
+private actor StoreKit2TestGate {
+    private var isOpen = false
+
+    func wait() async {
+        while !isOpen {
+            await Task.yield()
+        }
+    }
+
+    func open() {
+        isOpen = true
+    }
+}
+
+private actor StoreKit2TestFlag {
+    private var storedValue = false
+
+    func setTrue() {
+        storedValue = true
+    }
+
+    func value() -> Bool {
+        storedValue
+    }
+}
+
 private struct StoreKit2TestPurchaseRequest: Equatable, Sendable {
     let productIdentifier: String
     let appAccountToken: UUID
@@ -489,6 +548,9 @@ private actor DeterministicStoreKit2PlatformClient: StoreKit2PlatformClient {
     private var unfinished: [StoreKit2PlatformVerification] = []
     private var updateContinuations:
         [AsyncStream<StoreKit2PlatformVerification>.Continuation] = []
+    private var nextListenerStopGate: StoreKit2TestGate?
+    private var stoppingListeners = 0
+    private var stoppedListeners = 0
     private var finishedIDs: [UInt64] = []
     private var purchaseRequests: [StoreKit2TestPurchaseRequest] = []
     private var finishFailureEnabled = false
@@ -530,11 +592,30 @@ private actor DeterministicStoreKit2PlatformClient: StoreKit2PlatformClient {
         unfinished
     }
 
-    func transactionUpdates() -> AsyncStream<StoreKit2PlatformVerification> {
-        let (stream, continuation) = AsyncStream<StoreKit2PlatformVerification>
-            .makeStream()
-        updateContinuations.append(continuation)
-        return stream
+    func transactionUpdates() -> StoreKit2OwnedUpdateListener<StoreKit2PlatformVerification> {
+        let input = AsyncStream<StoreKit2PlatformVerification>.makeStream()
+        let output = AsyncStream<StoreKit2PlatformVerification>.makeStream()
+        updateContinuations.append(input.continuation)
+        let stopGate = nextListenerStopGate
+        nextListenerStopGate = nil
+        let task = Task<Void, Never> { [weak self] in
+            for await verification in input.stream {
+                guard !Task.isCancelled else { break }
+                output.continuation.yield(verification)
+            }
+            await self?.recordListenerStopping()
+            await stopGate?.wait()
+            output.continuation.finish()
+            await self?.recordListenerStopped()
+        }
+        output.continuation.onTermination = { @Sendable _ in
+            task.cancel()
+        }
+        return StoreKit2OwnedUpdateListener(updates: output.stream) {
+            input.continuation.finish()
+            task.cancel()
+            await task.value
+        }
     }
 
     func finish(transactionID: UInt64) async throws {
@@ -566,6 +647,10 @@ private actor DeterministicStoreKit2PlatformClient: StoreKit2PlatformClient {
         finishFailureEnabled = isEnabled
     }
 
+    func setNextListenerStopGate(_ gate: StoreKit2TestGate) {
+        nextListenerStopGate = gate
+    }
+
     func emitUpdate(_ verification: StoreKit2PlatformVerification) {
         for continuation in updateContinuations {
             continuation.yield(verification)
@@ -585,6 +670,22 @@ private actor DeterministicStoreKit2PlatformClient: StoreKit2PlatformClient {
 
     func purchaseRequestsSnapshot() -> [StoreKit2TestPurchaseRequest] {
         purchaseRequests
+    }
+
+    func listenerStoppingCount() -> Int {
+        stoppingListeners
+    }
+
+    func listenerStoppedCount() -> Int {
+        stoppedListeners
+    }
+
+    private func recordListenerStopping() {
+        stoppingListeners += 1
+    }
+
+    private func recordListenerStopped() {
+        stoppedListeners += 1
     }
 }
 
