@@ -16,9 +16,18 @@ are complete. Typed first-zone Cloud replica genesis is versioned at `a584b65`
 (`Add typed cloud replica genesis`), and the repository hydration mutation
 barrier is versioned at `1a8036e` (`Add hydration mutation barrier`). The typed
 ordinary publication boundary immediately beneath them is `20e1cbc` (`Add
-typed cloud replica publication`).
+typed cloud replica publication`). The account-neutral, one-way canonical V4
+cloud-profile seed is versioned at `c5d6710` (`Add canonical V4 cloud profile
+seed`).
 The iOS-only repository cleanup is versioned at `24cd2c7` (`Remove legacy
 browser project from iOS repository`).
+
+The dormant StoreKit runtime foundation is versioned at `ce69388` (`Add dormant
+StoreKit runtime coordination`), player-scoped Game Center persistence and
+delivery at `9d749bc` (`Add player-scoped Game Center delivery`), and the
+dormant rewarded-ad verification boundary at `bbd1bc7` (`Add dormant rewarded
+ad verification`). These are proven service foundations, not live production
+composition.
 
 The final Wave 5 simulator pass traversed the main menu, all eight offense
 choices, the locker and both cosmetic types, the four-step tutorial, gameplay,
@@ -49,6 +58,15 @@ passed an independent integration audit with no P0/P1/P2 defects, then passed
 failure. Its unsigned generic-iOS Release archive passed at
 `/tmp/PocketVectorBootstrapCombinedArchive-20260716-01.xcarchive`.
 
+The canonical V4 cloud-profile seed gate passed 19 of 19 focused tests and 4 of
+4 V4 compatibility tests. The exact current suite passed 748 of 749 tests with
+no failure and the same existing conditional filesystem case-alias skip. Fresh
+generic-iOS Debug and Release builds both passed. The exact staged patch was
+`c5138c4ba7f1415de995c37b54a8b6977056afc964c55720fa4406bb052da356`,
+and an independent post-fix audit found no P0/P1/P2 defect. These were build
+gates, not archive gates; no archive is claimed for `ce69388`, `9d749bc`,
+`bbd1bc7`, or `c5d6710`.
+
 The foundation now includes account-, scope-, epoch-, and build-environment-
 bound CloudKit record-change transport; crash-recoverable two-phase
 checkpoints; durable hydration journals; exact repository adoption;
@@ -57,7 +75,11 @@ nil-cursor `requireExisting` full-snapshot reconstruction; and sealed
 exact-predecessor ordinary incremental publication. Both publication paths
 carry opaque generation provenance and revalidate the canonical authority,
 account, scope, epoch, durable predecessor, and pending candidate before
-mutation. Release code no longer exposes raw checkpoint publication.
+mutation. Release code no longer exposes raw checkpoint publication. The V4
+seed independently authenticates an exact canonical local artifact and emits a
+deterministic facts-and-eligibility description for future bootstrap policy.
+It does not claim, publish, write, bind an account, player, or session, or
+compose live Cloud behavior.
 
 First-zone genesis now uses a durable before-network reservation, bounded
 process-local issuance with duplicate rejection, and one live attempt lease per
@@ -78,13 +100,14 @@ replica-scope fingerprint and cannot be supplied by Info.plist configuration.
 
 Cloud capabilities still fail closed in the retained Release composition
 because the durable one-time local-to-cloud account claim, outbound initial
-profile publication, and account-scoped runtime coordinator are not yet
-implemented. Typed first-zone genesis and the hydration mutation barrier are
-implemented but remain dormant until that composition exists. Game Center,
-StoreKit 2, and rewarded advertisements also remain unavailable. The unsigned
-archive proves the Release compiler selected Production, but it does not prove
-the final codesigned entitlement payload; that remains a release-candidate
-gate.
+profile publication, explicit local/cloud merge policy, and account-scoped
+runtime coordinator are not yet implemented. The seed, typed first-zone
+genesis, and hydration mutation barrier remain dormant until that composition
+exists. Player-scoped Game Center delivery, StoreKit 2 runtime coordination,
+and rewarded-ad verification are likewise implemented but unavailable in the
+live app. The earlier unsigned archive proves the Release compiler selected
+Production, but it does not prove the final codesigned entitlement payload;
+that remains a release-candidate gate.
 
 ## Delivery board
 
@@ -94,12 +117,12 @@ gate.
 | Reproducible native foundation                  | Complete            | Clean-checkout tests and unsigned Release archive pass at `49d8a6b`                                                                   |
 | Domain, catalog, economy, and achievement rules | Complete            | Eight teams, inventory, matchup, clash, reward, coin-pack, and eight-achievement rules pass exhaustive tests                          |
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
-| Account-independent service seams               | In progress         | Cloud transport/checkpoint, typed first-zone genesis, transactional hydration with a repository mutation barrier, exact adoption, account-generation authority, scoped freshness, reconstruction, and incremental publication pass; local-to-cloud claim, outbound bootstrap, account composition, Game Center, StoreKit, and ads remain |
+| Account-independent service foundations         | In progress         | Cloud transport/checkpoint, typed genesis/publication/hydration, canonical V4 seed, player-scoped Game Center delivery, StoreKit runtime, and rewarded-ad verification foundations pass; persisted rewarded-ad recovery remains and none implies live composition |
 | Production app shell and menus                  | Complete            | Home, teams, locker, store, leaderboard, achievements, settings, tutorial, privacy/support, gameplay, and results all ship             |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Eight-team presentation system                  | Complete            | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, HUD palettes, raster recoloring, and preload readiness ship     |
-| Live Apple and advertising services             | In progress         | Runtime/configuration/UIKit, Cloud replica, typed publication and genesis, and hydration mutation-barrier foundations are complete; live claim/bootstrap/coordinator composition, permanent IDs, products, Game Center records, and ads remain |
+| Live Apple and advertising services             | In progress         | Foundations are complete; owner-approved Cloud merge/claim policy, outbound bootstrap, retained service composition, permanent IDs, products, Game Center records, ad SDK/consent/verification transport, and signed-device gates remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
 | TestFlight release candidate                    | Queued              | Device, accessibility, sandbox, sync, replay, crash, and economy gates pass                                                           |
 | App Store submission                            | Queued              | Signed archive, privacy report, metadata, review notes, screenshots, and owner approval complete                                      |
@@ -167,6 +190,17 @@ or runtime ownership boundaries.
 | 2026-07-16 | `1a8036e` | Combined genesis/hydration integration audit | Exact nine-path patch `a07db41b...`; no P0/P1/P2 findings |
 | 2026-07-16 | `1a8036e` | Combined full native simulator suite | 668 total: 667 passed, 0 failed, 1 conditional case-alias skip on iPhone 17 Pro |
 | 2026-07-16 | `1a8036e` | Combined unsigned generic-iOS Release archive | Passed at `/tmp/PocketVectorBootstrapCombinedArchive-20260716-01.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit, privacy manifest, and iOS-only artifact audit passed |
+| 2026-07-16 | `ce69388` | Dormant StoreKit runtime focused gate | 13 passed, 0 failed; final audit found no P0/P1/P2 findings |
+| 2026-07-16 | `ce69388` | Dormant StoreKit runtime full simulator suite | 682 total: 681 passed, 0 failed, 1 existing conditional case-alias skip |
+| 2026-07-16 | `9d749bc` | Player-scoped Game Center focused gate | 145 total: 144 passed, 0 failed, 1 existing conditional case-alias skip; independent audits found no P0/P1/P2 findings |
+| 2026-07-16 | `9d749bc` | Player-scoped Game Center full simulator suite | 721 total: 720 passed, 0 failed, 1 existing conditional case-alias skip; generic-iOS Release build passed |
+| 2026-07-16 | `bbd1bc7` | Rewarded-ad verification focused and compatibility gates | 9 verification tests and 43 compatibility tests passed; Debug and Release build/symbol gates passed; independent audit found no P0/P1/P2 findings |
+| 2026-07-16 | `bbd1bc7` | Rewarded-ad verification combined full simulator suite | 730 total: 729 passed, 0 failed, 1 existing conditional case-alias skip |
+| 2026-07-16 | `c5d6710` | Canonical V4 cloud-profile seed focused gate | 19 passed, 0 failed |
+| 2026-07-16 | `c5d6710` | Canonical V4 compatibility gate | 4 passed, 0 failed |
+| 2026-07-16 | `c5d6710` | Exact current simulator suite | 749 total: 748 passed, 0 failed, 1 existing conditional case-alias skip |
+| 2026-07-16 | `c5d6710` | Generic-iOS Debug and Release build gates | Both passed; build evidence only, no archive claimed |
+| 2026-07-16 | `c5d6710` | Canonical seed independent audit | Exact staged patch `c5138c4ba7f1415de995c37b54a8b6977056afc964c55720fa4406bb052da356`; no P0/P1/P2 findings |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -194,44 +228,74 @@ Release behavior. A wave is not complete merely because its files exist.
    repository hydration mutation barrier with pending physical claim,
    actor-mediated same-handle retry, distinct sealed target and predecessor
    confirmations, and diagnostic startup recovery that rejects live admission.
-5. **Next:** add the durable one-time local-to-cloud account-claim transaction
-   and outbound initial-profile publication, then compose them with typed
-   genesis and hydration in the account-scoped runtime coordinator. Recover
-   checkpoint and hydration before repository load, keep network work outside
-   bounded generation admission, reacquire matching authority for every
-   durable save, and publish authoritative state only after profile/checkpoint
-   durability and a final generation recheck.
-6. Add persistent Game Center delivery and presentation, then StoreKit product
-   state, localized prices, unfinished-transaction recovery, and purchases.
-7. Add persisted rewarded-ad orchestration and a verified-receipt client. No
-   client ad callback may grant coins without a unique server-verified provider
-   transaction.
+5. **Complete foundation:** authenticate an exact canonical V4 local artifact
+   and derive an account-neutral, one-way cloud-profile seed with deterministic
+   facts, eligibility, bounds, and digest. The seed does not claim, publish,
+   write, bind an account, player, or session, or compose live Cloud.
+6. **Next live Cloud integration:** obtain the explicit owner policy for
+   reconciling existing local and cloud profiles, then add the durable one-time
+   local-to-cloud account claim and outbound initial-profile publication.
+   Compose them with typed genesis and hydration in the account-scoped runtime
+   coordinator, preserving all generation, checkpoint, journal, and final
+   durability rechecks.
+7. **Complete Game Center foundation; live integration pending:** V4 persistence,
+   exact player buckets, unbound quarantine, and capability-bound single-flight
+   delivery are implemented. Add the trusted Release factory, retained
+   authentication/foreground/presentation composition, App Store Connect
+   records, and a proof-bearing settlement attribution path. No unbound value
+   may be automatically claimed.
+8. **Complete StoreKit foundation; live integration pending:** localized product
+   validation, verified updates, unfinished recovery, durable finish gating,
+   account-generation retirement, and serialized purchases are implemented.
+   Add live account-session sourcing, private-cloud economy composition,
+   retained lifecycle and presentation state, and permanent consumable IDs.
+9. **Complete rewarded-ad verification foundation; live integration pending:**
+   exact challenge/status correlation and process-only verified claims are
+   implemented. Add persisted challenge/flow recovery, authenticated production
+   transport, provider SDK and consent adapters, retained orchestration, and
+   authoritative presentation state. A client callback alone never grants
+   coins.
 
-The critical path is no longer primitive zone creation or repository freezing.
-Typed first-zone genesis and the hydration mutation barrier are proven, but
-live composition still lacks the durable local-to-cloud claim, outbound
-initial-profile publication, and account-scoped coordinator.
+The core account-independent Cloud, Game Center, StoreKit, and verification
+boundaries are proven. Persisted rewarded-ad recovery remains an
+account-independent task. The release critical path is the owner-approved
+local/cloud merge policy followed by durable claim, outbound publication, and
+retained account-scoped composition. Game Center, StoreKit, and rewarded-ad
+foundations remain dormant until their listed live integration and
+external-service gates are complete.
 
 ## Owner decisions and external dependencies
 
-These do not block the current account-independent implementation waves:
+These decisions and external dependencies gate the live integration path; they
+do not block the remaining account-independent rewarded-ad recovery work:
 
-1. Permanent bundle identifier, iCloud container, privacy URL, and support URL.
+1. **Locked safety rule:** no local/cloud profile or unbound Game Center value
+   is automatically claimed. The V4 cloud seed remains account-neutral, and
+   unbound Game Center work remains quarantined unless a later explicit policy
+   authorizes otherwise.
+2. **Owner-open iCloud policy:** choose how an existing local profile and an
+   existing private-iCloud profile are reconciled before any claim or outbound
+   publication can be composed.
+3. **Owner-open Game Center policy:** choose whether and how legacy or newly
+   generated unbound score and achievement maxima may ever be attributed to a
+   player. Without that decision, they remain permanently nonsubmittable.
+4. Permanent bundle identifier, iCloud container, privacy URL, and support URL.
    Domain and email setup are tracked in the separate user-owned Codex task.
-2. Verified rewarded-ad infrastructure. AdMob client callbacks alone cannot
-   meet the exactly-once, crash/reinstall-safe reward gate; production requires
-   a small server-side-verification endpoint with provider-transaction
-   deduplication.
-3. Crash KPI instrumentation. Apple diagnostics support crash and session
+5. Verified rewarded-ad infrastructure. The dormant correlation client and
+   process-only verified claim are complete, but challenge recovery, an
+   authenticated production transport and server-side-verification endpoint,
+   provider-transaction deduplication, the ad SDK, and consent orchestration
+   remain. AdMob client callbacks alone never grant coins.
+6. Crash KPI instrumentation. Apple diagnostics support crash and session
    review, but an exact crash-free-session percentage requires a provider such
    as Crashlytics; otherwise the gate must be renamed to an Apple-only proxy.
-4. Final audience-policy declarations for AdMob and App Store privacy. The
+7. Final audience-policy declarations for AdMob and App Store privacy. The
    product remains general audience and outside Apple's Kids Category; the
    shipping SDK configuration and disclosures still require final review.
-5. Apple Developer enrollment, Paid Apps agreement, tax and banking, live
+8. Apple Developer enrollment, Paid Apps agreement, tax and banking, live
    consumable products, Game Center records, AdMob app/ad unit, UMP message,
    `app-ads.txt`, and production CloudKit schema deployment.
-6. Final codesigned-entitlement verification. After the permanent iCloud
+9. Final codesigned-entitlement verification. After the permanent iCloud
    container and signing profile exist, inspect the exported release candidate
    and confirm `com.apple.developer.icloud-container-environment` is
    `Production` and the expected iCloud container identifiers and services are
@@ -245,13 +309,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the exact combined genesis/hydration audited scope; full release audit remains |
+| Known P0/P1 defects                  |      0 | 0 open in the exact audited StoreKit, Game Center, rewarded-ad verification, and canonical V4 seed scopes; full release audit remains |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Crash-free sessions                  | 99.5%+ | Instrumentation decision open                   |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
-| Exactly-once economic mutations      |   100% | Local, cloud-history, typed publication/genesis, and hydration-barrier foundations pass; live claim/bootstrap/coordinator composition remains |
-| Clean-checkout archive               |   Pass | Detached unsigned Release archive passes at `1a8036e`; final signed entitlement/export proof remains |
+| Exactly-once economic mutations      |   100% | Local/cloud-history, typed publication/genesis, hydration, StoreKit delivery, server-verified rewarded-ad delivery, and account-neutral seed foundations pass; persisted ad recovery, owner policy, and live composition remain |
+| Clean-checkout archive               |   Pass | Latest documented unsigned Release archive remains `1a8036e`; later generic-iOS Debug/Release builds pass but are not archive evidence; final signed entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner

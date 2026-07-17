@@ -4,6 +4,10 @@ Status: implementation contract for version 1
 
 Last updated: 2026-07-16
 
+Implementation baseline: `c5d6710`, including the canonical V4 cloud-profile
+seed and the dormant StoreKit, player-scoped Game Center, and rewarded-ad
+verification foundations.
+
 This document translates the approved release charter into ownership and data
 boundaries. It is deliberately narrower than a feature specification: it says
 which layer may change durable state, how a run settles, and which behavior must
@@ -27,8 +31,26 @@ ProductionAppRuntime (one retained process graph)
             <- one CompletedRun callback
   -> owned AppleDiagnosticsRuntime task
        -> privacy-safe OSLog and MetricKit adapters
-  -> UIKit GameKit presentation handoff
+  -> UIKit GameKit presentation handoff (retained seam; not connected)
 ```
+
+The following foundations are implemented but remain outside the retained live
+runtime graph:
+
+```text
+StoreKitRuntimeCoordinator
+  -> account/session-generation lifecycle, unfinished recovery,
+     transaction updates, product state, and serialized purchase
+GameCenterDeliveryCoordinator
+  -> exact player-bucket preparation, single-flight submission,
+     same-player revalidation, and capability-bound acknowledgement
+RewardedAdVerificationClient
+  -> challenge preparation, server-status correlation,
+     process-only verified claim, and durable-delivery request
+```
+
+`ProductionAppRuntime` still advertises only Apple diagnostics. It constructs
+and retains none of these three service coordinators.
 
 - SwiftUI owns launch, navigation, menus, settings, locker, store, results, and
   service presentation.
@@ -107,6 +129,14 @@ document is retained as a backup. Decode or validation failure attempts backup
 recovery; unrecoverable data is quarantined instead of overwritten silently.
 Schema migrations are explicit, deterministic, and covered by fixture tests.
 
+The canonical local envelope is version 4. Versions 1 through 3 stored global
+Game Center maxima; migration preserves those values only in durable unbound
+quarantine. Version 4 stores at most eight sparse player-bound maxima buckets
+plus one unbound bucket. Before Foundation decoding, bounded raw-JSON validation
+rejects duplicate decoded member names. Queue decoding also rejects duplicate
+typed keys and mixed-version fields. Bound score and achievement maxima may not
+exceed locally earned career and achievement authority.
+
 The default profile owns the four approved free teams and their primary
 jerseys, the standard football, and selects Nova City. It begins with zero
 coins. Music defaults to `0.38`, SFX to `0.72`, mute and reduced motion are off,
@@ -125,7 +155,10 @@ Settlement is serialized inside `PlayerRepository`:
    ledger entry and advance rewarded-ad eligibility once.
 7. On the first reward-eligible run only, also create `signing-bonus/v1` for 250
    pending coins.
-8. Evaluate all eight achievements and coalesce pending Game Center progress.
+8. Evaluate all eight achievements and enqueue newly earned achievement
+   progress and natural-completion score into unbound Game Center quarantine.
+   Until a proof-bearing Game Center identity spans run start and settlement,
+   settlement never assigns that work to whichever player later authenticates.
 9. Persist the complete transaction atomically before returning results.
 
 Duplicate callbacks, relaunch retries, sync redelivery, and repeated button
@@ -157,6 +190,12 @@ clamps at five valid runs, does not bank additional offers, survives a decline,
 and resets only in the same durable operation that grants the verified 100
 coins.
 
+These are implemented durability invariants, not live commerce. The StoreKit
+adapter and runtime coordinator are not composed, so coin-pack requests remain
+unavailable. Rewarded-ad eligibility is durable local state, but the ad SDK,
+consent runtime, production verification transport, challenge persistence and
+recovery, and retained delivery orchestration are not composed.
+
 ## Offline behavior
 
 | Behavior                                         | Offline policy                                                                 |
@@ -166,15 +205,16 @@ coins.
 | Equip an already owned team, jersey, or football | Available                                                                      |
 | Completed-run record and gameplay reward         | Stored locally; reward remains pending                                         |
 | Spend coins or unlock a new item                 | Requires current iCloud economy state                                          |
-| Buy a coin pack                                  | Requires current iCloud economy state                                          |
-| Watch and receive a rewarded advertisement       | Requires consent, ad readiness, verification, and current iCloud economy state |
-| Game Center authentication                       | Optional; never blocks gameplay                                                |
-| Leaderboard and achievements                     | Highest pending values queue for later submission                              |
+| Buy a coin pack                                  | Not enabled; future delivery also requires current private-iCloud economy authority                                    |
+| Watch and receive a rewarded advertisement       | Not enabled; future delivery requires consent, SDK readiness, persisted verification recovery, authenticated server verification, and current private-iCloud economy authority |
+| Game Center authentication                       | Not connected; future authentication remains optional and never blocks gameplay                                      |
+| Leaderboard and achievements                     | Only exact player-bound maxima may later submit; unbound maxima remain quarantined and nonsubmittable                  |
 
 An iCloud account change closes the current sync context and opens a separate
 account-scoped profile. Data from two iCloud identities is never merged
-silently. Game Center pending queues are likewise scoped to the authenticated
-Game Center player.
+silently. Game Center bound buckets are scoped to the exact authenticated
+player. A separate unbound quarantine preserves work with unknown provenance
+and has no claim or submission API; it is never silently reassigned.
 
 ## Cloud merge rules
 
@@ -192,6 +232,23 @@ Game Center player.
 Private CloudKit protects normal synchronization and two-device conflicts. It
 is not a trusted anti-cheat server; version 1 accepts that limitation while
 keeping all scoring and cosmetic purchases free of gameplay advantage.
+
+## Initial cloud profile seed
+
+The canonical V4 cloud-profile seed is an account-neutral, one-way `Encodable`
+description of an exact canonical local artifact. It independently validates
+the source bytes, digest, envelope, profile invariants, collection and identifier
+bounds, Game Center queues, initial inventory, runs, ledger, pending credits,
+settings, and selection. It deterministically classifies the source as an empty
+economy that may be publishable, pending credits that require projection, or
+history and ownership that require an explicit owner policy.
+
+The seed is facts only. It does not claim a local profile, publish or write
+CloudKit data, bind an iCloud account, Game Center player, profile session, or
+transport authority, or compose live Cloud behavior. Its digest is integrity
+identity, not mutation authority. The one-time local-to-cloud claim, the policy
+for reconciling existing local and cloud data, outbound record construction,
+publication, and retained account-scoped runtime remain separate gates.
 
 ## Cloud replica and economy authority
 
@@ -397,15 +454,33 @@ revision. Validated cloud state must be installable without erasing valid
 source-only runs, rewards, settings, or ownership; otherwise hydration rejects
 the replica and retains the local source.
 
+Hydration preserves every existing player-bound Game Center bucket. Derived
+increases whose Game Center provenance is unknown are added only to unbound
+quarantine; a no-op merge manufactures no unbound work. Hydration never claims
+unbound work for an authenticated player.
+
 ## Platform service contracts
 
-- Game Center: authentication state, presenter handoff, maximum pending global
-  score, maximum pending achievement percentage, account-scoped reconciliation,
-  leaderboard presentation, and achievement presentation.
-- StoreKit: localized product loading, verified transaction stream, unfinished
-  transaction recovery, account-token validation, durable delivery, and finish.
-- Rewarded ads: consent-blocked/loading/ready/showing/reward-pending/unavailable
-  states, explicit presentation, pause/resume hooks, and server-verified reward.
+- Game Center foundation, dormant: canonical V4 stores sparse maxima under
+  exact Game Center player IDs plus a separate unbound quarantine. Preparation
+  freezes one exact player bucket; delivery is single-flight, revalidates the
+  player before and after submission, and acknowledges only with the exact
+  process capability. Unbound work is never submitted. Release exposes no
+  delivery-coordinator construction path until a trusted in-file GameKit
+  factory and retained composition are added.
+- StoreKit foundation, dormant: the runtime owns exactly one account/session
+  generation, installs transaction updates before unfinished recovery, loads
+  the exact four configured consumables, serializes purchase presentation,
+  suppresses stale callbacks, and awaits producer shutdown during account
+  replacement. Transactions finish only after durable delivery. Live
+  account-session sourcing, private-cloud economy composition, lifecycle
+  retention, product identifiers, and UI state wiring remain.
+- Rewarded-ad verification foundation, dormant: a versioned challenge binds the
+  exact attempt, verification handle, and provider custom data. Only an exactly
+  correlated server result mints a non-Codable process claim, which must match
+  the durable account owner and current profile session before delivery. No
+  production transport, URL, credential, SDK, consent adapter, challenge store,
+  or Release construction path exists yet.
 - Telemetry: coarse, deduplicated product events with no player aliases, raw
   profile identifiers, provider transaction identifiers, exact balances, or
   detailed play history.
@@ -413,9 +488,12 @@ the replica and retains the local source.
   privacy-safe `OSLog` categories and Apple MetricKit delivery; third-party
   crash reporting remains an explicit release decision.
 
-Real adapters and in-memory fakes implement the same contracts. Menus and tests
-must support loading, unavailable, offline, pending, restricted, declined, and
-retry states without blocking gameplay.
+Integration state is service-specific. Live GameKit and StoreKit SDK adapters
+exist but are not retained by production composition; the Game Center
+success-capable fake and delivery-coordinator constructor are Debug-only.
+Rewarded-ad verification has a transport protocol and Debug injection seam but
+no production transport. Menus therefore continue to expose explicit
+unavailable states without blocking gameplay.
 
 ## Integration guardrails
 
