@@ -2,11 +2,11 @@
 
 Status: implementation contract for version 1
 
-Last updated: 2026-07-16
+Last updated: 2026-07-17
 
-Implementation baseline: `c5d6710`, including the canonical V4 cloud-profile
+Implementation baseline: `d6c2b4a`, including the canonical V4 cloud-profile
 seed and the dormant StoreKit, player-scoped Game Center, and rewarded-ad
-verification foundations.
+verification and recovery foundations.
 
 This document translates the approved release charter into ownership and data
 boundaries. It is deliberately narrower than a feature specification: it says
@@ -47,10 +47,13 @@ GameCenterDeliveryCoordinator
 RewardedAdVerificationClient
   -> challenge preparation, server-status correlation,
      process-only verified claim, and durable-delivery request
+RewardedAdRecoveryCoordinator
+  -> challenge-only two-copy journal, authenticated status recovery,
+     exact durable-delivery cleanup, and permanent quarantine barrier
 ```
 
 `ProductionAppRuntime` still advertises only Apple diagnostics. It constructs
-and retains none of these three service coordinators.
+and retains none of these four service coordinators.
 
 - SwiftUI owns launch, navigation, menus, settings, locker, store, results, and
   service presentation.
@@ -193,8 +196,32 @@ coins.
 These are implemented durability invariants, not live commerce. The StoreKit
 adapter and runtime coordinator are not composed, so coin-pack requests remain
 unavailable. Rewarded-ad eligibility is durable local state, but the ad SDK,
-consent runtime, production verification transport, challenge persistence and
-recovery, and retained delivery orchestration are not composed.
+consent runtime, authenticated production verification transport and
+server-side-verification backend, provider-transaction deduplication, recovery
+coordinator, and retained delivery orchestration are not composed.
+
+The dormant rewarded-ad recovery foundation persists only one immutable
+verification challenge in two exact copies under the shared profile transaction
+lock. Canonical encoding, exact-shape and duplicate-key preflight, bounded
+identifiers, JSON depth and token limits, a 16 KiB document cap, and bounded
+quarantine prevent ambiguous or attacker-shaped bytes from becoming authority.
+One valid copy repairs the other byte-for-byte; valid unequal copies fail
+closed. Invalid evidence is preserved in bounded quarantine, and its presence
+is a permanent barrier to a new attempt until a future explicit repair policy.
+
+Installation requires the exact durable owner and original presentation
+session. Recovery and status handling require the pinned durable owner;
+delivery additionally requires the current profile session. Cross-owner
+evidence is never status-polled, repaired, quarantined, or deleted. Relaunch
+never re-presents the ad: it re-polls authenticated, replay-stable status and
+accepts only a sealed checked-status observation. Journal deletion requires
+either an authenticated terminal rejection or a sealed acknowledgement of
+exact durable economy delivery. Persisted bytes never include a verified
+receipt, provider transaction, transient session, or delivery acknowledgement.
+An ambiguous last-copy write or removal is repeated with a fresh durable file
+or parent-directory synchronization; observation alone is not proof. Real
+constructors remain fileprivate in Release, with only Debug test injection
+exposed.
 
 ## Offline behavior
 
@@ -206,7 +233,7 @@ recovery, and retained delivery orchestration are not composed.
 | Completed-run record and gameplay reward         | Stored locally; reward remains pending                                         |
 | Spend coins or unlock a new item                 | Requires current iCloud economy state                                          |
 | Buy a coin pack                                  | Not enabled; future delivery also requires current private-iCloud economy authority                                    |
-| Watch and receive a rewarded advertisement       | Not enabled; future delivery requires consent, SDK readiness, persisted verification recovery, authenticated server verification, and current private-iCloud economy authority |
+| Watch and receive a rewarded advertisement       | Not enabled; dormant recovery is implemented, while live delivery requires consent, SDK readiness, authenticated server verification, retained orchestration, and current private-iCloud economy authority |
 | Game Center authentication                       | Not connected; future authentication remains optional and never blocks gameplay                                      |
 | Leaderboard and achievements                     | Only exact player-bound maxima may later submit; unbound maxima remain quarantined and nonsubmittable                  |
 
@@ -478,9 +505,14 @@ unbound work for an authenticated player.
 - Rewarded-ad verification foundation, dormant: a versioned challenge binds the
   exact attempt, verification handle, and provider custom data. Only an exactly
   correlated server result mints a non-Codable process claim, which must match
-  the durable account owner and current profile session before delivery. No
-  production transport, URL, credential, SDK, consent adapter, challenge store,
-  or Release construction path exists yet.
+  the durable account owner and current profile session before delivery. Its
+  challenge-only recovery journal uses two exact copies, bounded canonical and
+  duplicate-safe decoding, permanent quarantine barriers, last-copy ambiguity
+  resynchronization, sealed checked status, and sealed durable-delivery
+  acknowledgement. Release constructors remain sealed. No authenticated
+  production transport, URL, credential, replay-stable SSV backend with
+  provider-transaction deduplication, SDK, consent adapter, or retained runtime
+  integration exists yet.
 - Telemetry: coarse, deduplicated product events with no player aliases, raw
   profile identifiers, provider transaction identifiers, exact balances, or
   detailed play history.
@@ -492,8 +524,9 @@ Integration state is service-specific. Live GameKit and StoreKit SDK adapters
 exist but are not retained by production composition; the Game Center
 success-capable fake and delivery-coordinator constructor are Debug-only.
 Rewarded-ad verification has a transport protocol and Debug injection seam but
-no production transport. Menus therefore continue to expose explicit
-unavailable states without blocking gameplay.
+no authenticated production transport; its recovery coordinator is also not
+retained. Menus therefore continue to expose explicit unavailable states
+without blocking gameplay.
 
 ## Integration guardrails
 
