@@ -30,6 +30,54 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testNoOpPreservesEveryPlayerBucketWithoutManufacturingUnboundWork()
+        async throws
+    {
+        var fixture = try await makeFixture()
+        let playerA = GameCenterPlayerID("hydration-player-a")
+        let playerB = GameCenterPlayerID("hydration-player-b")
+        let record = makeRecord(uuid: 31, offset: 0)
+        var document = try settledDocument(
+            base: fixture.source.envelope.document,
+            records: [record],
+            confirmedGameplayRunIDs: []
+        )
+        document.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                playerA: GameCenterPendingMaximaV1(
+                    pendingHighScore: record.run.score
+                ),
+                playerB: GameCenterPendingMaximaV1(
+                    pendingAchievementPercents: [
+                        LaunchAchievementID.firstRead: 60,
+                    ]
+                ),
+            ]
+        )
+        fixture.source = source(
+            document: document,
+            metadata: metadata(for: document, counter: 2),
+            savedAt: date(2_000),
+            nonce: fixture.source.activeSession.nonce
+        )
+        fixture.replica = try await makeReplica(
+            context: fixture.context,
+            sourceDocument: document
+        )
+
+        let result = try hydrate(fixture)
+
+        XCTAssertTrue(result.isNoOp)
+        XCTAssertEqual(
+            result.candidateDocument.player.pendingGameCenter,
+            document.player.pendingGameCenter
+        )
+        XCTAssertTrue(
+            result.candidateDocument.player.pendingGameCenter.unboundPending
+                .isEmpty
+        )
+    }
+
     func testSemanticallyDecodableNoncanonicalSourceBytesReject() async throws {
         var fixture = try await makeFixture()
         let object = try JSONSerialization.jsonObject(
@@ -244,6 +292,29 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
 
     func testRemoteOnlyRunIsInstalledWithPendingGameplayAndSigningBonus() async throws {
         var fixture = try await makeFixture()
+        let playerID = GameCenterPlayerID("existing-hydration-player")
+        var sourceDocument = fixture.source.envelope.document
+        sourceDocument.player.achievementProgress[LaunchAchievementID.firstRead] =
+            AchievementProgress(
+                id: LaunchAchievementID.firstRead,
+                percentComplete: 50
+            )
+        sourceDocument.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                playerID: GameCenterPendingMaximaV1(
+                    pendingAchievementPercents: [
+                        LaunchAchievementID.firstRead: 50,
+                    ]
+                ),
+            ],
+            unboundPending: GameCenterPendingMaximaV1(pendingHighScore: 50)
+        )
+        fixture.source = source(
+            document: sourceDocument,
+            metadata: metadata(for: sourceDocument, counter: 2),
+            savedAt: date(2_000),
+            nonce: fixture.source.activeSession.nonce
+        )
         let record = makeRecord(uuid: 2, offset: 0)
         let payload = cloudRun(
             record,
@@ -252,7 +323,7 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
         )
         fixture.replica = try await makeReplica(
             context: fixture.context,
-            sourceDocument: fixture.source.envelope.document,
+            sourceDocument: sourceDocument,
             remoteRuns: [record.run.runID: payload]
         )
 
@@ -264,6 +335,27 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(result.candidateDocument.pendingLedgerEntryIDs.contains(signingID))
         XCTAssertEqual(result.candidateDocument.player.career.completedRuns, 1)
         XCTAssertEqual(result.candidateDocument.player.rewardedAdState.validRunsSinceReward, 1)
+        XCTAssertEqual(
+            result.candidateDocument.player.pendingGameCenter
+                .pending(for: playerID)?
+                .pendingAchievementPercents[LaunchAchievementID.firstRead],
+            50
+        )
+        XCTAssertEqual(
+            result.candidateDocument.player.pendingGameCenter.unboundPending
+                .pendingHighScore,
+            record.run.score
+        )
+        XCTAssertEqual(
+            result.candidateDocument.player.pendingGameCenter.unboundPending
+                .pendingAchievementPercents[LaunchAchievementID.firstRead],
+            100
+        )
+        XCTAssertEqual(
+            result.candidateDocument.player.pendingGameCenter.unboundPending
+                .pendingAchievementPercents[LaunchAchievementID.paydirt],
+            100
+        )
         XCTAssertTrue(result.revisionPlan.playerMaterialChanged)
         XCTAssertTrue(result.revisionPlan.economyMaterialChanged)
     }
@@ -739,7 +831,7 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
             uuid: 30,
             offset: 0,
             score: 777,
-            naturallyCompleted: false
+            naturallyCompleted: true
         )
         var document = try settledDocument(
             base: fixture.source.envelope.document,
@@ -748,9 +840,19 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
         )
         document.player.settings.value.tutorialCompleted = true
         document.player.settings.modifiedAt = date(1_400)
-        document.player.pendingGameCenter = GameCenterSubmissionQueue(
-            pendingHighScore: 999_999,
-            pendingAchievementPercents: [LaunchAchievementID.firstRead: 100]
+        let playerID = GameCenterPlayerID("hydration-source-player")
+        document.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                playerID: GameCenterPendingMaximaV1(
+                    pendingHighScore: 777,
+                    pendingAchievementPercents: [
+                        LaunchAchievementID.firstRead: 100,
+                    ]
+                ),
+            ],
+            unboundPending: GameCenterPendingMaximaV1(
+                pendingHighScore: 123
+            )
         )
         fixture.source = source(
             document: document,
@@ -778,16 +880,23 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
             abandoned
         )
         XCTAssertEqual(
-            result.candidateDocument.player.pendingGameCenter.pendingHighScore,
-            999_999
+            result.candidateDocument.player.pendingGameCenter
+                .pending(for: playerID)?.pendingHighScore,
+            777
         )
         XCTAssertEqual(
             result.candidateDocument.player.pendingGameCenter
+                .pending(for: playerID)?
                 .pendingAchievementPercents[LaunchAchievementID.firstRead],
             100
         )
-        XCTAssertEqual(result.candidateDocument.player.career.completedRuns, 0)
-        XCTAssertEqual(result.candidateDocument.player.career.highestScore, 0)
+        XCTAssertEqual(
+            result.candidateDocument.player.pendingGameCenter.unboundPending
+                .pendingHighScore,
+            123
+        )
+        XCTAssertEqual(result.candidateDocument.player.career.completedRuns, 1)
+        XCTAssertEqual(result.candidateDocument.player.career.highestScore, 777)
     }
 
     func testAchievementSeedRejectsDuplicateIDWithoutTrapping() throws {
@@ -1431,7 +1540,7 @@ private extension CloudProfileHydratorTests {
             }
         )
         document.player.rewardedAdState = RewardedAdState()
-        document.player.pendingGameCenter = GameCenterSubmissionQueue()
+        document.player.pendingGameCenter = PlayerScopedGameCenterQueueV1()
         document.pendingLedgerEntryIDs = []
         document.settlementReceipts = [:]
         document.rewardedRunObservations = [:]
@@ -1476,12 +1585,12 @@ private extension CloudProfileHydratorTests {
             for update in updates {
                 document.player.achievementProgress[update.current.id]
                     = update.current
-                document.player.pendingGameCenter.enqueueAchievement(
+                document.player.pendingGameCenter.enqueueUnboundAchievement(
                     update.current
                 )
             }
             if CompletedRunValidator.isNaturallyCompleted(record.run) {
-                document.player.pendingGameCenter.enqueueHighScore(
+                document.player.pendingGameCenter.enqueueUnboundHighScore(
                     record.run.score
                 )
             }
@@ -1726,11 +1835,11 @@ private struct CloudProfileHydratorUnusedCloud: CloudSyncTransport {
 }
 
 private extension CloudProfileHydrationSourceV1 {
-    var envelope: PlayerProfileEnvelopeV3 {
+    var envelope: PlayerProfileEnvelopeV4 {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .millisecondsSince1970
         return try! decoder.decode(
-            PlayerProfileEnvelopeV3.self,
+            PlayerProfileEnvelopeV4.self,
             from: exactEnvelopeBytes
         )
     }

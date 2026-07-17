@@ -792,11 +792,13 @@ struct ProfileHydrationJournalV1: Codable, Equatable, Sendable {
         _ document: LocalPlayerDocumentV1,
         limits: ProfileHydrationLimits
     ) throws {
-        let counts = [
+        var counts = [
             document.player.completedRuns.count,
             document.player.ledger.count,
             document.player.achievementProgress.count,
-            document.player.pendingGameCenter.pendingAchievementPercents.count,
+            document.player.pendingGameCenter.pendingByPlayerID.count,
+            document.player.pendingGameCenter.unboundPending
+                .pendingAchievementPercents.count,
             document.pendingLedgerEntryIDs.count,
             document.settlementReceipts.count,
             document.rewardedRunObservations?.count ?? 0,
@@ -805,6 +807,15 @@ struct ProfileHydrationJournalV1: Codable, Equatable, Sendable {
             document.player.inventory.ownedFootballIDs.count,
             document.player.selection.value.selectedJerseyByTeam.count,
         ]
+        for (playerID, pending) in document.player.pendingGameCenter.pendingByPlayerID {
+            let bytes = playerID.rawValue.utf8
+            guard !bytes.isEmpty,
+                  bytes.count <= limits.maximumIdentifierBytes,
+                  !bytes.contains(where: { $0 < 0x20 || $0 == 0x7f }) else {
+                throw ProfileHydrationJournalValidationError.identifierLimitExceeded
+            }
+            counts.append(pending.pendingAchievementPercents.count)
+        }
         var total = 0
         for count in counts {
             let (next, overflow) = total.addingReportingOverflow(count)

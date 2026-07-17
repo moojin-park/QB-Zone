@@ -695,6 +695,133 @@ final class ProfileHydrationJournalTests: XCTestCase, @unchecked Sendable {
             )
         }
     }
+
+    func testPlayerScopedGameCenterBucketsParticipateInNestedJournalBounds()
+        throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let playerA = GameCenterPlayerID("journal-player-a")
+        let playerB = GameCenterPlayerID("journal-player-b")
+        var candidate = fixture.candidateDocument
+        for (achievementID, percent) in [
+            (LaunchAchievementID.firstRead, 25),
+            (LaunchAchievementID.paydirt, 50),
+            (LaunchAchievementID.dialedIn, 75),
+        ] {
+            candidate.player.achievementProgress[achievementID] =
+                AchievementProgress(
+                    id: achievementID,
+                    percentComplete: percent
+                )
+        }
+        candidate.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                playerA: GameCenterPendingMaximaV1(
+                    pendingAchievementPercents: [
+                        LaunchAchievementID.firstRead: 25,
+                        LaunchAchievementID.paydirt: 50,
+                    ]
+                ),
+                playerB: GameCenterPendingMaximaV1(
+                    pendingAchievementPercents: [
+                        LaunchAchievementID.dialedIn: 75,
+                    ]
+                ),
+            ],
+            unboundPending: GameCenterPendingMaximaV1(
+                pendingAchievementPercents: [
+                    LaunchAchievementID.hotHand: 20,
+                    LaunchAchievementID.lightUpTheBoard: 30,
+                ]
+            )
+        )
+        let candidateEnvelope = try PlayerProfileMigrator().encode(
+            candidate,
+            savedAt: fixture.date.addingTimeInterval(1)
+        )
+        let journal = try fixture.makeJournal(
+            candidateEnvelope: candidateEnvelope
+        )
+        let baseCount = [
+            candidate.player.completedRuns.count,
+            candidate.player.ledger.count,
+            candidate.player.achievementProgress.count,
+            candidate.pendingLedgerEntryIDs.count,
+            candidate.settlementReceipts.count,
+            candidate.rewardedRunObservations?.count ?? 0,
+            candidate.player.inventory.ownedTeamIDs.count,
+            candidate.player.inventory.ownedJerseyIDs.count,
+            candidate.player.inventory.ownedFootballIDs.count,
+            candidate.player.selection.value.selectedJerseyByTeam.count,
+        ].reduce(0, +)
+        let gameCenterCount = candidate.player.pendingGameCenter
+            .pendingByPlayerID.count
+            + candidate.player.pendingGameCenter.unboundPending
+                .pendingAchievementPercents.count
+            + candidate.player.pendingGameCenter.pendingByPlayerID.values
+                .reduce(0) { $0 + $1.pendingAchievementPercents.count }
+        let exactCandidateCount = baseCount + gameCenterCount
+
+        XCTAssertNoThrow(
+            try journal.validate(
+                limits: fixture.limits(
+                    maximumProfileCollectionEntries: exactCandidateCount
+                )
+            )
+        )
+        XCTAssertThrowsError(
+            try journal.validate(
+                limits: fixture.limits(
+                    maximumProfileCollectionEntries: exactCandidateCount - 1
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProfileHydrationJournalValidationError,
+                .profileCollectionLimitExceeded
+            )
+        }
+    }
+
+    func testPlayerScopedGameCenterIDParticipatesInJournalIdentifierBounds()
+        throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        var candidate = fixture.candidateDocument
+        candidate.player.achievementProgress[LaunchAchievementID.firstRead] =
+            AchievementProgress(
+                id: LaunchAchievementID.firstRead,
+                percentComplete: 1
+            )
+        candidate.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                GameCenterPlayerID(String(repeating: "p", count: 81)):
+                    GameCenterPendingMaximaV1(
+                        pendingAchievementPercents: [
+                            LaunchAchievementID.firstRead: 1,
+                        ]
+                    ),
+            ]
+        )
+        let candidateEnvelope = try PlayerProfileMigrator().encode(
+            candidate,
+            savedAt: fixture.date.addingTimeInterval(1)
+        )
+        let journal = try fixture.makeJournal(
+            candidateEnvelope: candidateEnvelope
+        )
+
+        XCTAssertThrowsError(
+            try journal.validate(
+                limits: fixture.limits(maximumIdentifierBytes: 80)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProfileHydrationJournalValidationError,
+                .identifierLimitExceeded
+            )
+        }
+    }
 }
 
 private struct ProfileHydrationCheckpointMapEncodingProbe: Encodable {

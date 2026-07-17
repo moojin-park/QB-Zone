@@ -12,6 +12,128 @@ enum LocalProfileHydrationBarrierError: Error, Equatable, Sendable {
     case targetCleanupConfirmationMismatch
 }
 
+enum LocalGameCenterSubmissionError: Error, Equatable, Sendable {
+    case submissionAuthorityMismatch
+    case invalidLaunchAchievementSet
+    case invalidPendingHighScore(Int)
+    case invalidPendingAchievementPercent(
+        achievementID: AchievementID,
+        percentComplete: Int
+    )
+    case unsupportedPendingAchievementIDs([AchievementID])
+}
+
+/// Pure fail-closed planning shared by durable repository preparation and
+/// focused validation tests. It accepts only the exact eight launch IDs and
+/// never mutates the queue it inspects.
+enum LocalGameCenterSubmissionPlanner {
+    static func batch(
+        for playerID: GameCenterPlayerID,
+        queue: GameCenterPendingMaximaV1
+    ) throws -> GameCenterSubmissionBatch? {
+        guard queue.pendingHighScore >= 0 else {
+            throw LocalGameCenterSubmissionError.invalidPendingHighScore(
+                queue.pendingHighScore
+            )
+        }
+        let launchAchievements = AchievementCatalog.launch
+        let launchAchievementIDs = Set(launchAchievements.map(\.id))
+        guard launchAchievements.count == 8,
+              launchAchievementIDs.count == 8 else {
+            throw LocalGameCenterSubmissionError.invalidLaunchAchievementSet
+        }
+        let pendingAchievementIDs = Set(
+            queue.pendingAchievementPercents.keys
+        )
+        let unsupportedAchievementIDs = pendingAchievementIDs
+            .subtracting(launchAchievementIDs)
+            .sorted { $0.rawValue < $1.rawValue }
+        guard unsupportedAchievementIDs.isEmpty else {
+            throw LocalGameCenterSubmissionError
+                .unsupportedPendingAchievementIDs(unsupportedAchievementIDs)
+        }
+        for achievementID in pendingAchievementIDs.sorted(
+            by: { $0.rawValue < $1.rawValue }
+        ) {
+            guard let percent = queue.pendingAchievementPercents[achievementID],
+                  (0 ... 100).contains(percent) else {
+                throw LocalGameCenterSubmissionError
+                    .invalidPendingAchievementPercent(
+                        achievementID: achievementID,
+                        percentComplete: queue.pendingAchievementPercents[
+                            achievementID
+                        ] ?? -1
+                    )
+            }
+        }
+        let achievements = queue.pendingAchievementPercents
+            .filter { $0.value > 0 }
+            .map {
+                GameCenterAchievementSubmission(
+                    id: $0.key,
+                    percentComplete: $0.value
+                )
+            }
+            .sorted { $0.id.rawValue < $1.id.rawValue }
+        let batch = GameCenterSubmissionBatch(
+            playerID: playerID,
+            highScore: queue.pendingHighScore > 0
+                ? queue.pendingHighScore
+                : nil,
+            achievements: achievements
+        )
+        return batch.isEmpty ? nil : batch
+    }
+}
+
+/// Strong process identities make a prepared Game Center submission an opaque
+/// capability rather than a caller-constructible identifier. The repository
+/// retains its identity for its full lifetime and each preparation owns a
+/// distinct submission identity.
+final class LocalGameCenterSubmissionRepositoryIdentity: Sendable {
+    fileprivate init() {}
+}
+
+final class LocalGameCenterSubmissionIdentity: Sendable {
+    fileprivate init() {}
+}
+
+struct LocalGameCenterPreparedSubmissionV1: Equatable, Sendable {
+    let batch: GameCenterSubmissionBatch
+
+    private let repositoryIdentity: LocalGameCenterSubmissionRepositoryIdentity
+    private let submissionIdentity: LocalGameCenterSubmissionIdentity
+    private let session: ProfileSessionToken
+
+    fileprivate init(
+        repositoryIdentity: LocalGameCenterSubmissionRepositoryIdentity,
+        submissionIdentity: LocalGameCenterSubmissionIdentity,
+        session: ProfileSessionToken,
+        batch: GameCenterSubmissionBatch
+    ) {
+        self.repositoryIdentity = repositoryIdentity
+        self.submissionIdentity = submissionIdentity
+        self.session = session
+        self.batch = batch
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.repositoryIdentity === rhs.repositoryIdentity
+            && lhs.submissionIdentity === rhs.submissionIdentity
+            && lhs.session == rhs.session
+            && lhs.batch == rhs.batch
+    }
+
+    fileprivate func wasIssued(
+        by repositoryIdentity: LocalGameCenterSubmissionRepositoryIdentity,
+        for session: ProfileSessionToken
+    ) -> Bool {
+        self.repositoryIdentity === repositoryIdentity
+            && self.session == session
+            && batch.playerID.rawValue.isEmpty == false
+    }
+}
+
 /// Retained by every capability so allocator reuse cannot make a later
 /// repository instance appear to own an earlier hydration admission.
 fileprivate final class LocalProfileHydrationRepositoryIdentity: Sendable {}
@@ -113,6 +235,8 @@ actor LocalPlayerProfileRepository {
     private var persistedArtifact: CanonicalProfileEnvelopeArtifactV1?
     private var pendingReplacementIntent: ExactProfileReplacementIntentV1?
     private let hydrationRepositoryIdentity = LocalProfileHydrationRepositoryIdentity()
+    private let gameCenterSubmissionRepositoryIdentity =
+        LocalGameCenterSubmissionRepositoryIdentity()
     private var activeHydrationBarrier: ActiveHydrationBarrier?
     private let sessionNonce: UUID
     private var sessionIsActive = false
@@ -346,6 +470,65 @@ actor LocalPlayerProfileRepository {
         )
     }
 
+    /// Freezes the current durable maxima into one exact, player-bound
+    /// submission capability. Creating mutation authority is forbidden while
+    /// hydration owns the repository barrier.
+    func prepareGameCenterSubmission(
+        for playerID: GameCenterPlayerID,
+        session: ProfileSessionToken
+    ) throws -> LocalGameCenterPreparedSubmissionV1? {
+        let current = try requireActiveDocument()
+        try validateSession(session, against: current)
+        try rejectAuthorityProductionDuringHydration()
+
+        guard let pending = current.player.pendingGameCenter.pending(for: playerID),
+              let batch = try LocalGameCenterSubmissionPlanner.batch(
+            for: playerID,
+            queue: pending
+        ) else { return nil }
+
+        return LocalGameCenterPreparedSubmissionV1(
+            repositoryIdentity: gameCenterSubmissionRepositoryIdentity,
+            submissionIdentity: LocalGameCenterSubmissionIdentity(),
+            session: session,
+            batch: batch
+        )
+    }
+
+    /// Removes only values proven submitted by the exact prepared capability.
+    /// A later maximum survives an older acknowledgement. The branded success
+    /// value is constructible only by the delivery coordinator after GameKit
+    /// success and same-player revalidation.
+    @discardableResult
+    func acknowledgeGameCenterSubmission(
+        _ submission: LocalGameCenterPreparedSubmissionV1,
+        successfulResult: GameCenterSuccessfulSubmissionV1,
+        session: ProfileSessionToken,
+        at date: Date = Date()
+    ) throws -> LocalPlayerProfileSnapshot {
+        try Task.checkCancellation()
+        var next = try requireActiveDocument()
+        try validateSession(session, against: next)
+        try rejectMutationDuringHydration()
+        guard submission.wasIssued(
+            by: gameCenterSubmissionRepositoryIdentity,
+            for: session
+        ), successfulResult.confirms(submission) else {
+            throw LocalGameCenterSubmissionError.submissionAuthorityMismatch
+        }
+
+        let pendingBeforeAcknowledgement = next.player.pendingGameCenter
+        let handled = next.player.pendingGameCenter.acknowledge(submission.batch)
+        guard handled,
+              next.player.pendingGameCenter != pendingBeforeAcknowledgement else {
+            return try makeSnapshot(for: next)
+        }
+
+        try incrementRevisions(of: &next, economyChanged: false)
+        try persist(next, at: date)
+        return try makeSnapshot(for: next)
+    }
+
     /// Adopts only the exact candidate whose target checkpoint cleanup was
     /// confirmed by the transaction store. Invalid candidates or foreign proof
     /// retain the mutation barrier. A successful adoption is the sole target
@@ -548,10 +731,13 @@ actor LocalPlayerProfileRepository {
         )
         for update in achievementUpdates {
             next.player.achievementProgress[update.current.id] = update.current
-            next.player.pendingGameCenter.enqueueAchievement(update.current)
+            // No proof-bearing GameKit identity spans run start and settlement
+            // yet. Preserve progress without silently assigning it to whichever
+            // account happens to authenticate later.
+            next.player.pendingGameCenter.enqueueUnboundAchievement(update.current)
         }
         if CompletedRunValidator.isNaturallyCompleted(run) {
-            next.player.pendingGameCenter.enqueueHighScore(run.score)
+            next.player.pendingGameCenter.enqueueUnboundHighScore(run.score)
         }
 
         var rewardedOfferUnlocked: RewardOfferID?

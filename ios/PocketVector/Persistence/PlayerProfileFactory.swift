@@ -46,7 +46,7 @@ enum PlayerProfileFactory {
                 career: CareerStatistics(),
                 achievementProgress: achievements,
                 rewardedAdState: RewardedAdState(),
-                pendingGameCenter: GameCenterSubmissionQueue()
+                pendingGameCenter: PlayerScopedGameCenterQueueV1()
             ),
             economyRevision: 0,
             pendingLedgerEntryIDs: [],
@@ -225,6 +225,12 @@ enum PlayerProfileValidator {
         }
 
         let launchIDs = Set(AchievementCatalog.launch.map(\.id))
+        guard player.pendingGameCenter.pendingByPlayerID.count
+                <= PlayerScopedGameCenterQueueV1.maximumPlayerBucketCount else {
+            throw ProfileValidationError.tooManyPendingGameCenterPlayers(
+                player.pendingGameCenter.pendingByPlayerID.count
+            )
+        }
         for (key, progress) in player.achievementProgress {
             guard key == progress.id,
                   launchIDs.contains(key),
@@ -233,9 +239,48 @@ enum PlayerProfileValidator {
                 throw ProfileValidationError.invalidAchievementProgress(key)
             }
         }
-        for (achievementID, percent) in player.pendingGameCenter.pendingAchievementPercents {
-            guard launchIDs.contains(achievementID), (0 ... 100).contains(percent) else {
-                throw ProfileValidationError.invalidAchievementProgress(achievementID)
+        func validatePending(_ pending: GameCenterPendingMaximaV1) throws {
+            guard pending.pendingHighScore >= 0 else {
+                throw ProfileValidationError.invalidPendingGameCenterHighScore(
+                    pending.pendingHighScore
+                )
+            }
+            for (achievementID, percent) in pending.pendingAchievementPercents {
+                guard launchIDs.contains(achievementID), (0 ... 100).contains(percent) else {
+                    throw ProfileValidationError.invalidAchievementProgress(achievementID)
+                }
+            }
+        }
+        try validatePending(player.pendingGameCenter.unboundPending)
+        for (playerID, pending) in player.pendingGameCenter.pendingByPlayerID {
+            guard GameCenterPlayerIDRuleV1.isValid(playerID) else {
+                throw ProfileValidationError.invalidPendingGameCenterPlayerID(playerID)
+            }
+            guard !pending.isEmpty else {
+                throw ProfileValidationError.emptyPendingGameCenterPlayerBucket(playerID)
+            }
+            try validatePending(pending)
+            guard pending.pendingHighScore <= player.career.highestScore else {
+                throw ProfileValidationError
+                    .pendingGameCenterHighScoreExceedsCareer(
+                        playerID: playerID,
+                        pendingHighScore: pending.pendingHighScore,
+                        earnedHighScore: player.career.highestScore
+                    )
+            }
+            for (achievementID, pendingPercent) in
+                pending.pendingAchievementPercents {
+                let earnedPercent = player.achievementProgress[achievementID]?
+                    .percentComplete ?? 0
+                guard pendingPercent <= earnedPercent else {
+                    throw ProfileValidationError
+                        .pendingGameCenterAchievementExceedsProgress(
+                            playerID: playerID,
+                            achievementID: achievementID,
+                            pendingPercent: pendingPercent,
+                            earnedPercent: earnedPercent
+                        )
+                }
             }
         }
     }

@@ -188,7 +188,7 @@ struct PlayerDocumentV1: Codable, Equatable, Sendable {
     var career: CareerStatistics
     var achievementProgress: [AchievementID: AchievementProgress]
     var rewardedAdState: RewardedAdState
-    var pendingGameCenter: GameCenterSubmissionQueue
+    var pendingGameCenter: PlayerScopedGameCenterQueueV1
 }
 
 enum ProfileSyncStatus: String, Codable, Equatable, Sendable {

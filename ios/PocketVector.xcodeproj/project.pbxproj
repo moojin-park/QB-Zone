@@ -120,6 +120,8 @@
 		1F000000000000000000000A /* CloudProfileHydratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000A /* CloudProfileHydratorTests.swift */; };
 		1F000000000000000000000F /* StoreKitRuntimeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000F /* StoreKitRuntimeCoordinator.swift */; };
 		1F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift */; };
+		1F000000000000000000000D /* GameCenterDeliveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000D /* GameCenterDeliveryCoordinator.swift */; };
+		1F000000000000000000000E /* GameCenterDeliveryCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000E /* GameCenterDeliveryCoordinatorTests.swift */; };
 		120000000000000000000007 /* GameCenterServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000007 /* GameCenterServiceTests.swift */; };
 		120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000008 /* StoreTransactionServiceTests.swift */; };
 		120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000009 /* RewardedAdServiceTests.swift */; };
@@ -255,6 +257,8 @@
 		2F000000000000000000000A /* CloudProfileHydratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudProfileHydratorTests.swift; sourceTree = "<group>"; };
 		2F000000000000000000000F /* StoreKitRuntimeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitRuntimeCoordinator.swift; sourceTree = "<group>"; };
 		2F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitRuntimeCoordinatorTests.swift; sourceTree = "<group>"; };
+		2F000000000000000000000D /* GameCenterDeliveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterDeliveryCoordinator.swift; sourceTree = "<group>"; };
+		2F000000000000000000000E /* GameCenterDeliveryCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterDeliveryCoordinatorTests.swift; sourceTree = "<group>"; };
 		220000000000000000000007 /* GameCenterServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000008 /* StoreTransactionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTransactionServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000009 /* RewardedAdServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdServiceTests.swift; sourceTree = "<group>"; };
@@ -390,6 +394,7 @@
 				210000000000000000000011 /* EconomyAchievementTests.swift */,
 				220000000000000000000007 /* GameCenterServiceTests.swift */,
 				250000000000000000000002 /* GameKitGameCenterAdapterTests.swift */,
+				2F000000000000000000000E /* GameCenterDeliveryCoordinatorTests.swift */,
 				220000000000000000000008 /* StoreTransactionServiceTests.swift */,
 				220000000000000000000009 /* RewardedAdServiceTests.swift */,
 				22000000000000000000000A /* CloudSyncServiceTests.swift */,
@@ -478,6 +483,7 @@
 			children = (
 				220000000000000000000001 /* GameCenterServices.swift */,
 				250000000000000000000001 /* GameKitGameCenterAdapter.swift */,
+				2F000000000000000000000D /* GameCenterDeliveryCoordinator.swift */,
 				220000000000000000000002 /* StoreTransactionServices.swift */,
 				270000000000000000000005 /* StoreKit2TransactionAdapter.swift */,
 				2F000000000000000000000F /* StoreKitRuntimeCoordinator.swift */,
@@ -699,6 +705,7 @@
 				120000000000000000000006 /* DiagnosticsServices.swift in Sources */,
 				12000000000000000000000C /* ServiceAccountBindings.swift in Sources */,
 				150000000000000000000001 /* GameKitGameCenterAdapter.swift in Sources */,
+				1F000000000000000000000D /* GameCenterDeliveryCoordinator.swift in Sources */,
 				160000000000000000000001 /* LaunchVisualIdentity.swift in Sources */,
 				170000000000000000000001 /* ProductionAppComposition.swift in Sources */,
 				170000000000000000000003 /* CloudKitCloudSyncAdapter.swift in Sources */,
@@ -754,6 +761,7 @@
 				110000000000000000000011 /* EconomyAchievementTests.swift in Sources */,
 				120000000000000000000007 /* GameCenterServiceTests.swift in Sources */,
 				150000000000000000000002 /* GameKitGameCenterAdapterTests.swift in Sources */,
+				1F000000000000000000000E /* GameCenterDeliveryCoordinatorTests.swift in Sources */,
 				120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */,
 				120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */,
 				12000000000000000000000A /* CloudSyncServiceTests.swift in Sources */,

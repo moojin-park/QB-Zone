@@ -84,12 +84,32 @@ struct PlayerProfileEnvelopeV3: Codable, Equatable, Sendable {
     }
 }
 
+/// Canonical local profile envelope. V4 replaces the unscoped Game Center
+/// submission queue with player-keyed buckets plus an explicit unbound
+/// quarantine. V1-V3 remain legacy decode formats only.
+struct PlayerProfileEnvelopeV4: Codable, Equatable, Sendable {
+    static let formatIdentifier = PlayerProfileEnvelopeV1.formatIdentifier
+    static let schemaVersion = 4
+
+    let format: String
+    let schemaVersion: Int
+    let savedAt: Date
+    let document: LocalPlayerDocumentV1
+
+    init(document: LocalPlayerDocumentV1, savedAt: Date) {
+        format = Self.formatIdentifier
+        schemaVersion = Self.schemaVersion
+        self.savedAt = savedAt
+        self.document = document
+    }
+}
+
 /// The complete authority returned by local profile persistence. Callers retain
-/// these exact canonical V3 bytes for compare-and-swap; reconstructing an
+/// these exact canonical V4 bytes for compare-and-swap; reconstructing an
 /// envelope from `document` is not equivalent because `savedAt` is part of the
 /// persisted identity.
 struct CanonicalProfileEnvelopeArtifactV1: Equatable, Sendable {
-    let envelope: PlayerProfileEnvelopeV3
+    let envelope: PlayerProfileEnvelopeV4
     let exactBytes: Data
     let digest: ProfileHydrationDigest
 
@@ -102,7 +122,7 @@ struct CanonicalProfileEnvelopeArtifactV1: Equatable, Sendable {
     }
 }
 
-/// A decoded envelope before its source schema is rewritten to canonical V3.
+/// A decoded envelope before its source schema is rewritten to canonical V4.
 /// In particular, this preserves a legacy envelope's original `savedAt` value.
 struct DecodedProfileEnvelopeArtifactV1: Equatable, Sendable {
     let sourceSchemaVersion: Int
@@ -388,6 +408,21 @@ enum ProfileValidationError: Error, Equatable {
     case invalidSettings
     case invalidSettingsStamp
     case invalidAchievementProgress(AchievementID)
+    case invalidPendingGameCenterPlayerID(GameCenterPlayerID)
+    case tooManyPendingGameCenterPlayers(Int)
+    case emptyPendingGameCenterPlayerBucket(GameCenterPlayerID)
+    case invalidPendingGameCenterHighScore(Int)
+    case pendingGameCenterHighScoreExceedsCareer(
+        playerID: GameCenterPlayerID,
+        pendingHighScore: Int,
+        earnedHighScore: Int
+    )
+    case pendingGameCenterAchievementExceedsProgress(
+        playerID: GameCenterPlayerID,
+        achievementID: AchievementID,
+        pendingPercent: Int,
+        earnedPercent: Int
+    )
     case invalidRewardedAdState
     case invalidRewardedRunObservation(RunID)
     case missingRewardedRunObservations

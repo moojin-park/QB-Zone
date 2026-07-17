@@ -4,7 +4,7 @@ import Foundation
 /// Sets become JSON arrays under Swift Codable, so JSON sorted keys alone do
 /// not make their element order deterministic.
 enum PlayerProfileCanonicalEnvelopeEncoderV1 {
-    static func encode(_ envelope: PlayerProfileEnvelopeV3) throws -> Data {
+    static func encode(_ envelope: PlayerProfileEnvelopeV4) throws -> Data {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -23,6 +23,7 @@ enum PlayerProfileCanonicalEnvelopeEncoderV1 {
         "completedRuns",
         "ledger",
         "pendingAchievementPercents",
+        "pendingByPlayerID",
         "rewardedRunObservations",
         "selectedJerseyByTeam",
         "settlementReceipts",
@@ -86,6 +87,277 @@ enum PlayerProfileCanonicalEnvelopeEncoderV1 {
     }
 }
 
+/// A bounded syntax and duplicate-member pass that runs before Foundation
+/// decoding. JSONDecoder exposes only the final value for duplicate object
+/// names, so checking keyed containers after decode is too late to preserve
+/// conflicting persistence evidence.
+private enum PlayerProfileRawJSONPreflightV1 {
+    private static let maximumDepth = 128
+    private static let maximumStructuralTokens = 1_000_000
+
+    private enum Failure: Error {
+        case invalid
+    }
+
+    static func validate(_ data: Data) throws {
+        guard data.count <= ProfileHydrationLimits.production
+                .maximumProfileEnvelopeBytes,
+              String(data: data, encoding: .utf8) != nil else {
+            throw Failure.invalid
+        }
+        var parser = Parser(bytes: Array(data))
+        try parser.parseDocument()
+    }
+
+    private struct Parser {
+        let bytes: [UInt8]
+        var index = 0
+        var structuralTokenCount = 0
+
+        mutating func parseDocument() throws {
+            skipWhitespace()
+            try parseValue(depth: 0)
+            skipWhitespace()
+            guard index == bytes.count else { throw Failure.invalid }
+        }
+
+        mutating func parseValue(depth: Int) throws {
+            try consumeStructuralToken()
+            guard index < bytes.count else { throw Failure.invalid }
+            switch bytes[index] {
+            case 0x7b:
+                try parseObject(depth: depth)
+            case 0x5b:
+                try parseArray(depth: depth)
+            case 0x22:
+                _ = try parseString(returnDecodedValue: false)
+            case 0x74:
+                try consumeLiteral([0x74, 0x72, 0x75, 0x65])
+            case 0x66:
+                try consumeLiteral([0x66, 0x61, 0x6c, 0x73, 0x65])
+            case 0x6e:
+                try consumeLiteral([0x6e, 0x75, 0x6c, 0x6c])
+            case 0x2d, 0x30 ... 0x39:
+                try parseNumber()
+            default:
+                throw Failure.invalid
+            }
+        }
+
+        mutating func parseObject(depth: Int) throws {
+            guard depth < PlayerProfileRawJSONPreflightV1.maximumDepth else {
+                throw Failure.invalid
+            }
+            index += 1
+            skipWhitespace()
+            if consume(0x7d) { return }
+
+            var decodedNames: Set<String> = []
+            while true {
+                try consumeStructuralToken()
+                guard index < bytes.count, bytes[index] == 0x22,
+                      let name = try parseString(returnDecodedValue: true) else {
+                    throw Failure.invalid
+                }
+                guard decodedNames.insert(name).inserted else {
+                    throw Failure.invalid
+                }
+                skipWhitespace()
+                guard consume(0x3a) else { throw Failure.invalid }
+                skipWhitespace()
+                try parseValue(depth: depth + 1)
+                skipWhitespace()
+                if consume(0x7d) { return }
+                guard consume(0x2c) else { throw Failure.invalid }
+                skipWhitespace()
+            }
+        }
+
+        mutating func parseArray(depth: Int) throws {
+            guard depth < PlayerProfileRawJSONPreflightV1.maximumDepth else {
+                throw Failure.invalid
+            }
+            index += 1
+            skipWhitespace()
+            if consume(0x5d) { return }
+
+            while true {
+                try parseValue(depth: depth + 1)
+                skipWhitespace()
+                if consume(0x5d) { return }
+                guard consume(0x2c) else { throw Failure.invalid }
+                skipWhitespace()
+            }
+        }
+
+        mutating func parseString(
+            returnDecodedValue: Bool
+        ) throws -> String? {
+            guard consume(0x22) else { throw Failure.invalid }
+            var decodedUTF8: [UInt8] = []
+
+            while index < bytes.count {
+                let byte = bytes[index]
+                index += 1
+                if byte == 0x22 {
+                    guard returnDecodedValue else { return nil }
+                    guard let decoded = String(
+                        bytes: decodedUTF8,
+                        encoding: .utf8
+                    ) else {
+                        throw Failure.invalid
+                    }
+                    return decoded
+                }
+                guard byte >= 0x20 else { throw Failure.invalid }
+                if byte != 0x5c {
+                    if returnDecodedValue { decodedUTF8.append(byte) }
+                    continue
+                }
+
+                guard index < bytes.count else { throw Failure.invalid }
+                let escape = bytes[index]
+                index += 1
+                switch escape {
+                case 0x22, 0x5c, 0x2f:
+                    if returnDecodedValue { decodedUTF8.append(escape) }
+                case 0x62:
+                    if returnDecodedValue { decodedUTF8.append(0x08) }
+                case 0x66:
+                    if returnDecodedValue { decodedUTF8.append(0x0c) }
+                case 0x6e:
+                    if returnDecodedValue { decodedUTF8.append(0x0a) }
+                case 0x72:
+                    if returnDecodedValue { decodedUTF8.append(0x0d) }
+                case 0x74:
+                    if returnDecodedValue { decodedUTF8.append(0x09) }
+                case 0x75:
+                    let first = try parseHexCodeUnit()
+                    let scalarValue: UInt32
+                    if (0xd800 ... 0xdbff).contains(first) {
+                        guard index + 1 < bytes.count,
+                              bytes[index] == 0x5c,
+                              bytes[index + 1] == 0x75 else {
+                            throw Failure.invalid
+                        }
+                        index += 2
+                        let second = try parseHexCodeUnit()
+                        guard (0xdc00 ... 0xdfff).contains(second) else {
+                            throw Failure.invalid
+                        }
+                        scalarValue = 0x1_0000
+                            + (UInt32(first - 0xd800) << 10)
+                            + UInt32(second - 0xdc00)
+                    } else {
+                        guard !(0xdc00 ... 0xdfff).contains(first) else {
+                            throw Failure.invalid
+                        }
+                        scalarValue = UInt32(first)
+                    }
+                    if returnDecodedValue {
+                        guard let scalar = Unicode.Scalar(scalarValue) else {
+                            throw Failure.invalid
+                        }
+                        decodedUTF8.append(contentsOf: String(scalar).utf8)
+                    }
+                default:
+                    throw Failure.invalid
+                }
+            }
+            throw Failure.invalid
+        }
+
+        mutating func parseHexCodeUnit() throws -> UInt16 {
+            guard index + 4 <= bytes.count else { throw Failure.invalid }
+            var result: UInt16 = 0
+            for _ in 0 ..< 4 {
+                result = result << 4
+                switch bytes[index] {
+                case 0x30 ... 0x39:
+                    result += UInt16(bytes[index] - 0x30)
+                case 0x41 ... 0x46:
+                    result += UInt16(bytes[index] - 0x41 + 10)
+                case 0x61 ... 0x66:
+                    result += UInt16(bytes[index] - 0x61 + 10)
+                default:
+                    throw Failure.invalid
+                }
+                index += 1
+            }
+            return result
+        }
+
+        mutating func parseNumber() throws {
+            _ = consume(0x2d)
+            guard index < bytes.count else { throw Failure.invalid }
+            if consume(0x30) {
+                guard index == bytes.count
+                        || !(0x30 ... 0x39).contains(bytes[index]) else {
+                    throw Failure.invalid
+                }
+            } else {
+                guard consumeDigit(in: 0x31 ... 0x39) else {
+                    throw Failure.invalid
+                }
+                while consumeDigit(in: 0x30 ... 0x39) {}
+            }
+            if consume(0x2e) {
+                guard consumeDigit(in: 0x30 ... 0x39) else {
+                    throw Failure.invalid
+                }
+                while consumeDigit(in: 0x30 ... 0x39) {}
+            }
+            if consume(0x65) || consume(0x45) {
+                _ = consume(0x2b) || consume(0x2d)
+                guard consumeDigit(in: 0x30 ... 0x39) else {
+                    throw Failure.invalid
+                }
+                while consumeDigit(in: 0x30 ... 0x39) {}
+            }
+        }
+
+        mutating func consumeLiteral(_ literal: [UInt8]) throws {
+            guard index + literal.count <= bytes.count,
+                  Array(bytes[index ..< index + literal.count]) == literal else {
+                throw Failure.invalid
+            }
+            index += literal.count
+        }
+
+        mutating func consumeStructuralToken() throws {
+            structuralTokenCount += 1
+            guard structuralTokenCount
+                    <= PlayerProfileRawJSONPreflightV1.maximumStructuralTokens else {
+                throw Failure.invalid
+            }
+        }
+
+        mutating func skipWhitespace() {
+            while index < bytes.count,
+                  bytes[index] == 0x20 || bytes[index] == 0x09
+                    || bytes[index] == 0x0a || bytes[index] == 0x0d {
+                index += 1
+            }
+        }
+
+        mutating func consume(_ byte: UInt8) -> Bool {
+            guard index < bytes.count, bytes[index] == byte else { return false }
+            index += 1
+            return true
+        }
+
+        mutating func consumeDigit(
+            in range: ClosedRange<UInt8>
+        ) -> Bool {
+            guard index < bytes.count, range.contains(bytes[index]) else {
+                return false
+            }
+            index += 1
+            return true
+        }
+    }
+}
+
 protocol PlayerProfileMigrating: Sendable {
     func decodeArtifact(_ data: Data) throws -> DecodedProfileEnvelopeArtifactV1
     func canonicalArtifact(
@@ -111,8 +383,8 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
     }
 
     /// V1 and V2 predate persisted field counters. Keeping their decoding
-    /// shape private prevents a declared V3 document from receiving a default
-    /// counter when either required field is absent.
+    /// shape private prevents a declared V3-or-later document from receiving a
+    /// default counter when either required field is absent.
     private struct LegacyStamped<Value: Decodable>: Decodable {
         let value: Value
         let modifiedAt: Date
@@ -131,9 +403,9 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
         let career: CareerStatistics
         let achievementProgress: [AchievementID: AchievementProgress]
         let rewardedAdState: RewardedAdState
-        let pendingGameCenter: GameCenterSubmissionQueue
+        let pendingGameCenter: LegacyGameCenterSubmissionQueueV1
 
-        func migratingFieldCounters() -> PlayerDocumentV1 {
+        func migratingFieldCountersAndGameCenterQueue() -> PlayerDocumentV1 {
             PlayerDocumentV1(
                 profileID: profileID,
                 revision: revision,
@@ -156,7 +428,9 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
                 career: career,
                 achievementProgress: achievementProgress,
                 rewardedAdState: rewardedAdState,
-                pendingGameCenter: pendingGameCenter
+                pendingGameCenter: PlayerScopedGameCenterQueueV1(
+                    quarantining: pendingGameCenter
+                )
             )
         }
     }
@@ -169,10 +443,10 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
         let settlementReceipts: [RunID: RunSettlementOutcome]
         let rewardedRunObservations: [RunID: RewardedRunObservation]?
 
-        func migratingFieldCounters() -> LocalPlayerDocumentV1 {
+        func migratingFieldCountersAndGameCenterQueue() -> LocalPlayerDocumentV1 {
             LocalPlayerDocumentV1(
                 accountIdentity: accountIdentity,
-                player: player.migratingFieldCounters(),
+                player: player.migratingFieldCountersAndGameCenterQueue(),
                 economyRevision: economyRevision,
                 pendingLedgerEntryIDs: pendingLedgerEntryIDs,
                 settlementReceipts: settlementReceipts,
@@ -188,7 +462,76 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
         let document: LegacyLocalPlayerDocumentV1
     }
 
+    /// V3 has explicit field counters but still persists the old global Game
+    /// Center queue. Decode that exact shape and move it only to unbound.
+    private struct LegacyPlayerDocumentV3: Decodable {
+        let profileID: UUID
+        let revision: UInt64
+        let createdAt: Date
+        let settings: Stamped<PlayerSettings>
+        let selection: Stamped<PlayerSelection>
+        let inventory: PlayerInventory
+        let completedRuns: [RunID: CompletedRunRecord]
+        let ledger: [LedgerEntryID: CoinLedgerEntry]
+        let career: CareerStatistics
+        let achievementProgress: [AchievementID: AchievementProgress]
+        let rewardedAdState: RewardedAdState
+        let pendingGameCenter: LegacyGameCenterSubmissionQueueV1
+
+        func migratingGameCenterQueue() -> PlayerDocumentV1 {
+            PlayerDocumentV1(
+                profileID: profileID,
+                revision: revision,
+                createdAt: createdAt,
+                settings: settings,
+                selection: selection,
+                inventory: inventory,
+                completedRuns: completedRuns,
+                ledger: ledger,
+                career: career,
+                achievementProgress: achievementProgress,
+                rewardedAdState: rewardedAdState,
+                pendingGameCenter: PlayerScopedGameCenterQueueV1(
+                    quarantining: pendingGameCenter
+                )
+            )
+        }
+    }
+
+    private struct LegacyLocalPlayerDocumentV3: Decodable {
+        let accountIdentity: PlayerAccountIdentity
+        let player: LegacyPlayerDocumentV3
+        let economyRevision: UInt64
+        let pendingLedgerEntryIDs: Set<LedgerEntryID>
+        let settlementReceipts: [RunID: RunSettlementOutcome]
+        let rewardedRunObservations: [RunID: RewardedRunObservation]?
+
+        func migratingGameCenterQueue() -> LocalPlayerDocumentV1 {
+            LocalPlayerDocumentV1(
+                accountIdentity: accountIdentity,
+                player: player.migratingGameCenterQueue(),
+                economyRevision: economyRevision,
+                pendingLedgerEntryIDs: pendingLedgerEntryIDs,
+                settlementReceipts: settlementReceipts,
+                rewardedRunObservations: rewardedRunObservations
+            )
+        }
+    }
+
+    private struct LegacyEnvelopeV3: Decodable {
+        let format: String
+        let schemaVersion: Int
+        let savedAt: Date
+        let document: LegacyLocalPlayerDocumentV3
+    }
+
     func decodeArtifact(_ data: Data) throws -> DecodedProfileEnvelopeArtifactV1 {
+        do {
+            try PlayerProfileRawJSONPreflightV1.validate(data)
+        } catch {
+            throw ProfileMigrationError.malformedEnvelope
+        }
+
         let header: EnvelopeHeader
         do {
             header = try Self.makeDecoder().decode(EnvelopeHeader.self, from: data)
@@ -196,7 +539,7 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
             throw ProfileMigrationError.malformedEnvelope
         }
 
-        guard header.format == PlayerProfileEnvelopeV3.formatIdentifier else {
+        guard header.format == PlayerProfileEnvelopeV4.formatIdentifier else {
             throw ProfileMigrationError.unexpectedFormat(header.format)
         }
 
@@ -209,7 +552,8 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
                       envelope.savedAt.timeIntervalSince1970.isFinite else {
                     throw ProfileMigrationError.malformedEnvelope
                 }
-                let document = envelope.document.migratingFieldCounters()
+                let document = envelope.document
+                    .migratingFieldCountersAndGameCenterQueue()
                 return DecodedProfileEnvelopeArtifactV1(
                     sourceSchemaVersion: envelope.schemaVersion,
                     savedAt: envelope.savedAt,
@@ -231,7 +575,8 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
                 return DecodedProfileEnvelopeArtifactV1(
                     sourceSchemaVersion: envelope.schemaVersion,
                     savedAt: envelope.savedAt,
-                    document: envelope.document.migratingFieldCounters()
+                    document: envelope.document
+                        .migratingFieldCountersAndGameCenterQueue()
                 )
             } catch let error as ProfileMigrationError {
                 throw error
@@ -241,9 +586,28 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
         case PlayerProfileEnvelopeV3.schemaVersion:
             do {
                 let envelope = try Self.makeDecoder()
-                    .decode(PlayerProfileEnvelopeV3.self, from: data)
+                    .decode(LegacyEnvelopeV3.self, from: data)
                 guard envelope.format == PlayerProfileEnvelopeV3.formatIdentifier,
                       envelope.schemaVersion == PlayerProfileEnvelopeV3.schemaVersion,
+                      envelope.savedAt.timeIntervalSince1970.isFinite else {
+                    throw ProfileMigrationError.malformedEnvelope
+                }
+                return DecodedProfileEnvelopeArtifactV1(
+                    sourceSchemaVersion: envelope.schemaVersion,
+                    savedAt: envelope.savedAt,
+                    document: envelope.document.migratingGameCenterQueue()
+                )
+            } catch let error as ProfileMigrationError {
+                throw error
+            } catch {
+                throw ProfileMigrationError.malformedEnvelope
+            }
+        case PlayerProfileEnvelopeV4.schemaVersion:
+            do {
+                let envelope = try Self.makeDecoder()
+                    .decode(PlayerProfileEnvelopeV4.self, from: data)
+                guard envelope.format == PlayerProfileEnvelopeV4.formatIdentifier,
+                      envelope.schemaVersion == PlayerProfileEnvelopeV4.schemaVersion,
                       envelope.savedAt.timeIntervalSince1970.isFinite else {
                     throw ProfileMigrationError.malformedEnvelope
                 }
@@ -270,7 +634,7 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
               savedAt.timeIntervalSince1970.isFinite else {
             throw ProfileMigrationError.malformedEnvelope
         }
-        let envelope = PlayerProfileEnvelopeV3(
+        let envelope = PlayerProfileEnvelopeV4(
             document: document,
             savedAt: savedAt
         )

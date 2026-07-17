@@ -12,7 +12,31 @@ struct GameCenterPlayerID: RawRepresentable, Codable, Hashable, Sendable, Custom
         self.init(rawValue: rawValue)
     }
 
+    /// Persisted input must reach the profile validator without invoking the
+    /// stricter direct-construction precondition. Preserve the provider text
+    /// byte-for-byte; validation, not decoding, decides whether it is usable.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        rawValue = try container.decode(String.self)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
     var description: String { rawValue }
+}
+
+enum GameCenterPlayerIDRuleV1 {
+    static let maximumUTF8ByteCount = 256
+
+    static func isValid(_ value: GameCenterPlayerID) -> Bool {
+        let bytes = value.rawValue.utf8
+        return !bytes.isEmpty
+            && bytes.count <= maximumUTF8ByteCount
+            && !bytes.contains(where: { $0 < 0x20 || $0 == 0x7f })
+    }
 }
 
 enum GameCenterUnavailableReason: String, Codable, Equatable, Sendable {
@@ -68,92 +92,35 @@ protocol GameCenterServicing: Sendable {
     func requestPresentation(_ destination: GameCenterPresentationDestination) async throws
 }
 
-struct AccountScopedGameCenterQueue: Codable, Equatable, Sendable {
-    private struct Pending: Codable, Equatable, Sendable {
-        var highScore: Int?
-        var achievementPercents: [AchievementID: Int]
+typealias AccountScopedGameCenterQueue = PlayerScopedGameCenterQueueV1
 
-        var isEmpty: Bool {
-            highScore == nil && achievementPercents.isEmpty
-        }
-    }
-
-    private var pendingByPlayer: [GameCenterPlayerID: Pending] = [:]
-
-    mutating func enqueueHighScore(_ score: Int, for playerID: GameCenterPlayerID) {
-        var pending = pendingByPlayer[playerID] ?? Pending(
-            highScore: nil,
-            achievementPercents: [:]
-        )
-        let normalizedScore = max(0, score)
-        pending.highScore = max(pending.highScore ?? normalizedScore, normalizedScore)
-        pendingByPlayer[playerID] = pending
-    }
-
-    mutating func enqueueAchievement(
-        id: AchievementID,
-        percentComplete: Int,
-        for playerID: GameCenterPlayerID
-    ) {
-        var pending = pendingByPlayer[playerID] ?? Pending(
-            highScore: nil,
-            achievementPercents: [:]
-        )
-        let normalizedPercent = min(100, max(0, percentComplete))
-        pending.achievementPercents[id] = max(
-            pending.achievementPercents[id, default: 0],
-            normalizedPercent
-        )
-        pendingByPlayer[playerID] = pending
-    }
-
+extension PlayerScopedGameCenterQueueV1 {
     func batch(for playerID: GameCenterPlayerID) -> GameCenterSubmissionBatch? {
-        guard let pending = pendingByPlayer[playerID], !pending.isEmpty else {
+        guard let pending = pendingByPlayerID[playerID], !pending.isEmpty else {
             return nil
         }
 
-        let achievements = pending.achievementPercents
+        let achievements = pending.pendingAchievementPercents
+            .filter { $0.value > 0 }
             .map { GameCenterAchievementSubmission(id: $0.key, percentComplete: $0.value) }
             .sorted { $0.id.rawValue < $1.id.rawValue }
 
         return GameCenterSubmissionBatch(
             playerID: playerID,
-            highScore: pending.highScore,
+            highScore: pending.pendingHighScore > 0 ? pending.pendingHighScore : nil,
             achievements: achievements
         )
     }
 
-    @discardableResult
-    mutating func acknowledge(_ batch: GameCenterSubmissionBatch) -> Bool {
-        guard var current = pendingByPlayer[batch.playerID] else { return false }
-
-        if let submittedScore = batch.highScore,
-           let currentScore = current.highScore,
-           currentScore <= submittedScore {
-            current.highScore = nil
-        }
-
-        for submitted in batch.achievements {
-            guard let currentPercent = current.achievementPercents[submitted.id],
-                  currentPercent <= submitted.percentComplete else {
-                continue
-            }
-            current.achievementPercents.removeValue(forKey: submitted.id)
-        }
-
-        if current.isEmpty {
-            pendingByPlayer.removeValue(forKey: batch.playerID)
-        } else {
-            pendingByPlayer[batch.playerID] = current
-        }
-        return true
-    }
-
     func pendingPlayerIDs() -> Set<GameCenterPlayerID> {
-        Set(pendingByPlayer.keys)
+        Set(pendingByPlayerID.keys)
     }
 }
 
+#if DEBUG
+/// Test-only service double. Release builds must use a future trusted GameKit
+/// factory in the delivery coordinator's file rather than an in-memory success
+/// provider that could clear durable submission authority.
 actor InMemoryGameCenterService: GameCenterServicing {
     private var state: GameCenterAuthenticationState
     private var authenticationResult: GameCenterAuthenticationState
@@ -215,6 +182,7 @@ actor InMemoryGameCenterService: GameCenterServicing {
         presentationFailure = failure
     }
 }
+#endif
 
 enum GameCenterServiceError: Error, Equatable, Sendable {
     case notAuthenticated

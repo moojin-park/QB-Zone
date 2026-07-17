@@ -83,6 +83,145 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testValidatorRejectsDecodedNegativePendingGameCenterHighScore() throws {
+        let malformedQueue = try decodedGameCenterQueue(
+            pendingHighScore: -500,
+            achievementID: LaunchAchievementID.firstRead,
+            percentComplete: 25
+        )
+        XCTAssertEqual(malformedQueue.pendingHighScore, -500)
+        var document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "negative-game-center-score",
+            createdAt: baseDate
+        )
+        document.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            unboundPending: malformedQueue
+        )
+        let migrator = PlayerProfileMigrator()
+        let envelope = try migrator.encode(document, savedAt: baseDate)
+        let decoded = try migrator.decode(envelope)
+
+        XCTAssertThrowsError(try PlayerProfileValidator.validate(decoded)) {
+            XCTAssertEqual(
+                $0 as? ProfileValidationError,
+                .invalidPendingGameCenterHighScore(-500)
+            )
+        }
+    }
+
+    func testValidatorRejectsMalformedPlayerScopedGameCenterBuckets() throws {
+        let overLimitCount = PlayerScopedGameCenterQueueV1
+            .maximumPlayerBucketCount + 1
+        var tooManyPlayers = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "too-many-game-center-players",
+            createdAt: baseDate
+        )
+        tooManyPlayers.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: Dictionary(
+                uniqueKeysWithValues: (0 ..< overLimitCount).map { index in
+                    (
+                        GameCenterPlayerID("bounded-player-\(index)"),
+                        GameCenterPendingMaximaV1(pendingHighScore: index + 1)
+                    )
+                }
+            )
+        )
+        XCTAssertThrowsError(
+            try PlayerProfileValidator.validate(tooManyPlayers)
+        ) {
+            XCTAssertEqual(
+                $0 as? ProfileValidationError,
+                .tooManyPendingGameCenterPlayers(overLimitCount)
+            )
+        }
+
+        let invalidPlayerID = GameCenterPlayerID("invalid\nplayer")
+        var invalidPlayer = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "invalid-game-center-player",
+            createdAt: baseDate
+        )
+        invalidPlayer.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                invalidPlayerID: GameCenterPendingMaximaV1(
+                    pendingHighScore: 1
+                ),
+            ]
+        )
+        XCTAssertThrowsError(
+            try PlayerProfileValidator.validate(invalidPlayer)
+        ) {
+            XCTAssertEqual(
+                $0 as? ProfileValidationError,
+                .invalidPendingGameCenterPlayerID(invalidPlayerID)
+            )
+        }
+
+        let emptyPlayerID = GameCenterPlayerID("empty-bucket-player")
+        var emptyBucket = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "empty-game-center-bucket",
+            createdAt: baseDate
+        )
+        emptyBucket.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                emptyPlayerID: GameCenterPendingMaximaV1(),
+            ]
+        )
+        XCTAssertThrowsError(
+            try PlayerProfileValidator.validate(emptyBucket)
+        ) {
+            XCTAssertEqual(
+                $0 as? ProfileValidationError,
+                .emptyPendingGameCenterPlayerBucket(emptyPlayerID)
+            )
+        }
+    }
+
+    func testDecodedMalformedGameCenterPlayerIDsFailValidationWithoutTrapOrNormalization()
+        throws
+    {
+        let invalidRawValues = [
+            "",
+            String(
+                repeating: "p",
+                count: GameCenterPlayerIDRuleV1.maximumUTF8ByteCount + 1
+            ),
+            "control\nplayer",
+        ]
+
+        for (index, rawValue) in invalidRawValues.enumerated() {
+            let encodedRawValue = try JSONEncoder().encode(rawValue)
+            let playerID = try JSONDecoder().decode(
+                GameCenterPlayerID.self,
+                from: encodedRawValue
+            )
+            XCTAssertEqual(playerID.rawValue, rawValue)
+            XCTAssertEqual(try JSONEncoder().encode(playerID), encodedRawValue)
+            var document = PlayerProfileFactory.makeDefault(
+                accountIdentity: .local,
+                deviceID: "decoded-invalid-game-center-player-\(index)",
+                createdAt: baseDate
+            )
+            document.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+                pendingByPlayerID: [
+                    playerID: GameCenterPendingMaximaV1(pendingHighScore: 1),
+                ]
+            )
+            let original = document
+
+            XCTAssertThrowsError(try PlayerProfileValidator.validate(document)) {
+                XCTAssertEqual(
+                    $0 as? ProfileValidationError,
+                    .invalidPendingGameCenterPlayerID(playerID)
+                )
+            }
+            XCTAssertEqual(document, original)
+        }
+    }
+
     func testFreshProfileStoreRejectsInvalidDeviceIDWithoutWriting() throws {
         let directory = makeTemporaryDirectory()
         defer { removeTemporaryDirectory(directory) }
@@ -153,7 +292,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         }
     }
 
-    func testV3CanonicalFixtureIsExactAndIndependentOfCollectionInsertionOrder() throws {
+    func testV4CanonicalFixtureIsExactAndIndependentOfCollectionInsertionOrder() throws {
         let migrator = PlayerProfileMigrator()
         let fixture = makeCanonicalFixtureDocument(reverseCollections: false)
         let reordered = makeCanonicalFixtureDocument(reverseCollections: true)
@@ -169,7 +308,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(
             encoded,
             try PlayerProfileCanonicalEnvelopeEncoderV1.encode(
-                PlayerProfileEnvelopeV3(
+                PlayerProfileEnvelopeV4(
                     document: fixture,
                     savedAt: baseDate.addingTimeInterval(3)
                 )
@@ -185,14 +324,58 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let expected = [
             #"{"document":{"accountIdentity":"fixture-account","economyRevision":4,"pendingLedgerEntryIDs":[],"player":{"achievementProgress":["fixture-achievement-a",{"id":"fixture-achievement-a","percentComplete":25},"fixture-achievement-b",{"id":"fixture-achievement-b","percentComplete":75}],"career":{"attempts":0,"bonusTouchdowns":0,"completedRuns":0,"completions":0,"highestScore":0,"incompletions":0,"#,
             #""interceptions":0,"rewardEligibleRuns":0,"totalScore":0,"touchdowns":0},"completedRuns":[],"createdAt":1750000000000,"inventory":{"ownedFootballIDs":["fixture-football-a","fixture-football-b"],"ownedJerseyIDs":["fixture-jersey-a","fixture-jersey-b"],"ownedTeamIDs":["fixture-team-a","fixture-team-b"]},"ledger":[],"#,
-            #""pendingGameCenter":{"pendingAchievementPercents":["fixture-achievement-a",10,"fixture-achievement-b",20],"pendingHighScore":12345},"profileID":"12345678-1234-5678-9ABC-DEF012345678","revision":7,"rewardedAdState":{"accountedRunIDs":[{"rawValue":"00000000-0000-0000-0000-000000000990"},{"rawValue":"00000000-0000-0000-0000-000000000991"}],"cycle":2,"validRunsSinceReward":2},"#,
+            #""pendingGameCenter":{"pendingByPlayerID":[],"unboundPending":{"pendingAchievementPercents":["fixture-achievement-a",10,"fixture-achievement-b",20],"pendingHighScore":12345}},"profileID":"12345678-1234-5678-9ABC-DEF012345678","revision":7,"rewardedAdState":{"accountedRunIDs":[{"rawValue":"00000000-0000-0000-0000-000000000990"},{"rawValue":"00000000-0000-0000-0000-000000000991"}],"cycle":2,"validRunsSinceReward":2},"#,
             #""selection":{"deviceID":"fixture-selection-device","logicalCounter":11,"modifiedAt":1750000002000,"value":{"selectedFootballID":"fixture-football-a","selectedJerseyByTeam":["fixture-team-a","fixture-jersey-a","fixture-team-b","fixture-jersey-b"],"selectedTeamID":"fixture-team-a"}},"settings":{"deviceID":"fixture-settings-device","logicalCounter":9,"modifiedAt":1750000001000,"value":{"isMuted":true,"musicVolume":0.25,"reducedMotion":false,"sfxVolume":0.75,"tutorialCompleted":true}}},"#,
-            #""rewardedRunObservations":[{"rawValue":"00000000-0000-0000-0000-000000000990"},{"disposition":"candidate","observedCycle":2},{"rawValue":"00000000-0000-0000-0000-000000000991"},{"disposition":"ignoredWhileOfferPending","observedCycle":3}],"settlementReceipts":[]},"format":"com.pocketvector.player-profile","savedAt":1750000003000,"schemaVersion":3}"#,
+            #""rewardedRunObservations":[{"rawValue":"00000000-0000-0000-0000-000000000990"},{"disposition":"candidate","observedCycle":2},{"rawValue":"00000000-0000-0000-0000-000000000991"},{"disposition":"ignoredWhileOfferPending","observedCycle":3}],"settlementReceipts":[]},"format":"com.pocketvector.player-profile","savedAt":1750000003000,"schemaVersion":4}"#,
         ].joined()
         XCTAssertEqual(actual, expected)
     }
 
-    func testV3CanonicalBytesNormalizeEveryNonemptyTypedCollection() throws {
+    func testV4CanonicalBytesNormalizePlayerScopedGameCenterMapInsertionOrder()
+        throws
+    {
+        let playerA = GameCenterPlayerID("canonical-player-a")
+        let playerB = GameCenterPlayerID("canonical-player-b")
+        let maximaA = GameCenterPendingMaximaV1(
+            pendingAchievementPercents: [LaunchAchievementID.firstRead: 25]
+        )
+        let maximaB = GameCenterPendingMaximaV1(
+            pendingAchievementPercents: [LaunchAchievementID.paydirt: 75]
+        )
+        var forward = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "canonical-map-device",
+            createdAt: baseDate
+        )
+        forward.player.achievementProgress[LaunchAchievementID.firstRead] =
+            AchievementProgress(
+                id: LaunchAchievementID.firstRead,
+                percentComplete: 25
+            )
+        forward.player.achievementProgress[LaunchAchievementID.paydirt] =
+            AchievementProgress(
+                id: LaunchAchievementID.paydirt,
+                percentComplete: 75
+            )
+        var reversed = forward
+        forward.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [playerA: maximaA, playerB: maximaB]
+        )
+        reversed.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [playerB: maximaB, playerA: maximaA]
+        )
+
+        XCTAssertNoThrow(try PlayerProfileValidator.validate(forward))
+        XCTAssertNoThrow(try PlayerProfileValidator.validate(reversed))
+        let migrator = PlayerProfileMigrator()
+        let forwardBytes = try migrator.encode(forward, savedAt: baseDate)
+        let reversedBytes = try migrator.encode(reversed, savedAt: baseDate)
+
+        XCTAssertEqual(forwardBytes, reversedBytes)
+        XCTAssertEqual(try migrator.decode(forwardBytes), forward)
+    }
+
+    func testV4CanonicalBytesNormalizeEveryNonemptyTypedCollection() throws {
         let migrator = PlayerProfileMigrator()
         let forward = try makeCanonicalCollectionFixtureDocument(
             reverseCollections: false
@@ -269,10 +452,580 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(migrated.player.selection.deviceID, "legacy-counter-device")
             XCTAssertNoThrow(try PlayerProfileValidator.validate(migrated))
 
-            let v3 = try migrator.encode(migrated, savedAt: baseDate)
-            let decodedAgain = try migrator.decode(v3)
+            let v4 = try migrator.encode(migrated, savedAt: baseDate)
+            let decodedAgain = try migrator.decode(v4)
             XCTAssertEqual(decodedAgain.player.settings.logicalCounter, 7)
             XCTAssertEqual(decodedAgain.player.selection.logicalCounter, 7)
+        }
+    }
+
+    func testLegacyV1ThroughV3GameCenterMaximaMigrateOnlyToUnbound()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        let savedAt = baseDate.addingTimeInterval(77)
+        var original = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "legacy-game-center-device",
+            createdAt: baseDate
+        )
+        original.player.revision = 42
+        original.economyRevision = 43
+        original.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            unboundPending: GameCenterPendingMaximaV1(
+                pendingHighScore: 9_876,
+                pendingAchievementPercents: [
+                    LaunchAchievementID.firstRead: 0,
+                    LaunchAchievementID.paydirt: 75,
+                ]
+            )
+        )
+        let current = try migrator.encode(original, savedAt: savedAt)
+
+        for schemaVersion in [
+            PlayerProfileEnvelopeV1.schemaVersion,
+            PlayerProfileEnvelopeV2.schemaVersion,
+            PlayerProfileEnvelopeV3.schemaVersion,
+        ] {
+            let legacy = try envelopeData(
+                from: current,
+                schemaVersion: schemaVersion,
+                removingLogicalCounterFrom: schemaVersion < 3
+                    ? ["settings", "selection"]
+                    : [],
+                removeRewardedRunObservations: schemaVersion == 1
+            )
+            let migrated = try migrator.decodeArtifact(legacy)
+
+            XCTAssertEqual(migrated.sourceSchemaVersion, schemaVersion)
+            XCTAssertEqual(migrated.savedAt, savedAt)
+            XCTAssertEqual(migrated.document.player.revision, 42)
+            XCTAssertEqual(migrated.document.economyRevision, 43)
+            XCTAssertTrue(
+                migrated.document.player.pendingGameCenter
+                    .pendingByPlayerID.isEmpty
+            )
+            XCTAssertEqual(
+                migrated.document.player.pendingGameCenter.unboundPending,
+                GameCenterPendingMaximaV1(
+                    pendingHighScore: 9_876,
+                    pendingAchievementPercents: [
+                        LaunchAchievementID.paydirt: 75,
+                    ]
+                )
+            )
+            XCTAssertNoThrow(
+                try PlayerProfileValidator.validate(migrated.document)
+            )
+
+            let canonical = try migrator.canonicalArtifact(
+                for: migrated.document,
+                savedAt: migrated.savedAt
+            )
+            XCTAssertEqual(
+                try migrator.decodeArtifact(canonical.exactBytes)
+                    .sourceSchemaVersion,
+                PlayerProfileEnvelopeV4.schemaVersion
+            )
+        }
+    }
+
+    func testDeclaredV4RejectsLegacyGlobalGameCenterShape() throws {
+        let migrator = PlayerProfileMigrator()
+        let document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "strict-v4-game-center-device",
+            createdAt: baseDate
+        )
+        let canonical = try migrator.encode(document, savedAt: baseDate)
+        var envelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: canonical) as? [String: Any]
+        )
+        var localDocument = try XCTUnwrap(
+            envelope["document"] as? [String: Any]
+        )
+        var player = try XCTUnwrap(
+            localDocument["player"] as? [String: Any]
+        )
+        let scopedQueue = try XCTUnwrap(
+            player["pendingGameCenter"] as? [String: Any]
+        )
+        player["pendingGameCenter"] = try XCTUnwrap(
+            scopedQueue["unboundPending"] as? [String: Any]
+        )
+        localDocument["player"] = player
+        envelope["document"] = localDocument
+        let malformed = try JSONSerialization.data(
+            withJSONObject: envelope,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+
+        XCTAssertThrowsError(try migrator.decode(malformed)) {
+            XCTAssertEqual($0 as? ProfileMigrationError, .malformedEnvelope)
+        }
+    }
+
+    func testDeclaredV4RejectsDuplicateGameCenterDictionaryKeysWithoutRewrite()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        let playerID = GameCenterPlayerID("duplicate-map-player")
+        var document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "duplicate-map-device",
+            createdAt: baseDate
+        )
+        document.player.achievementProgress[LaunchAchievementID.firstRead] =
+            AchievementProgress(
+                id: LaunchAchievementID.firstRead,
+                percentComplete: 50
+            )
+        document.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                playerID: GameCenterPendingMaximaV1(
+                    pendingAchievementPercents: [
+                        LaunchAchievementID.firstRead: 25,
+                    ]
+                ),
+            ]
+        )
+        XCTAssertNoThrow(try PlayerProfileValidator.validate(document))
+        let canonical = try migrator.encode(document, savedAt: baseDate)
+        XCTAssertEqual(try migrator.decode(canonical), document)
+
+        for malformed in [
+            try envelopeAppendingDuplicateGameCenterPlayerID(canonical),
+            try envelopeAppendingDuplicateBoundGameCenterAchievementID(canonical),
+        ] {
+            let exactMalformedEvidence = malformed
+            XCTAssertNotEqual(malformed, canonical)
+            XCTAssertThrowsError(try migrator.decodeArtifact(malformed)) {
+                XCTAssertEqual(
+                    $0 as? ProfileMigrationError,
+                    .malformedEnvelope
+                )
+            }
+            XCTAssertEqual(malformed, exactMalformedEvidence)
+        }
+    }
+
+    func testRawJSONPreflightRejectsDuplicateQueueMembersAndEscapedEquivalentNames()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        let document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "raw-duplicate-member-device",
+            createdAt: baseDate
+        )
+        let current = try migrator.encode(document, savedAt: baseDate)
+        let currentText = try XCTUnwrap(
+            String(data: current, encoding: .utf8)
+        )
+        let currentMarker = #""pendingGameCenter":{"pendingByPlayerID":"#
+        let exactDuplicateText = currentText.replacingOccurrences(
+            of: currentMarker,
+            with: #""pendingGameCenter":{"pendingByPlayerID":[],"pendingByPlayerID":"#
+        )
+        let escapedDuplicateText = currentText.replacingOccurrences(
+            of: currentMarker,
+            with: #""pendingGameCenter":{"pendingByPlayer\u0049D":[],"pendingByPlayerID":"#
+        )
+        XCTAssertNotEqual(exactDuplicateText, currentText)
+        XCTAssertNotEqual(escapedDuplicateText, currentText)
+
+        var malformedInputs = [
+            Data(exactDuplicateText.utf8),
+            Data(escapedDuplicateText.utf8),
+        ]
+        for schemaVersion in [
+            PlayerProfileEnvelopeV1.schemaVersion,
+            PlayerProfileEnvelopeV2.schemaVersion,
+            PlayerProfileEnvelopeV3.schemaVersion,
+        ] {
+            let legacy = try envelopeData(
+                from: current,
+                schemaVersion: schemaVersion,
+                removingLogicalCounterFrom: schemaVersion < 3
+                    ? ["settings", "selection"]
+                    : [],
+                removeRewardedRunObservations: schemaVersion == 1
+            )
+            let legacyText = try XCTUnwrap(
+                String(data: legacy, encoding: .utf8)
+            )
+            let legacyMarker =
+                #""pendingGameCenter":{"pendingAchievementPercents":"#
+            let duplicateLegacyText = legacyText.replacingOccurrences(
+                of: legacyMarker,
+                with: #""pendingGameCenter":{"pendingAchievementPercents":[],"pendingAchievementPercents":"#
+            )
+            XCTAssertNotEqual(duplicateLegacyText, legacyText)
+            malformedInputs.append(Data(duplicateLegacyText.utf8))
+        }
+
+        for malformed in malformedInputs {
+            let exactMalformedEvidence = malformed
+            XCTAssertThrowsError(try migrator.decodeArtifact(malformed)) {
+                XCTAssertEqual(
+                    $0 as? ProfileMigrationError,
+                    .malformedEnvelope
+                )
+            }
+            XCTAssertEqual(malformed, exactMalformedEvidence)
+        }
+
+        let excessiveDepth = Data(
+            (String(repeating: "[", count: 129)
+                + "0"
+                + String(repeating: "]", count: 129)).utf8
+        )
+        XCTAssertThrowsError(try migrator.decodeArtifact(excessiveDepth)) {
+            XCTAssertEqual($0 as? ProfileMigrationError, .malformedEnvelope)
+        }
+    }
+
+    func testDeclaredSchemasRejectMixedGameCenterQueueMembersWithoutRewrite()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        let document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "mixed-queue-member-device",
+            createdAt: baseDate
+        )
+        let current = try migrator.encode(document, savedAt: baseDate)
+
+        var currentEnvelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: current) as? [String: Any]
+        )
+        var currentDocument = try XCTUnwrap(
+            currentEnvelope["document"] as? [String: Any]
+        )
+        var currentPlayer = try XCTUnwrap(
+            currentDocument["player"] as? [String: Any]
+        )
+        var scopedQueue = try XCTUnwrap(
+            currentPlayer["pendingGameCenter"] as? [String: Any]
+        )
+        scopedQueue["pendingHighScore"] = 10
+        scopedQueue["pendingAchievementPercents"] = []
+        currentPlayer["pendingGameCenter"] = scopedQueue
+        currentDocument["player"] = currentPlayer
+        currentEnvelope["document"] = currentDocument
+        let mixedCurrent = try JSONSerialization.data(
+            withJSONObject: currentEnvelope,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+        XCTAssertThrowsError(try migrator.decodeArtifact(mixedCurrent)) {
+            XCTAssertEqual($0 as? ProfileMigrationError, .malformedEnvelope)
+        }
+
+        for schemaVersion in [
+            PlayerProfileEnvelopeV1.schemaVersion,
+            PlayerProfileEnvelopeV3.schemaVersion,
+        ] {
+            let legacy = try envelopeData(
+                from: current,
+                schemaVersion: schemaVersion,
+                removingLogicalCounterFrom: schemaVersion < 3
+                    ? ["settings", "selection"]
+                    : [],
+                removeRewardedRunObservations: schemaVersion == 1
+            )
+            var envelope = try XCTUnwrap(
+                try JSONSerialization.jsonObject(with: legacy)
+                    as? [String: Any]
+            )
+            var localDocument = try XCTUnwrap(
+                envelope["document"] as? [String: Any]
+            )
+            var player = try XCTUnwrap(
+                localDocument["player"] as? [String: Any]
+            )
+            var legacyQueue = try XCTUnwrap(
+                player["pendingGameCenter"] as? [String: Any]
+            )
+            legacyQueue["pendingByPlayerID"] = []
+            legacyQueue["unboundPending"] = [
+                "pendingHighScore": 0,
+                "pendingAchievementPercents": [],
+            ]
+            player["pendingGameCenter"] = legacyQueue
+            localDocument["player"] = player
+            envelope["document"] = localDocument
+            let mixedLegacy = try JSONSerialization.data(
+                withJSONObject: envelope,
+                options: [.sortedKeys, .withoutEscapingSlashes]
+            )
+            let exactMalformedEvidence = mixedLegacy
+            XCTAssertThrowsError(try migrator.decodeArtifact(mixedLegacy)) {
+                XCTAssertEqual(
+                    $0 as? ProfileMigrationError,
+                    .malformedEnvelope
+                )
+            }
+            XCTAssertEqual(mixedLegacy, exactMalformedEvidence)
+        }
+    }
+
+    func testLegacyV1ThroughV3RejectDuplicateGameCenterAchievementKeysWithoutRewrite()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        var document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "legacy-duplicate-map-device",
+            createdAt: baseDate
+        )
+        document.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            unboundPending: GameCenterPendingMaximaV1(
+                pendingAchievementPercents: [
+                    LaunchAchievementID.firstRead: 25,
+                ]
+            )
+        )
+        let current = try migrator.encode(document, savedAt: baseDate)
+
+        for schemaVersion in [
+            PlayerProfileEnvelopeV1.schemaVersion,
+            PlayerProfileEnvelopeV2.schemaVersion,
+            PlayerProfileEnvelopeV3.schemaVersion,
+        ] {
+            let legacy = try envelopeData(
+                from: current,
+                schemaVersion: schemaVersion,
+                removingLogicalCounterFrom: schemaVersion < 3
+                    ? ["settings", "selection"]
+                    : [],
+                removeRewardedRunObservations: schemaVersion == 1
+            )
+            let valid = try migrator.decodeArtifact(legacy)
+            XCTAssertEqual(valid.sourceSchemaVersion, schemaVersion)
+            XCTAssertEqual(
+                valid.document.player.pendingGameCenter.unboundPending
+                    .pendingAchievementPercents[LaunchAchievementID.firstRead],
+                25
+            )
+
+            let malformed = try envelopeAppendingDuplicateLegacyGameCenterAchievementID(
+                legacy
+            )
+            let exactMalformedEvidence = malformed
+            XCTAssertThrowsError(try migrator.decodeArtifact(malformed)) {
+                XCTAssertEqual(
+                    $0 as? ProfileMigrationError,
+                    .malformedEnvelope
+                )
+            }
+            XCTAssertEqual(malformed, exactMalformedEvidence)
+        }
+    }
+
+    func testDeclaredV4RejectsBoundGameCenterMaximaAboveEarnedAuthorityWithoutWriting()
+        throws
+    {
+        let playerID = GameCenterPlayerID("unearned-maxima-player")
+        var unearnedScore = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "unearned-score-device",
+            createdAt: baseDate
+        )
+        unearnedScore.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                playerID: GameCenterPendingMaximaV1(pendingHighScore: 1),
+            ]
+        )
+
+        var unearnedAchievement = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "unearned-achievement-device",
+            createdAt: baseDate
+        )
+        unearnedAchievement.player.pendingGameCenter =
+            PlayerScopedGameCenterQueueV1(
+                pendingByPlayerID: [
+                    playerID: GameCenterPendingMaximaV1(
+                        pendingAchievementPercents: [
+                            LaunchAchievementID.firstRead: 1,
+                        ]
+                    ),
+                ]
+            )
+
+        let fixtures: [(LocalPlayerDocumentV1, ProfileValidationError)] = [
+            (
+                unearnedScore,
+                .pendingGameCenterHighScoreExceedsCareer(
+                    playerID: playerID,
+                    pendingHighScore: 1,
+                    earnedHighScore: 0
+                )
+            ),
+            (
+                unearnedAchievement,
+                .pendingGameCenterAchievementExceedsProgress(
+                    playerID: playerID,
+                    achievementID: LaunchAchievementID.firstRead,
+                    pendingPercent: 1,
+                    earnedPercent: 0
+                )
+            ),
+        ]
+        let migrator = PlayerProfileMigrator()
+
+        for (index, fixture) in fixtures.enumerated() {
+            let canonicalMalformed = try migrator.encode(
+                fixture.0,
+                savedAt: baseDate
+            )
+            let exactMalformedEvidence = canonicalMalformed
+            let decoded = try migrator.decodeArtifact(canonicalMalformed)
+            XCTAssertEqual(decoded.document, fixture.0)
+            XCTAssertThrowsError(
+                try PlayerProfileValidator.validate(decoded.document)
+            ) {
+                XCTAssertEqual($0 as? ProfileValidationError, fixture.1)
+            }
+            XCTAssertEqual(canonicalMalformed, exactMalformedEvidence)
+
+            let directory = makeTemporaryDirectory()
+            defer { removeTemporaryDirectory(directory) }
+            let store = AtomicProfileFileStore(directoryURL: directory)
+            XCTAssertThrowsError(
+                try store.save(decoded.document, at: baseDate, catalog: .approved)
+            ) {
+                XCTAssertEqual($0 as? ProfileValidationError, fixture.1)
+            }
+            let locations = ProfileStorageLocations(directoryURL: directory)
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: locations.primaryURL.path),
+                "Fixture \(index) must fail before primary persistence"
+            )
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: locations.backupURL.path),
+                "Fixture \(index) must fail before backup persistence"
+            )
+        }
+    }
+
+    func testAtomicStoreQuarantinesMalformedGameCenterAuthorityAndRecoversExactBackup()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        let validDocument = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "game-center-recovery-device",
+            createdAt: baseDate
+        )
+        let validBackup = try migrator.encode(
+            validDocument,
+            savedAt: baseDate
+        )
+        let validText = try XCTUnwrap(
+            String(data: validBackup, encoding: .utf8)
+        )
+        let queueMarker = #""pendingGameCenter":{"pendingByPlayerID":"#
+        let duplicateObjectMember = Data(
+            validText.replacingOccurrences(
+                of: queueMarker,
+                with: #""pendingGameCenter":{"pendingByPlayerID":[],"pendingByPlayerID":"#
+            ).utf8
+        )
+        XCTAssertNotEqual(duplicateObjectMember, validBackup)
+
+        var mixedEnvelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: validBackup)
+                as? [String: Any]
+        )
+        var mixedDocument = try XCTUnwrap(
+            mixedEnvelope["document"] as? [String: Any]
+        )
+        var mixedPlayer = try XCTUnwrap(
+            mixedDocument["player"] as? [String: Any]
+        )
+        var mixedQueue = try XCTUnwrap(
+            mixedPlayer["pendingGameCenter"] as? [String: Any]
+        )
+        mixedQueue["pendingHighScore"] = 10
+        mixedPlayer["pendingGameCenter"] = mixedQueue
+        mixedDocument["player"] = mixedPlayer
+        mixedEnvelope["document"] = mixedDocument
+        let mixedVersionQueue = try JSONSerialization.data(
+            withJSONObject: mixedEnvelope,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+
+        let playerID = GameCenterPlayerID("recovery-unearned-player")
+        var unearnedDocument = validDocument
+        unearnedDocument.player.pendingGameCenter =
+            PlayerScopedGameCenterQueueV1(
+                pendingByPlayerID: [
+                    playerID: GameCenterPendingMaximaV1(
+                        pendingHighScore: 1
+                    ),
+                ]
+            )
+        let unearnedBoundMaxima = try migrator.encode(
+            unearnedDocument,
+            savedAt: baseDate
+        )
+
+        for (name, malformedPrimary) in [
+            ("duplicate-object-member", duplicateObjectMember),
+            ("mixed-version-queue", mixedVersionQueue),
+            ("unearned-bound-maxima", unearnedBoundMaxima),
+        ] {
+            let directory = makeTemporaryDirectory().appendingPathComponent(
+                name,
+                isDirectory: true
+            )
+            defer { removeTemporaryDirectory(directory) }
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            let locations = ProfileStorageLocations(directoryURL: directory)
+            try malformedPrimary.write(
+                to: locations.primaryURL,
+                options: .atomic
+            )
+            try validBackup.write(to: locations.backupURL, options: .atomic)
+
+            let loaded = try AtomicProfileFileStore(directoryURL: directory)
+                .loadOrCreate(
+                    defaultDocument: validDocument,
+                    at: baseDate.addingTimeInterval(1),
+                    catalog: .approved
+                )
+
+            XCTAssertEqual(loaded.report.source, .backup, name)
+            XCTAssertEqual(loaded.artifact.exactBytes, validBackup, name)
+            XCTAssertEqual(
+                try Data(contentsOf: locations.primaryURL),
+                validBackup,
+                name
+            )
+            XCTAssertEqual(
+                try Data(contentsOf: locations.backupURL),
+                validBackup,
+                name
+            )
+            let quarantinedURL = try XCTUnwrap(
+                loaded.report.quarantinedURLs.first,
+                name
+            )
+            XCTAssertEqual(loaded.report.quarantinedURLs.count, 1, name)
+            XCTAssertEqual(
+                try Data(contentsOf: quarantinedURL),
+                malformedPrimary,
+                name
+            )
+            XCTAssertNotEqual(
+                try Data(contentsOf: quarantinedURL),
+                loaded.artifact.exactBytes,
+                name
+            )
         }
     }
 
@@ -347,7 +1100,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertNoThrow(try PlayerProfileValidator.validate(remoteClock))
     }
 
-    func testLegacyAndNoncanonicalLoadsDurablyRewriteExactCanonicalV3PreservingSavedAt()
+    func testLegacyAndNoncanonicalLoadsDurablyRewriteExactCanonicalV4PreservingSavedAt()
         throws
     {
         let migrator = PlayerProfileMigrator()
@@ -362,7 +1115,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         document.economyRevision = 7
         let canonical = try migrator.encode(document, savedAt: savedAt)
         let object = try JSONSerialization.jsonObject(with: canonical)
-        let noncanonicalV3 = try JSONSerialization.data(
+        let noncanonicalV4 = try JSONSerialization.data(
             withJSONObject: object,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         )
@@ -384,7 +1137,14 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
                     removingLogicalCounterFrom: ["settings", "selection"]
                 )
             ),
-            ("noncanonical-v3", noncanonicalV3),
+            (
+                "v3",
+                try envelopeData(
+                    from: canonical,
+                    schemaVersion: PlayerProfileEnvelopeV3.schemaVersion
+                )
+            ),
+            ("noncanonical-v4", noncanonicalV4),
         ]
 
         for (name, sourceBytes) in fixtures {
@@ -426,7 +1186,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             )
             XCTAssertEqual(
                 try migrator.decodeArtifact(primary).sourceSchemaVersion,
-                PlayerProfileEnvelopeV3.schemaVersion,
+                PlayerProfileEnvelopeV4.schemaVersion,
                 name
             )
             XCTAssertEqual(
@@ -456,9 +1216,245 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let decoded = try PlayerProfileMigrator().decodeArtifact(
             source.exactEnvelopeBytes
         )
-        XCTAssertEqual(decoded.sourceSchemaVersion, PlayerProfileEnvelopeV3.schemaVersion)
+        XCTAssertEqual(decoded.sourceSchemaVersion, PlayerProfileEnvelopeV4.schemaVersion)
         XCTAssertEqual(decoded.savedAt, baseDate)
         XCTAssertEqual(decoded.document.player.profileID, loaded.player.profileID)
+    }
+
+    func testGameCenterPreparationUsesExactDurableMaximaAndOmitsZeros() async throws {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        var document = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "test-device",
+            createdAt: baseDate
+        )
+        let playerID = GameCenterPlayerID("durable-maxima-player")
+        document.player.achievementProgress[LaunchAchievementID.paydirt] =
+            AchievementProgress(
+                id: LaunchAchievementID.paydirt,
+                percentComplete: 75
+            )
+        document.player.achievementProgress[LaunchAchievementID.dialedIn] =
+            AchievementProgress(
+                id: LaunchAchievementID.dialedIn,
+                percentComplete: 25
+            )
+        document.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                playerID: GameCenterPendingMaximaV1(
+                    pendingHighScore: 0,
+                    pendingAchievementPercents: [
+                        LaunchAchievementID.paydirt: 75,
+                        LaunchAchievementID.firstRead: 0,
+                        LaunchAchievementID.dialedIn: 25,
+                    ]
+                ),
+            ]
+        )
+        try AtomicProfileFileStore(directoryURL: directory).save(
+            document,
+            at: baseDate,
+            catalog: .approved
+        )
+        let repository = makeRepository(directory: directory)
+        let loaded = try await repository.load(at: baseDate)
+
+        let preparedCandidate = try await repository.prepareGameCenterSubmission(
+            for: playerID,
+            session: loaded.session
+        )
+        let prepared = try XCTUnwrap(preparedCandidate)
+
+        XCTAssertEqual(prepared.batch.playerID, playerID)
+        XCTAssertNil(prepared.batch.highScore)
+        XCTAssertEqual(
+            prepared.batch.achievements,
+            [
+                GameCenterAchievementSubmission(
+                    id: LaunchAchievementID.dialedIn,
+                    percentComplete: 25
+                ),
+                GameCenterAchievementSubmission(
+                    id: LaunchAchievementID.paydirt,
+                    percentComplete: 75
+                ),
+            ]
+        )
+    }
+
+    func testGameCenterPreparationNeverClaimsUnboundOrAnotherPlayerBucket()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let playerA = GameCenterPlayerID("prepared-player-a")
+        let playerB = GameCenterPlayerID("prepared-player-b")
+        var document = try makeCanonicalCollectionFixtureDocument(
+            reverseCollections: false
+        )
+        document.accountIdentity = .local
+        document.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                playerA: GameCenterPendingMaximaV1(pendingHighScore: 1_000),
+            ],
+            unboundPending: GameCenterPendingMaximaV1(pendingHighScore: 9_000)
+        )
+        try AtomicProfileFileStore(directoryURL: directory).save(
+            document,
+            at: baseDate,
+            catalog: .approved
+        )
+        let repository = makeRepository(directory: directory)
+        let loaded = try await repository.load(at: baseDate)
+
+        let preparedB = try await repository.prepareGameCenterSubmission(
+            for: playerB,
+            session: loaded.session
+        )
+        XCTAssertNil(preparedB)
+        let preparedACandidate = try await repository.prepareGameCenterSubmission(
+            for: playerA,
+            session: loaded.session
+        )
+        let preparedA = try XCTUnwrap(preparedACandidate)
+        XCTAssertEqual(preparedA.batch.highScore, 1_000)
+
+        let persisted = try decodePrimary(in: directory)
+        XCTAssertEqual(
+            persisted.player.pendingGameCenter.unboundPending.pendingHighScore,
+            9_000
+        )
+        XCTAssertEqual(
+            persisted.player.pendingGameCenter.pending(for: playerA)?
+                .pendingHighScore,
+            1_000
+        )
+    }
+
+    func testGameCenterSubmissionPlannerRejectsUnknownIDsSortedWithoutMutation()
+        throws
+    {
+        let unknownA = AchievementID("achievement.unknown.a")
+        let unknownZ = AchievementID("achievement.unknown.z")
+        let queue = GameCenterPendingMaximaV1(
+            pendingHighScore: 44_000,
+            pendingAchievementPercents: [
+                LaunchAchievementID.firstRead: 80,
+                unknownZ: 70,
+                unknownA: 60,
+            ]
+        )
+        let original = queue
+
+        XCTAssertThrowsError(
+            try LocalGameCenterSubmissionPlanner.batch(
+                for: GameCenterPlayerID("unsupported-achievement-player"),
+                queue: queue
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? LocalGameCenterSubmissionError,
+                .unsupportedPendingAchievementIDs([unknownA, unknownZ])
+            )
+        }
+        XCTAssertEqual(queue, original)
+        XCTAssertEqual(queue.pendingHighScore, 44_000)
+        XCTAssertEqual(
+            queue.pendingAchievementPercents,
+            original.pendingAchievementPercents
+        )
+    }
+
+    func testGameCenterSubmissionPlannerRejectsMalformedDecodedRanges() throws {
+        let invalidScore = try decodedGameCenterQueue(
+            pendingHighScore: -1,
+            achievementID: LaunchAchievementID.firstRead,
+            percentComplete: 50
+        )
+        XCTAssertThrowsError(
+            try LocalGameCenterSubmissionPlanner.batch(
+                for: GameCenterPlayerID("invalid-score-player"),
+                queue: invalidScore
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? LocalGameCenterSubmissionError,
+                .invalidPendingHighScore(-1)
+            )
+        }
+
+        let invalidPercent = try decodedGameCenterQueue(
+            pendingHighScore: 100,
+            achievementID: LaunchAchievementID.firstRead,
+            percentComplete: 101
+        )
+        XCTAssertEqual(
+            invalidPercent.pendingAchievementPercents[
+                LaunchAchievementID.firstRead
+            ],
+            101
+        )
+        XCTAssertThrowsError(
+            try LocalGameCenterSubmissionPlanner.batch(
+                for: GameCenterPlayerID("invalid-percent-player"),
+                queue: invalidPercent
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? LocalGameCenterSubmissionError,
+                .invalidPendingAchievementPercent(
+                    achievementID: LaunchAchievementID.firstRead,
+                    percentComplete: 101
+                )
+            )
+        }
+    }
+
+    func testGameCenterPreparationRejectsStaleSessionWithoutConsumingQueue()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        var document = try makeCanonicalCollectionFixtureDocument(
+            reverseCollections: false
+        )
+        document.accountIdentity = .local
+        let playerID = GameCenterPlayerID("stale-session-player")
+        document.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                playerID: GameCenterPendingMaximaV1(pendingHighScore: 7_000),
+            ]
+        )
+        try AtomicProfileFileStore(directoryURL: directory).save(
+            document,
+            at: baseDate,
+            catalog: .approved
+        )
+        let repository = makeRepository(directory: directory)
+        let loaded = try await repository.load(at: baseDate)
+        let staleSession = ProfileSessionToken(
+            accountIdentity: loaded.session.accountIdentity,
+            nonce: UUID(),
+            profileID: loaded.session.profileID
+        )
+
+        do {
+            _ = try await repository.prepareGameCenterSubmission(
+                for: playerID,
+                session: staleSession
+            )
+            XCTFail("A stale profile session must not produce submission authority")
+        } catch {
+            XCTAssertEqual(error as? LocalPlayerRepositoryError, .sessionMismatch)
+        }
+
+        let retainedCandidate = try await repository.prepareGameCenterSubmission(
+            for: playerID,
+            session: loaded.session
+        )
+        let retained = try XCTUnwrap(retainedCandidate)
+        XCTAssertEqual(retained.batch.highScore, 7_000)
     }
 
     func testHydrationBarrierBlocksEveryMutationAndAuthorityProducerAcrossSuspension()
@@ -487,6 +1483,12 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
                     "unlock.team.\(LaunchTeamID.lumaCoastPrisms.rawValue)"
                 ),
                 operationID: OperationID("barrier-prepare-unlock"),
+                session: loaded.session
+            )
+        }
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.prepareGameCenterSubmission(
+                for: GameCenterPlayerID("hydration-barrier-player"),
                 session: loaded.session
             )
         }
@@ -3550,7 +4552,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         )
         XCTAssertEqual(
             (persistedObject["schemaVersion"] as? NSNumber)?.intValue,
-            PlayerProfileEnvelopeV3.schemaVersion
+            PlayerProfileEnvelopeV4.schemaVersion
         )
         XCTAssertNil(
             document.player.ledger[
@@ -4699,18 +5701,11 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             createdAt: baseDate
         )
         let encoded = try migrator.encode(original, savedAt: baseDate)
-        guard var envelope = try JSONSerialization.jsonObject(with: encoded)
-            as? [String: Any],
-            var document = envelope["document"] as? [String: Any]
-        else {
-            return XCTFail("Expected a current profile envelope")
-        }
-        XCTAssertNotNil(document.removeValue(forKey: "rewardedRunObservations"))
-        envelope["document"] = document
-        envelope["schemaVersion"] = PlayerProfileEnvelopeV1.schemaVersion
-        let legacyData = try JSONSerialization.data(
-            withJSONObject: envelope,
-            options: [.sortedKeys]
+        let legacyData = try envelopeData(
+            from: encoded,
+            schemaVersion: PlayerProfileEnvelopeV1.schemaVersion,
+            removingLogicalCounterFrom: ["settings", "selection"],
+            removeRewardedRunObservations: true
         )
 
         let decoded = try migrator.decode(legacyData)
@@ -5177,9 +6172,11 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
                     validRunsSinceReward: 2,
                     accountedRunIDs: Set(order.map { runs[$0] })
                 ),
-                pendingGameCenter: GameCenterSubmissionQueue(
-                    pendingHighScore: 12_345,
-                    pendingAchievementPercents: pendingAchievements
+                pendingGameCenter: PlayerScopedGameCenterQueueV1(
+                    unboundPending: GameCenterPendingMaximaV1(
+                        pendingHighScore: 12_345,
+                        pendingAchievementPercents: pendingAchievements
+                    )
                 )
             ),
             economyRevision: 4,
@@ -5379,12 +6376,124 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             player[field] = stamp
         }
 
+        if schemaVersion <= PlayerProfileEnvelopeV3.schemaVersion {
+            let scopedQueue = try XCTUnwrap(
+                player["pendingGameCenter"] as? [String: Any]
+            )
+            let pendingByPlayerID = try XCTUnwrap(
+                scopedQueue["pendingByPlayerID"] as? [Any]
+            )
+            XCTAssertTrue(pendingByPlayerID.isEmpty)
+            player["pendingGameCenter"] = try XCTUnwrap(
+                scopedQueue["unboundPending"] as? [String: Any]
+            )
+        }
+
         document["player"] = player
         if removeRewardedRunObservations {
             XCTAssertNotNil(document.removeValue(forKey: "rewardedRunObservations"))
         }
         envelope["document"] = document
         envelope["schemaVersion"] = schemaVersion
+        return try JSONSerialization.data(
+            withJSONObject: envelope,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+    }
+
+    private func envelopeAppendingDuplicateGameCenterPlayerID(
+        _ source: Data
+    ) throws -> Data {
+        var envelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: source) as? [String: Any]
+        )
+        var document = try XCTUnwrap(envelope["document"] as? [String: Any])
+        var player = try XCTUnwrap(document["player"] as? [String: Any])
+        var queue = try XCTUnwrap(
+            player["pendingGameCenter"] as? [String: Any]
+        )
+        var pendingByPlayerID = try XCTUnwrap(
+            queue["pendingByPlayerID"] as? [Any]
+        )
+        XCTAssertEqual(pendingByPlayerID.count, 2)
+        var conflictingMaxima = try XCTUnwrap(
+            pendingByPlayerID[1] as? [String: Any]
+        )
+        var achievements = try XCTUnwrap(
+            conflictingMaxima["pendingAchievementPercents"] as? [Any]
+        )
+        XCTAssertEqual(achievements.count, 2)
+        achievements[1] = 10
+        conflictingMaxima["pendingAchievementPercents"] = achievements
+        pendingByPlayerID.append(pendingByPlayerID[0])
+        pendingByPlayerID.append(conflictingMaxima)
+        queue["pendingByPlayerID"] = pendingByPlayerID
+        player["pendingGameCenter"] = queue
+        document["player"] = player
+        envelope["document"] = document
+        return try JSONSerialization.data(
+            withJSONObject: envelope,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+    }
+
+    private func envelopeAppendingDuplicateBoundGameCenterAchievementID(
+        _ source: Data
+    ) throws -> Data {
+        var envelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: source) as? [String: Any]
+        )
+        var document = try XCTUnwrap(envelope["document"] as? [String: Any])
+        var player = try XCTUnwrap(document["player"] as? [String: Any])
+        var queue = try XCTUnwrap(
+            player["pendingGameCenter"] as? [String: Any]
+        )
+        var pendingByPlayerID = try XCTUnwrap(
+            queue["pendingByPlayerID"] as? [Any]
+        )
+        XCTAssertEqual(pendingByPlayerID.count, 2)
+        var maxima = try XCTUnwrap(
+            pendingByPlayerID[1] as? [String: Any]
+        )
+        var achievements = try XCTUnwrap(
+            maxima["pendingAchievementPercents"] as? [Any]
+        )
+        XCTAssertEqual(achievements.count, 2)
+        achievements.append(achievements[0])
+        achievements.append(10)
+        maxima["pendingAchievementPercents"] = achievements
+        pendingByPlayerID[1] = maxima
+        queue["pendingByPlayerID"] = pendingByPlayerID
+        player["pendingGameCenter"] = queue
+        document["player"] = player
+        envelope["document"] = document
+        return try JSONSerialization.data(
+            withJSONObject: envelope,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+    }
+
+    private func envelopeAppendingDuplicateLegacyGameCenterAchievementID(
+        _ source: Data
+    ) throws -> Data {
+        var envelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: source) as? [String: Any]
+        )
+        var document = try XCTUnwrap(envelope["document"] as? [String: Any])
+        var player = try XCTUnwrap(document["player"] as? [String: Any])
+        var queue = try XCTUnwrap(
+            player["pendingGameCenter"] as? [String: Any]
+        )
+        var achievements = try XCTUnwrap(
+            queue["pendingAchievementPercents"] as? [Any]
+        )
+        XCTAssertEqual(achievements.count, 2)
+        achievements.append(achievements[0])
+        achievements.append(10)
+        queue["pendingAchievementPercents"] = achievements
+        player["pendingGameCenter"] = queue
+        document["player"] = player
+        envelope["document"] = document
         return try JSONSerialization.data(
             withJSONObject: envelope,
             options: [.sortedKeys, .withoutEscapingSlashes]
@@ -5824,6 +6933,34 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             economyMutationPolicy: .allowLocalTesting,
             limits: limits,
             fileSystem: fileSystem
+        )
+    }
+
+    private func decodedGameCenterQueue(
+        pendingHighScore: Int,
+        achievementID: AchievementID,
+        percentComplete: Int
+    ) throws -> GameCenterPendingMaximaV1 {
+        let valid = GameCenterPendingMaximaV1(
+            pendingHighScore: 1,
+            pendingAchievementPercents: [achievementID: 1]
+        )
+        let validData = try JSONEncoder().encode(valid)
+        var object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: validData)
+                as? [String: Any]
+        )
+        object["pendingHighScore"] = pendingHighScore
+        var achievements = try XCTUnwrap(
+            object["pendingAchievementPercents"] as? [Any]
+        )
+        XCTAssertEqual(achievements.count, 2)
+        achievements[1] = percentComplete
+        object["pendingAchievementPercents"] = achievements
+        let malformedData = try JSONSerialization.data(withJSONObject: object)
+        return try JSONDecoder().decode(
+            GameCenterPendingMaximaV1.self,
+            from: malformedData
         )
     }
 

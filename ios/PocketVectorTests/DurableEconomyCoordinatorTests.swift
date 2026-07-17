@@ -1835,11 +1835,36 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
         encoder.outputFormatting = [.sortedKeys]
-        let legacyData = try encoder.encode(
+        let scopedV1Data = try encoder.encode(
             PlayerProfileEnvelopeV1(
                 document: legacyDocument,
                 savedAt: baseDate.addingTimeInterval(24_000)
             )
+        )
+        var legacyEnvelope = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: scopedV1Data)
+                as? [String: Any]
+        )
+        var legacyLocalDocument = try XCTUnwrap(
+            legacyEnvelope["document"] as? [String: Any]
+        )
+        var legacyPlayer = try XCTUnwrap(
+            legacyLocalDocument["player"] as? [String: Any]
+        )
+        let scopedQueue = try XCTUnwrap(
+            legacyPlayer["pendingGameCenter"] as? [String: Any]
+        )
+        XCTAssertTrue(
+            try XCTUnwrap(scopedQueue["pendingByPlayerID"] as? [Any]).isEmpty
+        )
+        legacyPlayer["pendingGameCenter"] = try XCTUnwrap(
+            scopedQueue["unboundPending"] as? [String: Any]
+        )
+        legacyLocalDocument["player"] = legacyPlayer
+        legacyEnvelope["document"] = legacyLocalDocument
+        let legacyData = try JSONSerialization.data(
+            withJSONObject: legacyEnvelope,
+            options: [.sortedKeys, .withoutEscapingSlashes]
         )
         try legacyData.write(to: locations.primaryURL, options: .atomic)
         try legacyData.write(to: locations.backupURL, options: .atomic)
@@ -1922,7 +1947,7 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         )
         XCTAssertEqual(
             (persistedObject["schemaVersion"] as? NSNumber)?.intValue,
-            PlayerProfileEnvelopeV3.schemaVersion
+            PlayerProfileEnvelopeV4.schemaVersion
         )
         XCTAssertNotNil(
             (persistedObject["document"] as? [String: Any])?["rewardedRunObservations"]

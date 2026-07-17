@@ -45,4 +45,82 @@ final class GameCenterServiceTests: XCTestCase {
         )
         XCTAssertEqual(queue.pendingPlayerIDs(), [playerA, playerB])
     }
+
+    func testAcknowledgementTouchesOnlyExactPlayerAndNeverUnbound() throws {
+        let playerA = GameCenterPlayerID("player-a")
+        let playerB = GameCenterPlayerID("player-b")
+        var queue = AccountScopedGameCenterQueue(
+            pendingByPlayerID: [
+                playerA: GameCenterPendingMaximaV1(pendingHighScore: 1_000),
+                playerB: GameCenterPendingMaximaV1(pendingHighScore: 2_000),
+            ],
+            unboundPending: GameCenterPendingMaximaV1(
+                pendingHighScore: 9_000,
+                pendingAchievementPercents: [
+                    LaunchAchievementID.firstRead: 100,
+                ]
+            )
+        )
+        let playerABefore = queue.pending(for: playerA)
+        let unboundBefore = queue.unboundPending
+        let playerBBatch = try XCTUnwrap(queue.batch(for: playerB))
+
+        XCTAssertTrue(queue.acknowledge(playerBBatch))
+
+        XCTAssertEqual(queue.pending(for: playerA), playerABefore)
+        XCTAssertEqual(queue.unboundPending, unboundBefore)
+        XCTAssertNil(queue.pending(for: playerB))
+        XCTAssertNil(queue.batch(for: GameCenterPlayerID("unrelated-player")))
+    }
+
+    func testUnboundWorkHasNoSubmissionPath() {
+        let playerID = GameCenterPlayerID("player-a")
+        let queue = AccountScopedGameCenterQueue(
+            unboundPending: GameCenterPendingMaximaV1(
+                pendingHighScore: 5_000,
+                pendingAchievementPercents: [
+                    LaunchAchievementID.firstRead: 50,
+                ]
+            )
+        )
+
+        XCTAssertNil(queue.batch(for: playerID))
+        XCTAssertTrue(queue.pendingPlayerIDs().isEmpty)
+    }
+
+    func testPlayerBucketOverflowAndInvalidPlayerIDFallBackToUnbound() {
+        var queue = AccountScopedGameCenterQueue()
+        for index in 0..<PlayerScopedGameCenterQueueV1.maximumPlayerBucketCount {
+            XCTAssertTrue(
+                queue.enqueueHighScore(
+                    1_000 + index,
+                    for: GameCenterPlayerID("player-\(index)")
+                )
+            )
+        }
+        let existing = queue.pendingByPlayerID
+
+        XCTAssertFalse(
+            queue.enqueueHighScore(
+                9_000,
+                for: GameCenterPlayerID("overflow-player")
+            )
+        )
+        XCTAssertFalse(
+            queue.enqueueAchievement(
+                id: LaunchAchievementID.firstRead,
+                percentComplete: 80,
+                for: GameCenterPlayerID("invalid\nplayer")
+            )
+        )
+
+        XCTAssertEqual(queue.pendingByPlayerID, existing)
+        XCTAssertEqual(queue.unboundPending.pendingHighScore, 9_000)
+        XCTAssertEqual(
+            queue.unboundPending.pendingAchievementPercents[
+                LaunchAchievementID.firstRead
+            ],
+            80
+        )
+    }
 }

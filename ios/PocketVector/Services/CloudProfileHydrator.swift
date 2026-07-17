@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// Exact logical profile-field clocks returned for journaling and later cloud
-/// publication. The same counters are embedded in the candidate V3 stamps;
+/// publication. The same counters are embedded in the candidate V4 stamps;
 /// this value groups them so a coordinator need not rediscover them.
 struct CloudProfileLocalMergeMetadataV1: Codable, Equatable, Sendable {
     static let schemaVersion = 1
@@ -256,6 +256,8 @@ struct CloudProfileHydrator: Sendable {
             pendingLedgerEntryIDs: economy.pendingLedgerEntryIDs,
             observations: mergedObservations,
             rewardResolutionsByRunID: economy.rewardResolutionsByRunID,
+            sourceCareer: sourceDocument.player.career,
+            sourceAchievements: sourceDocument.player.achievementProgress,
             sourceGameCenter: sourceDocument.player.pendingGameCenter
         )
         economy.rewardedAdState = try makeRewardedAdState(
@@ -379,18 +381,18 @@ private extension CloudProfileHydrator {
     struct DerivedPlayerState {
         let career: CareerStatistics
         let achievements: [AchievementID: AchievementProgress]
-        let pendingGameCenter: GameCenterSubmissionQueue
+        let pendingGameCenter: PlayerScopedGameCenterQueueV1
         let achievementUpdatesByRunID: [RunID: [AchievementProgressUpdate]]
         let careerAfterRun: [RunID: CareerStatistics]
     }
 
     func validateSource(
         _ source: CloudProfileHydrationSourceV1,
-        envelope: PlayerProfileEnvelopeV3,
+        envelope: PlayerProfileEnvelopeV4,
         context: CloudProfileHydrationContextV1
     ) throws -> CloudProfileLocalMergeMetadataV1 {
-        guard envelope.format == PlayerProfileEnvelopeV3.formatIdentifier,
-              envelope.schemaVersion == PlayerProfileEnvelopeV3.schemaVersion,
+        guard envelope.format == PlayerProfileEnvelopeV4.formatIdentifier,
+              envelope.schemaVersion == PlayerProfileEnvelopeV4.schemaVersion,
               envelope.savedAt.timeIntervalSince1970.isFinite
         else {
             throw CloudProfileHydrationError.malformedSourceEnvelope
@@ -867,7 +869,9 @@ private extension CloudProfileHydrator {
         rewardResolutionsByRunID _: [
             RunID: DurableEconomyCoordinator.GameplayRewardResolution
         ],
-        sourceGameCenter: GameCenterSubmissionQueue
+        sourceCareer: CareerStatistics,
+        sourceAchievements: [AchievementID: AchievementProgress],
+        sourceGameCenter: PlayerScopedGameCenterQueueV1
     ) throws -> DerivedPlayerState {
         var career = CareerStatistics()
         var achievements = try CloudProfileAchievementSeed.progress(
@@ -895,11 +899,17 @@ private extension CloudProfileHydrator {
         }
 
         var queue = sourceGameCenter
-        queue.enqueueHighScore(career.highestScore)
+        if career.highestScore > sourceCareer.highestScore {
+            queue.enqueueUnboundHighScore(career.highestScore)
+        }
         for progress in achievements.values.sorted(by: {
             $0.id.rawValue < $1.id.rawValue
-        }) where progress.percentComplete > 0 {
-            queue.enqueueAchievement(progress)
+        }) where progress.percentComplete
+            > (sourceAchievements[progress.id]?.percentComplete ?? 0) {
+            // Cloud runs do not carry Game Center player provenance. Only the
+            // increase over the already-derived source state is quarantined;
+            // a true hydration no-op does not recreate delivered work.
+            queue.enqueueUnboundAchievement(progress)
         }
         return DerivedPlayerState(
             career: career,
@@ -1074,12 +1084,12 @@ private extension CloudProfileHydrator {
 
     func decodeCanonicalSource(
         _ bytes: Data
-    ) throws -> PlayerProfileEnvelopeV3 {
+    ) throws -> PlayerProfileEnvelopeV4 {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .millisecondsSince1970
-        let envelope: PlayerProfileEnvelopeV3
+        let envelope: PlayerProfileEnvelopeV4
         do {
-            envelope = try decoder.decode(PlayerProfileEnvelopeV3.self, from: bytes)
+            envelope = try decoder.decode(PlayerProfileEnvelopeV4.self, from: bytes)
         } catch {
             throw CloudProfileHydrationError.malformedSourceEnvelope
         }
