@@ -12,10 +12,10 @@ tracks execution, evidence, dependencies, and owner decisions.
 The native foundation, launch rules, durable local repository, production app
 shell, first-run tutorial, fail-closed release information, eight-team shipping
 visuals, retained production runtime, and Apple-only diagnostics composition
-are complete. The latest checkpoint-freshness boundary is versioned at
-`1ea542c` (`Add scoped checkpoint freshness lease`); the account-generation
-boundary immediately beneath it is `afe5bc0` (`Add account generation
-freshness authority`).
+are complete. The latest typed Cloud replica publication boundary is versioned
+at `20e1cbc` (`Add typed cloud replica publication`); the scoped
+checkpoint-freshness boundary immediately beneath it is `1ea542c` (`Add scoped
+checkpoint freshness lease`).
 The iOS-only repository cleanup is versioned at `24cd2c7` (`Remove legacy
 browser project from iOS repository`).
 
@@ -27,25 +27,34 @@ uniform and football presentation, randomized opponent presentation, visible
 texture readiness, and an explicit release-blocking state when support or
 privacy destinations are missing.
 
-The current foundation passed 612 simulator tests and produced an unsigned
-generic-iOS Release archive from an exact detached worktree. It includes
-account-, scope-, and epoch-bound CloudKit record-change transport,
-crash-recoverable two-phase replica checkpoints, diagnostic checkpoint
-observations, scoped checkpoint-freshness leases, cache-loss reconstruction
-rules, durable transactional-hydration journals, exact repository adoption,
-and complete-history verification for version 3 durable economy state. A
-borrowed, noncopyable account-generation permit now binds bounded commit work
-to the exact issuing authority, account, scope, and epoch. An authority-bound
-checkpoint store revalidates the remembered durable epoch and exact accepted
-checkpoint, then holds the account lock while a noncopyable, non-Sendable lease
-authorizes only synchronous install, abort, or journal cleanup. Raw observations
-cannot authorize profile-file mutation, and unbound, foreign-authority, stale,
-revoked, publication-pending, or superseded state fails closed. Cloud
-capabilities still fail closed in the Release composition: typed
-`requireExisting` reconstruction enforcement, local-to-cloud bootstrap, and
-account/runtime coordination remain unfinished.
-Game Center, StoreKit 2, and rewarded advertisements also remain unavailable.
-The archive is therefore an engineering gate, not a release-readiness claim.
+The typed Cloud publication gate passed 278 focused simulator tests and 623
+full simulator tests and produced an unsigned generic-iOS Release archive from
+exact frozen patch `e3551a5e...`. Three independent reviews of that exact patch
+found no P0/P1/P2 defects. The environment review also verified that missing,
+invalid, and ambiguous CloudKit build-environment conditions fail compilation.
+
+The foundation now includes account-, scope-, epoch-, and build-environment-
+bound CloudKit record-change transport; crash-recoverable two-phase
+checkpoints; durable hydration journals; exact repository adoption;
+account-generation and scoped checkpoint-freshness authorities; sealed
+nil-cursor `requireExisting` full-snapshot reconstruction; and sealed
+exact-predecessor ordinary incremental publication. Both publication paths
+carry opaque generation provenance and revalidate the canonical authority,
+account, scope, epoch, durable predecessor, and pending candidate before
+mutation. Release code no longer exposes raw checkpoint publication.
+
+Debug builds are sealed to the Development CloudKit environment and Release
+builds to Production through one build setting shared by the compiler condition
+and entitlement expansion. The environment is included in the transport and
+replica-scope fingerprint and cannot be supplied by Info.plist configuration.
+
+Cloud capabilities still fail closed in the retained Release composition
+because first-zone initialization, one-time local-to-cloud account migration,
+outbound profile publication, and the account-scoped runtime coordinator are
+not yet implemented. Game Center, StoreKit 2, and rewarded advertisements also
+remain unavailable. The unsigned archive proves the Release compiler selected
+Production, but it does not prove the final codesigned entitlement payload;
+that remains a release-candidate gate.
 
 ## Delivery board
 
@@ -55,12 +64,12 @@ The archive is therefore an engineering gate, not a release-readiness claim.
 | Reproducible native foundation                  | Complete            | Clean-checkout tests and unsigned Release archive pass at `49d8a6b`                                                                   |
 | Domain, catalog, economy, and achievement rules | Complete            | Eight teams, inventory, matchup, clash, reward, coin-pack, and eight-achievement rules pass exhaustive tests                          |
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
-| Account-independent service seams               | In progress         | Cloud transport/checkpoint, hydration recovery, exact repository adoption, account-generation authority, scoped checkpoint freshness, and durable economy foundations pass; typed reconstruction, account composition, Game Center, StoreKit, and ads remain |
+| Account-independent service seams               | In progress         | Cloud transport/checkpoint, transactional hydration recovery, exact repository adoption, account-generation authority, scoped checkpoint freshness, sealed reconstruction, and typed incremental publication pass; first-zone/local migration, account composition, Game Center, StoreKit, and ads remain |
 | Production app shell and menus                  | Complete            | Home, teams, locker, store, leaderboard, achievements, settings, tutorial, privacy/support, gameplay, and results all ship             |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Eight-team presentation system                  | Complete            | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, HUD palettes, raster recoloring, and preload readiness ship     |
-| Live Apple and advertising services             | In progress         | Runtime/configuration/UIKit and cloud-replica foundations are complete; hydration, permanent IDs, products, Game Center records, and ads remain |
+| Live Apple and advertising services             | In progress         | Runtime/configuration/UIKit, Cloud replica, typed checkpoint publication, and hydration transaction foundations are complete; live bootstrap/coordinator composition, permanent IDs, products, Game Center records, and ads remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
 | TestFlight release candidate                    | Queued              | Device, accessibility, sandbox, sync, replay, crash, and economy gates pass                                                           |
 | App Store submission                            | Queued              | Signed archive, privacy report, metadata, review notes, screenshots, and owner approval complete                                      |
@@ -118,6 +127,9 @@ or runtime ownership boundaries.
 | 2026-07-16 | `1ea542c` | Checkpoint-freshness focused detached suite        | 227 passed, 0 failed, 0 skipped; exact patch `7beb6363…` independently audited three times with no P0/P1/P2 defects |
 | 2026-07-16 | `1ea542c` | Checkpoint-freshness detached full suite           | 612 passed, 0 failed, 0 skipped                               |
 | 2026-07-16 | `1ea542c` | Detached unsigned generic-iOS Release archive     | Passed at `/tmp/PocketVectorCheckpointLeaseDetachedArchive-20260716-01.xcarchive` |
+| 2026-07-16 | `20e1cbc` | Typed reconstruction/publication focused detached suite | 278 passed, 0 failed, 0 skipped; exact patch `e3551a5e...` independently audited three times with no P0/P1/P2 defects |
+| 2026-07-16 | `20e1cbc` | Typed reconstruction/publication detached full suite | 623 passed, 0 failed, 0 skipped                               |
+| 2026-07-16 | `20e1cbc` | Detached unsigned generic-iOS Release archive     | Passed at `/tmp/PocketVectorTypedPublicationDetachedArchive-20260716-01.xcarchive`; Production CloudKit compiler condition, archive metadata, and iOS-only resource audit passed |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -132,31 +144,34 @@ Release behavior. A wave is not complete merely because its files exist.
    into one versioned scope fingerprint; add epoch revocation, two-phase
    checkpoint recovery, sealed observations, cache-loss reconstruction, and
    durable hydration journals without enabling the live capability.
-3. **Repository adoption, account-generation authority, and scoped checkpoint
-   freshness complete; typed reconstruction next:** add a sealed
-   reconstruction/fetch context that begins with a nil cursor, enforces
-   `requireExisting` on every page, carries exact accepted-history and
-   account-generation provenance, and is the only artifact accepted by
-   reconstructed-checkpoint save. Network fetch remains outside the bounded
-   account-generation gate.
-4. Add the explicit local-to-cloud bootstrap/migration workflow and dormant
-   coordinator in the required order: resume epoch, recover checkpoint, recover
-   hydration before repository load, fetch and validate, merge, journal,
-   checkpoint, install, clean up, adopt, recheck generation, then publish.
-   Account switching must isolate account-derived identities and publish no
-   candidate until profile and checkpoint durability are proven.
+3. **Complete:** seal the CloudKit build environment into entitlement,
+   compiler, transport, and replica scope; add a configuration-derived fetcher
+   that always requires an existing zone; add nil-cursor full-snapshot
+   reconstruction and exact-predecessor ordinary incremental publication; and
+   bind both results to the issuing account generation. Network fetch remains
+   outside the bounded account-generation gate.
+4. **Next:** add the sealed first-zone genesis fetch/save path, the repository
+   hydration-mutation barrier, a durable one-time local-to-cloud account-claim
+   transaction, outbound initial profile publication, and the dormant
+   coordinator in the required order: resume or establish epoch, recover
+   checkpoint, recover migration/hydration before repository load, fetch and
+   validate, merge, journal, checkpoint, install, clean up, adopt, recheck
+   generation, then publish. Account switching must isolate account-derived
+   identities and publish no candidate until profile and checkpoint durability
+   are proven.
 5. Add persistent Game Center delivery and presentation, then StoreKit product
    state, localized prices, unfinished-transaction recovery, and purchases.
 6. Add persisted rewarded-ad orchestration and a verified-receipt client. No
    client ad callback may grant coins without a unique server-verified provider
    transaction.
 
-The critical path is safely connecting atomic CloudKit restoration to the live
-repository, not basic CloudKit CRUD. Checkpoint and hydration recovery now prove
-their isolated durable transitions plus the nested account/checkpoint freshness
-gates, but a fresh device cannot yet reconstruct through a typed
-`requireExisting` fetch, bootstrap its account-derived profile, and publish it
-through the retained runtime.
+The critical path is now composing the proven CloudKit restoration and
+publication seams into the retained runtime. A returning device has typed,
+fixed-policy checkpoint reconstruction and incremental publication primitives,
+but a new account cannot yet create and initialize its first zone, durably
+claim a local-only profile into the account-derived identity, publish the
+initial outbound profile, or expose the result through an account-scoped
+coordinator.
 
 ## Owner decisions and external dependencies
 
@@ -177,6 +192,11 @@ These do not block the current account-independent implementation waves:
 5. Apple Developer enrollment, Paid Apps agreement, tax and banking, live
    consumable products, Game Center records, AdMob app/ad unit, UMP message,
    `app-ads.txt`, and production CloudKit schema deployment.
+6. Final codesigned-entitlement verification. After the permanent iCloud
+   container and signing profile exist, inspect the exported release candidate
+   and confirm `com.apple.developer.icloud-container-environment` is
+   `Production` and the expected iCloud container identifiers and services are
+   present. An unsigned archive cannot satisfy this gate.
 
 No external purchase, account enrollment, production identifier creation, or
 live service mutation is performed without the owner's involvement when the
@@ -186,13 +206,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the latest checkpoint-freshness audited scope; full release audit remains |
+| Known P0/P1 defects                  |      0 | 0 open in the exact typed Cloud publication audited scope; full release audit remains |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Crash-free sessions                  | 99.5%+ | Instrumentation decision open                   |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
-| Exactly-once economic mutations      |   100% | Local and version 3 cloud-history foundations pass; live transactional hydration/composition pending |
-| Clean-checkout archive               |   Pass | Detached unsigned Release archive passes at `1ea542c`; final signed RC proof remains |
+| Exactly-once economic mutations      |   100% | Local, version 3 cloud-history, and typed checkpoint-publication foundations pass; live bootstrap/hydration composition remains |
+| Clean-checkout archive               |   Pass | Detached unsigned Release archive passes at `20e1cbc`; final signed entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner

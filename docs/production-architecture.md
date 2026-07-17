@@ -18,7 +18,9 @@ ProductionAppRuntime (one retained process graph)
             -> LocalPlayerProfileRepository actor
                  -> atomic local profile store
                  -> durable local profile and economy operations
-                 -> future transactional CloudKit hydration composition
+            -> dormant transactional CloudKit hydration,
+               reconstruction, and incremental-publication seams
+            -> future account-scoped bootstrap/coordinator
        -> GameplaySessionController
             -> one GameScene for one RunConfiguration
             <- one CompletedRun callback
@@ -201,6 +203,15 @@ file lock, and bounded quarantine. A stale process, revoked epoch, corrupt
 watermark, interrupted promotion, or mismatched account fails closed before it
 can replace accepted state.
 
+The CloudKit backend environment is a sealed build property. Debug selects
+Development and Release selects Production through one configuration-specific
+build setting that expands into both a compiler condition and the iCloud
+container-environment entitlement. Missing, invalid, or ambiguous conditions
+fail compilation. Shipping configuration uses only the sealed build value;
+tests may select an environment only through a Debug-only seam. The environment
+participates in the transport fingerprint and therefore separates Development
+and Production checkpoint authority.
+
 Durable economy history uses version 3 heads plus immutable ledger and reward
 markers. Validation replays the complete ordered history and verifies canonical
 revisions, batch positions, operation-ID uniqueness, per-revision bindings,
@@ -208,12 +219,14 @@ nonnegative balances, unlocks, rewarded-ad pairings, and the final accumulator.
 Only the narrow, explicitly tested version 1 to version 2 legacy path is
 accepted; incomplete or ambiguous histories never become spend authority.
 
-The next schema scope is a deliberate pre-release break. Its fingerprint must
-bind transport, profile, and economy record contracts, including provider
-address domains and immutable-marker algorithms. Existing development version
-1/version 2 records and checkpoints are not migrated in place: their authority
-epoch is explicitly revoked, a fresh epoch starts with a nil cursor, and the
-development CloudKit zone is reset or moved to versioned record identifiers.
+The current transport scope identifier is version 2; record envelopes remain
+version 3 and operation markers version 2. This is a deliberate pre-release
+scope break. The fingerprint binds the complete transport, profile, and
+economy contracts, including the build-sealed CloudKit environment, provider
+address domains, and immutable-marker algorithms. Checkpoints carrying the
+prior transport fingerprint are not migrated in place: their authority epoch
+is revoked and Development data is reset or moved to versioned identifiers
+before live integration.
 
 ## Transactional cloud hydration
 
@@ -281,11 +294,48 @@ a later accepted checkpoint rejects a stale journal before profile mutation.
 The enforced lock order is checkpoint account lock followed by profile-file
 lock.
 
-Live composition still requires sealed typed `requireExisting` reconstruction,
-local-to-cloud bootstrap, and the account-scoped runtime coordinator. The outer
-generation permit must span checkpoint commit, leased profile mutation,
-repository adoption, and publication; all network fetches occur before
-admission and are revalidated inside it.
+Typed checkpoint fetching and publication are implemented but dormant. Release
+code obtains `CloudReplicaScopedChangeFetcherV1` only from the complete
+validated production cloud-write configuration. The wrapper derives the exact
+replica scope and hard-codes `requireExisting`, so callers cannot pair an
+asserted scope with an unrelated transport or request zone creation.
+
+Cache-loss reconstruction begins only when durable accepted history exists and
+no usable accepted checkpoint copy remains. Its sealed context owns the nil
+cursor and every subsequent page, rejects a scope mismatch before network
+access, and emits only a sealed full-snapshot artifact branded with the exact
+account generation and accepted history.
+
+Reconstruction is saved as a replacement cache baseline before the coordinator
+starts a new ordinary fetch. It cannot directly authorize a hydration journal:
+the durable accepted-history watermark proves the prior generation and digest,
+but does not carry the full predecessor checkpoint identity required by the
+journal.
+
+Ordinary incremental publication begins only from one exact usable accepted
+checkpoint; it cannot create a genesis checkpoint or reconstruct missing cache.
+Its sealed context owns the predecessor cursor and all subsequent pages and
+emits a result branded with the exact generation and predecessor. Saving either
+artifact requires a fresh lease from the canonical authority with the same
+opaque generation token, account, scope, and epoch. Ordinary save additionally
+revalidates the exact durable predecessor and any pending candidate under the
+account lock. Raw checkpoint save is private in Release and exposed only as a
+Debug test seam.
+
+Live composition now requires a separately sealed first-zone genesis path, a
+repository hydration-mutation barrier, a durable one-time local-profile
+account-claim transaction, outbound initial profile publication, and the
+account-scoped runtime coordinator. The barrier must verify the exact source
+and prevent gameplay, settings, or economy mutations from racing journal
+creation and candidate installation. Existing hydration deliberately rejects
+changing a local profile's account-derived identity, and the Release fetcher
+deliberately cannot create a zone, so neither boundary may be widened as a
+shortcut. A fetch context is minted under bounded generation admission,
+network work occurs after leaving that gate, and durable publication later
+reacquires a fresh lease that must match the context's opaque generation
+provenance. The coordinator must then perform checkpoint publication, leased
+profile mutation, journal cleanup, repository adoption, generation recheck,
+and authoritative state publication in the documented crash-recoverable order.
 
 Material hydration advances local player and economy revisions exactly once
 without copying a remote root revision. A no-op merge does not advance either
@@ -323,6 +373,11 @@ retry states without blocking gameplay.
 - Production IDs, entitlements, SDK credentials, ad units, CloudKit schema, and
   App Store Connect records remain injected configuration, never test literals
   embedded in a Release build.
+- An unsigned archive may prove that Release compilation selected the
+  Production CloudKit condition, but it does not prove codesigned entitlements.
+  Before TestFlight, inspect the signed/exported app and verify the Production
+  container environment plus the expected iCloud container identifiers and
+  CloudKit services.
 - The repository is iOS-only. Native asset sources and regeneration tools stay
   outside the shipping resource bundle, whose manifest must exactly match its
   physical files.
