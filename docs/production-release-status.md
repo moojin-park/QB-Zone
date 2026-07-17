@@ -122,7 +122,7 @@ that remains a release-candidate gate.
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Eight-team presentation system                  | Complete            | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, HUD palettes, raster recoloring, and preload readiness ship     |
-| Live Apple and advertising services             | In progress         | Foundations are complete; owner-approved Cloud merge/claim policy, outbound bootstrap, retained service composition, permanent IDs, products, Game Center records, ad SDK/consent/verification transport, and signed-device gates remain |
+| Live Apple and advertising services             | In progress         | Listed Cloud, Game Center, StoreKit, and verification foundations pass; persisted ad recovery, owner-approved Cloud merge/claim policy, outbound bootstrap, retained service composition, permanent IDs, products, records, SDK/consent/transport, and signed-device gates remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
 | TestFlight release candidate                    | Queued              | Device, accessibility, sandbox, sync, replay, crash, and economy gates pass                                                           |
 | App Store submission                            | Queued              | Signed archive, privacy report, metadata, review notes, screenshots, and owner approval complete                                      |
@@ -232,29 +232,36 @@ Release behavior. A wave is not complete merely because its files exist.
    and derive an account-neutral, one-way cloud-profile seed with deterministic
    facts, eligibility, bounds, and digest. The seed does not claim, publish,
    write, bind an account, player, or session, or compose live Cloud.
-6. **Next live Cloud integration:** obtain the explicit owner policy for
-   reconciling existing local and cloud profiles, then add the durable one-time
-   local-to-cloud account claim and outbound initial-profile publication.
+6. **Next owner-independent recovery:** persist only the immutable rewarded-ad
+   verification challenge behind a bounded crash-recoverable barrier. Relaunch
+   must re-query authenticated server status to mint a fresh process-only claim;
+   no verified receipt, provider transaction, transient session, or delivery
+   acknowledgement becomes local authority. Keep the barrier through every
+   ambiguous delivery and remove it only after exact durable completion or an
+   authenticated terminal rejection.
+7. **Owner-dependent live Cloud integration:** obtain the explicit owner
+   policy for reconciling existing local and cloud profiles, then add the
+   durable one-time local-to-cloud account claim and outbound initial-profile
+   publication.
    Compose them with typed genesis and hydration in the account-scoped runtime
    coordinator, preserving all generation, checkpoint, journal, and final
    durability rechecks.
-7. **Complete Game Center foundation; live integration pending:** V4 persistence,
+8. **Complete Game Center foundation; live integration pending:** V4 persistence,
    exact player buckets, unbound quarantine, and capability-bound single-flight
    delivery are implemented. Add the trusted Release factory, retained
    authentication/foreground/presentation composition, App Store Connect
    records, and a proof-bearing settlement attribution path. No unbound value
    may be automatically claimed.
-8. **Complete StoreKit foundation; live integration pending:** localized product
+9. **Complete StoreKit foundation; live integration pending:** localized product
    validation, verified updates, unfinished recovery, durable finish gating,
    account-generation retirement, and serialized purchases are implemented.
    Add live account-session sourcing, private-cloud economy composition,
    retained lifecycle and presentation state, and permanent consumable IDs.
-9. **Complete rewarded-ad verification foundation; live integration pending:**
+10. **Complete rewarded-ad verification foundation; live integration pending:**
    exact challenge/status correlation and process-only verified claims are
-   implemented. Add persisted challenge/flow recovery, authenticated production
-   transport, provider SDK and consent adapters, retained orchestration, and
-   authoritative presentation state. A client callback alone never grants
-   coins.
+   implemented. After step 6, add authenticated production transport, provider
+   SDK and consent adapters, retained orchestration, and authoritative
+   presentation state. A client callback alone never grants coins.
 
 The core account-independent Cloud, Game Center, StoreKit, and verification
 boundaries are proven. Persisted rewarded-ad recovery remains an
