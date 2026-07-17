@@ -749,7 +749,7 @@ final class CloudProfileReplicaValidatorTests: XCTestCase, @unchecked Sendable {
             )
         )
         let coordinator = DurableEconomyCoordinator(
-            context: context,
+            testingContext: context,
             sessionAuthority: DurableEconomySessionAuthority(context: context),
             repository: MarkerAddressRepositoryStub(),
             cloud: InMemoryCloudSyncTransport(

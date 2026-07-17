@@ -222,6 +222,14 @@ protocol RewardedAdVerificationTransport: Sendable {
         _ request: RewardedAdVerificationPreparationRequest
     ) async throws -> RewardedAdVerificationPreparationResponse
 
+    /// Status is a replay-stable authenticated fact for one exact challenge.
+    /// Once this method returns `verified`, every later lookup for that handle
+    /// must return the same correlated attempt, custom data, provider
+    /// transaction, and server timestamp. It must never downgrade to pending
+    /// or terminal rejection after provider consumption. A terminal rejection
+    /// is likewise permanent and means this exact challenge can never become
+    /// entitled. The local recovery journal deliberately persists only the
+    /// challenge, so safe crash recovery depends on this backend contract.
     func verificationStatus(
         _ request: RewardedAdVerificationStatusRequest
     ) async throws -> RewardedAdVerificationServerStatus
@@ -269,6 +277,34 @@ enum RewardedAdVerificationResult: Sendable {
     case verified(VerifiedRewardedAdClaim)
 }
 
+private final class RewardedAdCheckedStatusProcessAuthority:
+    @unchecked Sendable
+{}
+
+enum RewardedAdCheckedStatusOutcome: Sendable {
+    case pending
+    case terminalRejected(RewardedAdVerificationTerminalRejection)
+    case verified(VerifiedRewardedAdClaim)
+}
+
+/// Sealed proof that one status result came from the authenticated transport
+/// path in this process. In particular, a bare terminal-rejection enum cannot
+/// authorize deletion of durable recovery evidence.
+struct RewardedAdCheckedStatusObservation: Sendable {
+    let challenge: RewardedAdVerificationChallengeV1
+    let outcome: RewardedAdCheckedStatusOutcome
+    private let processAuthority: RewardedAdCheckedStatusProcessAuthority
+
+    fileprivate init(
+        challenge: RewardedAdVerificationChallengeV1,
+        outcome: RewardedAdCheckedStatusOutcome
+    ) {
+        self.challenge = challenge
+        self.outcome = outcome
+        processAuthority = RewardedAdCheckedStatusProcessAuthority()
+    }
+}
+
 /// Dormant verification orchestrator. Initialization starts no task and no
 /// timer; every server interaction is an explicit caller-owned operation.
 actor RewardedAdVerificationClient {
@@ -313,6 +349,21 @@ actor RewardedAdVerificationClient {
     func verificationStatus(
         for challenge: RewardedAdVerificationChallengeV1
     ) async throws -> RewardedAdVerificationResult {
+        switch try await checkedVerificationStatus(for: challenge).outcome {
+        case .pending:
+            return .pending
+        case let .terminalRejected(reason):
+            return .terminalRejected(reason)
+        case let .verified(claim):
+            return .verified(claim)
+        }
+    }
+
+    /// The recovery coordinator consumes this sealed form so only a status
+    /// result observed through this client can clear terminal evidence.
+    func checkedVerificationStatus(
+        for challenge: RewardedAdVerificationChallengeV1
+    ) async throws -> RewardedAdCheckedStatusObservation {
         // Codable recovery cannot bypass the token bounds.
         _ = try RewardedAdVerificationHandle(
             validating: challenge.verificationHandle.transportValue
@@ -336,14 +387,23 @@ actor RewardedAdVerificationClient {
 
         switch status {
         case .pending:
-            return .pending
+            return RewardedAdCheckedStatusObservation(
+                challenge: challenge,
+                outcome: .pending
+            )
         case let .terminalRejected(reason):
-            return .terminalRejected(reason)
+            return RewardedAdCheckedStatusObservation(
+                challenge: challenge,
+                outcome: .terminalRejected(reason)
+            )
         case let .verified(response):
-            return .verified(try verifiedClaim(
-                response: response,
-                challenge: challenge
-            ))
+            return RewardedAdCheckedStatusObservation(
+                challenge: challenge,
+                outcome: .verified(try verifiedClaim(
+                    response: response,
+                    challenge: challenge
+                ))
+            )
         }
     }
 

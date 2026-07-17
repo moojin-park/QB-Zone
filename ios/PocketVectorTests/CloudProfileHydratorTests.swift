@@ -1507,7 +1507,7 @@ private extension CloudProfileHydratorTests {
             )
         )
         return DurableEconomyCoordinator(
-            context: sessionContext,
+            testingContext: sessionContext,
             sessionAuthority: DurableEconomySessionAuthority(
                 context: sessionContext
             ),

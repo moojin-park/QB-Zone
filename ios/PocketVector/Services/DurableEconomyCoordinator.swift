@@ -516,6 +516,70 @@ extension LocalPlayerProfileRepository: DurableEconomyLocalPersisting {
     }
 }
 
+/// One canonical address function is shared by cloud mutation and the sealed
+/// rewarded-ad delivery acknowledgement. Keeping it here prevents a result
+/// from proving an arbitrary operation ID that merely resembles a cloud
+/// receipt.
+private enum DurableEconomyOperationAddressV3 {
+    static func operationID(
+        kind: String,
+        entryIDs: Set<LedgerEntryID>,
+        cloudAccountID: CloudAccountID,
+        accountBinding: DurableAccountBinding,
+        profileAccountIdentity: PlayerAccountIdentity
+    ) -> OperationID {
+        var digest = SHA256()
+        append(DurableEconomyCloudSchema.operationAddressDomain, to: &digest)
+        append(cloudAccountID.rawValue, to: &digest)
+        append(accountBinding.accountKey.rawValue, to: &digest)
+        append(accountBinding.profileID.uuidString.lowercased(), to: &digest)
+        append(profileAccountIdentity.rawValue, to: &digest)
+        append(kind, to: &digest)
+        let orderedEntryIDs = entryIDs.sorted {
+            DurableEconomyCloudSchema.utf8Precedes(
+                $0.rawValue,
+                $1.rawValue
+            )
+        }
+        append(String(orderedEntryIDs.count), to: &digest)
+        for entryID in orderedEntryIDs {
+            append(entryID.rawValue, to: &digest)
+        }
+        let value = digest.finalize().map {
+            String(format: "%02x", $0)
+        }.joined()
+        return OperationID(
+            "\(DurableEconomyCloudSchema.operationRecordPrefix)\(value)"
+        )
+    }
+
+    static func rewardedAdOperationID(
+        cloudAccountID: CloudAccountID,
+        accountBinding: DurableAccountBinding,
+        profileAccountIdentity: PlayerAccountIdentity,
+        providerTransactionID: AdProviderTransactionID
+    ) -> OperationID {
+        operationID(
+            kind: DurableEconomyCloudSchema.rewardedAdCreditOperationKind,
+            entryIDs: [
+                CoinLedgerID.rewardedAd(
+                    providerTransactionID: providerTransactionID
+                ),
+            ],
+            cloudAccountID: cloudAccountID,
+            accountBinding: accountBinding,
+            profileAccountIdentity: profileAccountIdentity
+        )
+    }
+
+    private static func append(_ value: String, to digest: inout SHA256) {
+        let data = Data(value.utf8)
+        var length = UInt64(data.count).bigEndian
+        withUnsafeBytes(of: &length) { digest.update(data: Data($0)) }
+        digest.update(data: data)
+    }
+}
+
 enum DurableEconomyCloudCommitStatus: Equatable, Sendable {
     case committed
     case alreadyCommitted
@@ -580,9 +644,245 @@ struct VerifiedRewardedAdDurableDeliveryRequest: Equatable, Sendable {
     }
 }
 
+private final class DurableRewardedAdDeliveryProcessAuthority:
+    @unchecked Sendable
+{}
+
+private struct DurableRewardedAdDeliveryAcknowledgement: Sendable {
+    let outcome: RewardedAdSettlementOutcome
+    let cloudReceipt: DurableEconomyCloudCommitReceipt
+    let session: ProfileSessionToken
+    let binding: DurableAccountBinding
+    let offerID: RewardOfferID
+    let providerTransactionID: AdProviderTransactionID
+    let rewardedAt: Date
+    let cloudAccountID: CloudAccountID
+    let operationID: OperationID
+    let recordID: CloudRecordID
+    private let processAuthority: DurableRewardedAdDeliveryProcessAuthority
+
+    init(
+        outcome: RewardedAdSettlementOutcome,
+        cloudReceipt: DurableEconomyCloudCommitReceipt,
+        session: ProfileSessionToken,
+        binding: DurableAccountBinding,
+        offerID: RewardOfferID,
+        providerTransactionID: AdProviderTransactionID,
+        rewardedAt: Date,
+        cloudAccountID: CloudAccountID,
+        operationID: OperationID,
+        recordID: CloudRecordID,
+        processAuthority: DurableRewardedAdDeliveryProcessAuthority
+    ) {
+        self.outcome = outcome
+        self.cloudReceipt = cloudReceipt
+        self.session = session
+        self.binding = binding
+        self.offerID = offerID
+        self.providerTransactionID = providerTransactionID
+        self.rewardedAt = rewardedAt
+        self.cloudAccountID = cloudAccountID
+        self.operationID = operationID
+        self.recordID = recordID
+        self.processAuthority = processAuthority
+    }
+
+    func wasMinted(
+        by authority: DurableRewardedAdDeliveryProcessAuthority
+    ) -> Bool {
+        processAuthority === authority
+    }
+
+    func equals(_ other: Self) -> Bool {
+        processAuthority === other.processAuthority
+            && outcome == other.outcome
+            && cloudReceipt == other.cloudReceipt
+            && session == other.session
+            && binding == other.binding
+            && offerID == other.offerID
+            && providerTransactionID == other.providerTransactionID
+            && rewardedAt == other.rewardedAt
+            && cloudAccountID == other.cloudAccountID
+            && operationID == other.operationID
+            && recordID == other.recordID
+    }
+}
+
+/// A non-Codable, process-sealed acknowledgement of exact durable delivery.
+/// Release code outside this file can inspect the outcome but cannot mint a
+/// value capable of authorizing recovery-journal deletion.
 struct DurableRewardedAdDeliveryResult: Equatable, Sendable {
     let outcome: RewardedAdSettlementOutcome
     let cloudReceipt: DurableEconomyCloudCommitReceipt
+    private let processAuthority: DurableRewardedAdDeliveryProcessAuthority
+    private let acknowledgement: DurableRewardedAdDeliveryAcknowledgement
+
+    fileprivate init(
+        validatedOutcome outcome: RewardedAdSettlementOutcome,
+        cloudReceipt: DurableEconomyCloudCommitReceipt,
+        request: VerifiedRewardedAdDurableDeliveryRequest,
+        context: DurableEconomySessionContext,
+        operationID: OperationID,
+        recordID: CloudRecordID
+    ) throws {
+        let expectedLedgerID = CoinLedgerID.rewardedAd(
+            providerTransactionID: request.providerTransactionID
+        )
+        let expectedOperationID = DurableEconomyOperationAddressV3
+            .rewardedAdOperationID(
+                cloudAccountID: context.cloudAccountID,
+                accountBinding: context.accountBinding,
+                profileAccountIdentity: request.session.accountIdentity,
+                providerTransactionID: request.providerTransactionID
+            )
+        let derived = CloudAccountDerivedBindings.derive(
+            from: cloudReceipt.accountID
+        )
+        guard request.session == context.profileSession,
+              request.verifiedBinding == context.accountBinding,
+              request.session.profileID == context.accountBinding.profileID,
+              request.rewardedAt.timeIntervalSince1970.isFinite,
+              outcome.offerID == request.offerID,
+              outcome.providerTransactionID == request.providerTransactionID,
+              outcome.ledgerEntryID == expectedLedgerID,
+              outcome.coins == PersistedEconomyRulesV1.rewardedAdCoins,
+              cloudReceipt.accountID == context.cloudAccountID,
+              cloudReceipt.operationID == operationID,
+              operationID == expectedOperationID,
+              cloudReceipt.recordID == recordID,
+              derived.durableAccountBinding == context.accountBinding,
+              derived.playerAccountIdentity == request.session.accountIdentity
+        else {
+            throw DurableEconomyCoordinatorError.invalidRewardedAdRequest
+        }
+        self.outcome = outcome
+        self.cloudReceipt = cloudReceipt
+        let processAuthority = DurableRewardedAdDeliveryProcessAuthority()
+        self.processAuthority = processAuthority
+        acknowledgement = DurableRewardedAdDeliveryAcknowledgement(
+            outcome: outcome,
+            cloudReceipt: cloudReceipt,
+            session: request.session,
+            binding: context.accountBinding,
+            offerID: request.offerID,
+            providerTransactionID: request.providerTransactionID,
+            rewardedAt: request.rewardedAt,
+            cloudAccountID: context.cloudAccountID,
+            operationID: operationID,
+            recordID: recordID,
+            processAuthority: processAuthority
+        )
+    }
+
+    func authorizesJournalDeletion(
+        currentSession: ProfileSessionToken,
+        currentBinding: DurableAccountBinding,
+        offerID: RewardOfferID,
+        providerTransactionID: AdProviderTransactionID,
+        rewardedAt: Date
+    ) -> Bool {
+        let expectedLedgerID = CoinLedgerID.rewardedAd(
+            providerTransactionID: providerTransactionID
+        )
+        let derived = CloudAccountDerivedBindings.derive(
+            from: cloudReceipt.accountID
+        )
+        let expectedOperationID = DurableEconomyOperationAddressV3
+            .rewardedAdOperationID(
+                cloudAccountID: cloudReceipt.accountID,
+                accountBinding: currentBinding,
+                profileAccountIdentity: currentSession.accountIdentity,
+                providerTransactionID: providerTransactionID
+            )
+        guard acknowledgement.wasMinted(by: processAuthority),
+              acknowledgement.outcome == outcome,
+              acknowledgement.cloudReceipt == cloudReceipt,
+              acknowledgement.session == currentSession,
+              acknowledgement.binding == currentBinding,
+              acknowledgement.offerID == offerID,
+              acknowledgement.providerTransactionID == providerTransactionID,
+              acknowledgement.rewardedAt == rewardedAt,
+              acknowledgement.cloudAccountID == cloudReceipt.accountID,
+              acknowledgement.operationID == cloudReceipt.operationID,
+              acknowledgement.operationID == expectedOperationID,
+              acknowledgement.recordID == cloudReceipt.recordID,
+              currentSession.profileID == currentBinding.profileID,
+              derived.durableAccountBinding == currentBinding,
+              derived.playerAccountIdentity == currentSession.accountIdentity,
+              outcome.offerID == offerID,
+              outcome.providerTransactionID == providerTransactionID,
+              outcome.ledgerEntryID == expectedLedgerID,
+              outcome.coins == PersistedEconomyRulesV1.rewardedAdCoins
+        else {
+            return false
+        }
+        switch cloudReceipt.status {
+        case .committed, .alreadyCommitted, .committedThenRefreshed:
+            return true
+        }
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.processAuthority === rhs.processAuthority
+            && lhs.outcome == rhs.outcome
+            && lhs.cloudReceipt == rhs.cloudReceipt
+            && lhs.acknowledgement.equals(rhs.acknowledgement)
+    }
+
+#if DEBUG
+    init(
+        testingOutcome outcome: RewardedAdSettlementOutcome,
+        cloudReceipt: DurableEconomyCloudCommitReceipt,
+        acknowledgedSession: ProfileSessionToken,
+        acknowledgedBinding: DurableAccountBinding,
+        acknowledgedOfferID: RewardOfferID,
+        acknowledgedProviderTransactionID: AdProviderTransactionID,
+        acknowledgedRewardedAt: Date,
+        acknowledgedCloudAccountID: CloudAccountID,
+        acknowledgedOperationID: OperationID? = nil,
+        acknowledgedRecordID: CloudRecordID,
+        acknowledgedCloudReceipt: DurableEconomyCloudCommitReceipt? = nil
+    ) {
+        let operationID = acknowledgedOperationID
+            ?? DurableEconomyOperationAddressV3.rewardedAdOperationID(
+                cloudAccountID: acknowledgedCloudAccountID,
+                accountBinding: acknowledgedBinding,
+                profileAccountIdentity: acknowledgedSession.accountIdentity,
+                providerTransactionID: acknowledgedProviderTransactionID
+        )
+        self.outcome = outcome
+        self.cloudReceipt = cloudReceipt
+        let processAuthority = DurableRewardedAdDeliveryProcessAuthority()
+        self.processAuthority = processAuthority
+        acknowledgement = DurableRewardedAdDeliveryAcknowledgement(
+            outcome: outcome,
+            cloudReceipt: acknowledgedCloudReceipt ?? cloudReceipt,
+            session: acknowledgedSession,
+            binding: acknowledgedBinding,
+            offerID: acknowledgedOfferID,
+            providerTransactionID: acknowledgedProviderTransactionID,
+            rewardedAt: acknowledgedRewardedAt,
+            cloudAccountID: acknowledgedCloudAccountID,
+            operationID: operationID,
+            recordID: acknowledgedRecordID,
+            processAuthority: processAuthority
+        )
+    }
+
+    static func testingRewardedAdOperationID(
+        cloudAccountID: CloudAccountID,
+        binding: DurableAccountBinding,
+        session: ProfileSessionToken,
+        providerTransactionID: AdProviderTransactionID
+    ) -> OperationID {
+        DurableEconomyOperationAddressV3.rewardedAdOperationID(
+            cloudAccountID: cloudAccountID,
+            accountBinding: binding,
+            profileAccountIdentity: session.accountIdentity,
+            providerTransactionID: providerTransactionID
+        )
+    }
+#endif
 }
 
 protocol VerifiedRewardedAdDurableCreditDelivering: Sendable {
@@ -642,7 +942,10 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
     private var mutationIsRunning = false
     private var mutationWaiters: [CheckedContinuation<Void, Never>] = []
 
-    init(
+    /// Release construction stays file-sealed until trusted production account,
+    /// repository, CloudKit transport, and head configuration composition is
+    /// added in this reviewed file.
+    fileprivate init(
         context: DurableEconomySessionContext,
         sessionAuthority: any DurableEconomySessionAuthorizing,
         repository: any DurableEconomyLocalPersisting,
@@ -659,6 +962,28 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
         self.catalog = catalog
         self.now = now
     }
+
+#if DEBUG
+    init(
+        testingContext context: DurableEconomySessionContext,
+        sessionAuthority: any DurableEconomySessionAuthorizing,
+        repository: any DurableEconomyLocalPersisting,
+        cloud: any CloudSyncTransport,
+        configuration: DurableEconomyCloudConfiguration,
+        catalog: LaunchCatalog = .approved,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) {
+        self.init(
+            context: context,
+            sessionAuthority: sessionAuthority,
+            repository: repository,
+            cloud: cloud,
+            configuration: configuration,
+            catalog: catalog,
+            now: now
+        )
+    }
+#endif
 
     func confirmAllPendingCredits() async throws -> DurablePendingCreditResult? {
         await acquireMutationGate()
@@ -938,9 +1263,15 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
     private func deliverVerifiedRewardImpl(
         _ request: VerifiedRewardedAdDurableDeliveryRequest
     ) async throws -> DurableRewardedAdDeliveryResult {
+        let derived = CloudAccountDerivedBindings.derive(
+            from: context.cloudAccountID
+        )
         guard request.session == context.profileSession,
               request.verifiedBinding == context.accountBinding,
-              request.rewardedAt.timeIntervalSince1970.isFinite
+              request.rewardedAt.timeIntervalSince1970.isFinite,
+              derived.durableAccountBinding == context.accountBinding,
+              derived.playerAccountIdentity
+                == context.profileSession.accountIdentity
         else {
             throw DurableEconomyCoordinatorError.invalidRewardedAdRequest
         }
@@ -1025,9 +1356,13 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
             savedAt: now()
         )
         try await requireCurrentContext()
-        return DurableRewardedAdDeliveryResult(
-            outcome: outcome,
-            cloudReceipt: committed.receipt
+        return try DurableRewardedAdDeliveryResult(
+            validatedOutcome: outcome,
+            cloudReceipt: committed.receipt,
+            request: request,
+            context: context,
+            operationID: operationID,
+            recordID: configuration.recordID
         )
     }
 }
@@ -2903,25 +3238,13 @@ extension DurableEconomyCoordinator {
         kind: String,
         entryIDs: Set<LedgerEntryID>
     ) -> OperationID {
-        var digest = SHA256()
-        append(DurableEconomyCloudSchema.operationAddressDomain, to: &digest)
-        append(context.cloudAccountID.rawValue, to: &digest)
-        append(context.accountBinding.accountKey.rawValue, to: &digest)
-        append(context.accountBinding.profileID.uuidString.lowercased(), to: &digest)
-        append(context.profileSession.accountIdentity.rawValue, to: &digest)
-        append(kind, to: &digest)
-        let orderedEntryIDs = entryIDs.sorted {
-            DurableEconomyCloudSchema.utf8Precedes(
-                $0.rawValue,
-                $1.rawValue
-            )
-        }
-        append(String(orderedEntryIDs.count), to: &digest)
-        for entryID in orderedEntryIDs {
-            append(entryID.rawValue, to: &digest)
-        }
-        let value = digest.finalize().map { String(format: "%02x", $0) }.joined()
-        return OperationID("\(DurableEconomyCloudSchema.operationRecordPrefix)\(value)")
+        DurableEconomyOperationAddressV3.operationID(
+            kind: kind,
+            entryIDs: entryIDs,
+            cloudAccountID: context.cloudAccountID,
+            accountBinding: context.accountBinding,
+            profileAccountIdentity: context.profileSession.accountIdentity
+        )
     }
 
     func append(_ value: String, to digest: inout SHA256) {

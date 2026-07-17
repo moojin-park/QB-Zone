@@ -1181,7 +1181,7 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
             step: 3_600
         )
         let coordinator = DurableEconomyCoordinator(
-            context: fixture.context,
+            testingContext: fixture.context,
             sessionAuthority: fixture.authority,
             repository: fixture.repository,
             cloud: cloud,
@@ -1286,7 +1286,7 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         let loserTimestamp = baseDate.addingTimeInterval(60_000)
         let winnerTimestamp = baseDate.addingTimeInterval(61_000)
         let loserCoordinator = DurableEconomyCoordinator(
-            context: first.context,
+            testingContext: first.context,
             sessionAuthority: first.authority,
             repository: first.repository,
             cloud: blockedCloud,
@@ -1298,7 +1298,7 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
             now: { loserTimestamp }
         )
         let winnerCoordinator = DurableEconomyCoordinator(
-            context: second.context,
+            testingContext: second.context,
             sessionAuthority: second.authority,
             repository: second.repository,
             cloud: base,
@@ -1413,7 +1413,8 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
             directory: directory,
             cloud: cloud,
             sessionNonce: uuid(110),
-            newProfileID: uuid(111)
+            newProfileID: uuid(111),
+            deriveAccountBindings: true
         )
         for index in 110 ..< 115 {
             _ = try await settleRun(
@@ -1438,7 +1439,26 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(first.outcome.wasAlreadySettled)
         XCTAssertTrue(retry.outcome.wasAlreadySettled)
         XCTAssertEqual(first.outcome.coins, 100)
+        XCTAssertEqual(first.cloudReceipt.status, .committed)
         XCTAssertEqual(retry.cloudReceipt.status, .alreadyCommitted)
+        XCTAssertTrue(
+            first.authorizesJournalDeletion(
+                currentSession: eligible.session,
+                currentBinding: fixture.context.accountBinding,
+                offerID: request.offerID,
+                providerTransactionID: request.providerTransactionID,
+                rewardedAt: request.rewardedAt
+            )
+        )
+        XCTAssertTrue(
+            retry.authorizesJournalDeletion(
+                currentSession: eligible.session,
+                currentBinding: fixture.context.accountBinding,
+                offerID: request.offerID,
+                providerTransactionID: request.providerTransactionID,
+                rewardedAt: request.rewardedAt
+            )
+        )
         let snapshot = try await fixture.repository.snapshot()
         XCTAssertEqual(snapshot.coinBalances.confirmed, 550)
         XCTAssertNil(snapshot.player.rewardedAdState.eligibleOfferID)
@@ -1481,6 +1501,169 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
                 .malformedCloudRecord
             )
         }
+    }
+
+    func testRewardedAdCommittedThenRefreshedSettlesExactlyOnceAndAuthorizesDeletion()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let base = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let fixture = try await makeFixture(
+            directory: directory,
+            cloud: base,
+            sessionNonce: uuid(156),
+            newProfileID: uuid(157),
+            deriveAccountBindings: true
+        )
+        for index in 410 ..< 415 {
+            _ = try await settleRun(
+                index: index,
+                repository: fixture.repository,
+                session: fixture.snapshot.session
+            )
+        }
+        let confirmation = try await fixture.coordinator
+            .confirmAllPendingCredits()
+        _ = try XCTUnwrap(confirmation)
+        let beforeReward = try await fixture.repository.snapshot()
+        let offerID = try XCTUnwrap(
+            beforeReward.player.rewardedAdState.eligibleOfferID
+        )
+        XCTAssertEqual(beforeReward.coinBalances.pending, 0)
+
+        let cloud = SupersededCommittedReceiptTransport(
+            base: base,
+            recordID: economyRecordID
+        )
+        let coordinator = try makeCoordinator(
+            context: fixture.context,
+            authority: fixture.authority,
+            repository: fixture.repository,
+            cloud: cloud
+        )
+        let request = try await verifiedRewardRequest(
+            session: beforeReward.session,
+            accountBinding: fixture.context.accountBinding,
+            offerID: offerID,
+            providerTransactionID: AdProviderTransactionID(
+                "verified-ssv-committed-then-refreshed"
+            ),
+            rewardedAt: baseDate.addingTimeInterval(80_000)
+        )
+
+        let result = try await coordinator.deliverVerifiedReward(request)
+
+        XCTAssertEqual(result.cloudReceipt.status, .committedThenRefreshed)
+        XCTAssertTrue(
+            result.authorizesJournalDeletion(
+                currentSession: beforeReward.session,
+                currentBinding: fixture.context.accountBinding,
+                offerID: request.offerID,
+                providerTransactionID: request.providerTransactionID,
+                rewardedAt: request.rewardedAt
+            )
+        )
+        let commitAttempts = await cloud.coordinatorCommitAttemptCount()
+        XCTAssertEqual(commitAttempts, 1)
+
+        let afterReward = try await fixture.repository.snapshot()
+        XCTAssertEqual(
+            afterReward.coinBalances.confirmed,
+            beforeReward.coinBalances.confirmed
+                + PersistedEconomyRulesV1.rewardedAdCoins
+        )
+        XCTAssertEqual(afterReward.coinBalances.pending, 0)
+        XCTAssertNil(afterReward.player.rewardedAdState.eligibleOfferID)
+        XCTAssertEqual(
+            afterReward.player.rewardedAdState.cycle,
+            beforeReward.player.rewardedAdState.cycle + 1
+        )
+
+        let history = try decodeCloudHistory(
+            await base.allRecords(for: cloudAccountID)
+        )
+        XCTAssertEqual(
+            history.rewardOfferMarkers[offerID]?.redemption,
+            DurableEconomyCoordinator.RewardRedemption(
+                offerID: offerID,
+                providerTransactionID: request.providerTransactionID,
+                ledgerEntryID: result.outcome.ledgerEntryID
+            )
+        )
+    }
+
+    func testRewardedAdRejectsNonDerivedContextBeforeCloudOrLocalMutation()
+        async throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let base = InMemoryCloudSyncTransport(
+            accountState: .available(cloudAccountID)
+        )
+        let cloud = CommitCountingTransport(base: base)
+        let fixture = try await makeFixture(
+            directory: directory,
+            cloud: cloud,
+            sessionNonce: uuid(158),
+            newProfileID: uuid(159)
+        )
+        for index in 420 ..< 425 {
+            _ = try await settleRun(
+                index: index,
+                repository: fixture.repository,
+                session: fixture.snapshot.session
+            )
+        }
+        let before = try await fixture.repository.snapshot()
+        let offerID = try XCTUnwrap(
+            before.player.rewardedAdState.eligibleOfferID
+        )
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        let primaryBefore = try Data(contentsOf: locations.primaryURL)
+        let backupBefore = try Data(contentsOf: locations.backupURL)
+        let commitsBefore = await cloud.commitCallCount()
+        let recordsBefore = await base.allRecords(for: cloudAccountID)
+        let request = try await verifiedRewardRequest(
+            session: before.session,
+            accountBinding: fixture.context.accountBinding,
+            offerID: offerID,
+            providerTransactionID: AdProviderTransactionID(
+                "verified-ssv-non-derived-context"
+            ),
+            rewardedAt: baseDate.addingTimeInterval(81_000)
+        )
+
+        do {
+            _ = try await fixture.coordinator.deliverVerifiedReward(request)
+            XCTFail("A non-canonical cloud/account binding must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? DurableEconomyCoordinatorError,
+                .invalidRewardedAdRequest
+            )
+        }
+
+        let commitsAfter = await cloud.commitCallCount()
+        let recordsAfter = await base.allRecords(for: cloudAccountID)
+        XCTAssertEqual(commitsAfter, commitsBefore)
+        XCTAssertEqual(
+            recordsAfter,
+            recordsBefore
+        )
+        let after = try await fixture.repository.snapshot()
+        XCTAssertEqual(after, before)
+        XCTAssertEqual(
+            try Data(contentsOf: locations.primaryURL),
+            primaryBefore
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: locations.backupURL),
+            backupBefore
+        )
+        XCTAssertEqual(after.player.rewardedAdState.eligibleOfferID, offerID)
     }
 
     func testCanonicalRewardBatchUnlocksFiveIgnoresSixthAndRetriesExactlyOnce()
@@ -1645,7 +1828,8 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
             directory: staleDirectory,
             cloud: staleCloud,
             sessionNonce: uuid(114),
-            newProfileID: uuid(115)
+            newProfileID: uuid(115),
+            deriveAccountBindings: true
         )
         for index in 220 ..< 225 {
             _ = try await settleRun(
@@ -1968,7 +2152,8 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
             directory: directory,
             cloud: cloud,
             sessionNonce: uuid(116),
-            newProfileID: uuid(117)
+            newProfileID: uuid(117),
+            deriveAccountBindings: true
         )
         let pack = EconomyConfiguration.coinPacks[1]
         _ = try await fixture.coordinator.deliver(
@@ -2692,7 +2877,8 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
             directory: directory,
             cloud: cloud,
             sessionNonce: uuid(150),
-            newProfileID: uuid(151)
+            newProfileID: uuid(151),
+            deriveAccountBindings: true
         )
         for index in 150 ..< 155 {
             _ = try await settleRun(
@@ -2708,13 +2894,17 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         // the same eligible offer after the first device has redeemed it.
         let staleRepository = makeRepository(
             directory: directory,
-            sessionNonce: eligible.session.nonce
+            sessionNonce: eligible.session.nonce,
+            accountIdentity: fixture.context.profileSession.accountIdentity
         )
         let staleSnapshot = try await staleRepository.load(
             at: baseDate,
-            newProfileID: uuid(999)
+            newProfileID: fixture.context.accountBinding.profileID
         )
-        let staleContext = try makeContext(snapshot: staleSnapshot)
+        let staleContext = try makeContext(
+            snapshot: staleSnapshot,
+            accountBinding: fixture.context.accountBinding
+        )
         let staleAuthority = DurableEconomySessionAuthority(context: staleContext)
         let staleCoordinator = try makeCoordinator(
             context: staleContext,
@@ -2841,17 +3031,29 @@ private extension DurableEconomyCoordinatorTests {
         cloud: any CloudSyncTransport,
         sessionNonce: UUID,
         newProfileID: UUID,
-        conflictRetryLimit: Int = 3
+        conflictRetryLimit: Int = 3,
+        deriveAccountBindings: Bool = false
     ) async throws -> Fixture {
+        let derived = CloudAccountDerivedBindings.derive(from: cloudAccountID)
         let repository = makeRepository(
             directory: directory,
-            sessionNonce: sessionNonce
+            sessionNonce: sessionNonce,
+            accountIdentity: deriveAccountBindings
+                ? derived.playerAccountIdentity
+                : PlayerAccountIdentity("test-player-account")
         )
         let snapshot = try await repository.load(
             at: baseDate,
-            newProfileID: newProfileID
+            newProfileID: deriveAccountBindings
+                ? derived.durableAccountBinding.profileID
+                : newProfileID
         )
-        let context = try makeContext(snapshot: snapshot)
+        let context = try makeContext(
+            snapshot: snapshot,
+            accountBinding: deriveAccountBindings
+                ? derived.durableAccountBinding
+                : nil
+        )
         let authority = DurableEconomySessionAuthority(context: context)
         let coordinator = try makeCoordinator(
             context: context,
@@ -2877,7 +3079,7 @@ private extension DurableEconomyCoordinatorTests {
         conflictRetryLimit: Int = 3
     ) throws -> DurableEconomyCoordinator {
         DurableEconomyCoordinator(
-            context: context,
+            testingContext: context,
             sessionAuthority: authority,
             repository: repository,
             cloud: cloud,
@@ -2893,21 +3095,25 @@ private extension DurableEconomyCoordinatorTests {
 
     func makeRepository(
         directory: URL,
-        sessionNonce: UUID
+        sessionNonce: UUID,
+        accountIdentity: PlayerAccountIdentity = PlayerAccountIdentity(
+            "test-player-account"
+        )
     ) -> LocalPlayerProfileRepository {
         LocalPlayerProfileRepository(
             directoryURL: directory,
             deviceID: "durable-economy-test-device",
-            accountIdentity: PlayerAccountIdentity("test-player-account"),
+            accountIdentity: accountIdentity,
             sessionNonce: sessionNonce,
             economyMutationPolicy: .requireDurablePrivateCloud
         )
     }
 
     func makeContext(
-        snapshot: LocalPlayerProfileSnapshot
+        snapshot: LocalPlayerProfileSnapshot,
+        accountBinding: DurableAccountBinding? = nil
     ) throws -> DurableEconomySessionContext {
-        let accountBinding = DurableAccountBinding(
+        let accountBinding = accountBinding ?? DurableAccountBinding(
             accountKey: ServiceAccountKey("test-service-account"),
             profileID: snapshot.player.profileID
         )
