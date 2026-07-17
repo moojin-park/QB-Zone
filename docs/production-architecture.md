@@ -18,9 +18,10 @@ ProductionAppRuntime (one retained process graph)
             -> LocalPlayerProfileRepository actor
                  -> atomic local profile store
                  -> durable local profile and economy operations
-            -> dormant transactional CloudKit hydration,
+            -> dormant transactional CloudKit genesis, hydration,
                reconstruction, and incremental-publication seams
-            -> future account-scoped bootstrap/coordinator
+            -> future local-to-cloud claim, outbound bootstrap,
+               and account-scoped coordinator
        -> GameplaySessionController
             -> one GameScene for one RunConfiguration
             <- one CompletedRun callback
@@ -231,13 +232,32 @@ before live integration.
 ## Transactional cloud hydration
 
 A validated cloud replica is installed as one recoverable transaction. Fetch
-and validation do not block gameplay. Immediately before installation, the
-repository compares the exact profile session, profile ID, player/economy
-revisions, and source digest; only then does it enter a narrow mutation gate.
-A redundant immutable journal binds source and candidate profile envelopes,
-the cloud account-derived profile and player identities, scope and epoch,
-predecessor checkpoint, exact target checkpoint, transaction ID, and merge
-policy version.
+and validation do not block gameplay. Immediately before admission, the
+repository revalidates the active session, current document, canonical
+persisted source bytes and digest, profile ID, player and economy revisions,
+full journal, and transaction-store directory. The store claims the physical
+directory identity before waiting for its file lock, then synchronously
+installs the actor-owned barrier and revalidates that identity under the lock
+before writing the journal. A proven pre-claim failure installs no barrier;
+every post-claim failure retains it. Filesystem aliases therefore converge on
+one admission decision.
+
+The barrier blocks every profile, economy, settings, and selection mutation
+and every operation that can mint mutation authority. Account invalidation may
+still retire the repository session, but it cannot mutate profile state or
+release the barrier. Once the pending physical claim succeeds, the barrier
+remains installed across cancellation, account invalidation, lock contention,
+and post-claim ambiguity. Retry is actor-mediated: the repository reuses its
+one stored recovery handle only after revalidating the exact source, session,
+journal, and store, and never issues a second capability. A confirmation does
+not itself release the barrier. The target path clears only after successful
+exact-candidate adoption; the predecessor path clears only after repository
+acceptance of a sealed abort confirmation against the unchanged source.
+
+A redundant immutable journal binds the source and candidate profile
+envelopes, cloud account-derived profile and player identities, scope and
+epoch, predecessor checkpoint, exact target checkpoint, transaction ID, and
+merge policy version.
 
 Installation first durably writes both immutable journal copies, then commits
 and reloads the exact target checkpoint. While the outer account-generation
@@ -251,19 +271,33 @@ the borrowed lease may authorize candidate installation, predecessor-confirmed
 abort, or target-confirmed journal cleanup; raw checkpoint observations remain
 diagnostic and recovery values, not mutation authority. Both journal copies are
 removed after the candidate is durable, and the repository may adopt the exact
-installed candidate only after cleanup succeeds. Startup recovery runs before
-ordinary `loadOrCreate`, accepts only the exact predecessor or target
-checkpoint, and deterministically completes or cleans up the interrupted
-transaction. A wrong account, profile binding, schema scope, authority epoch,
-checkpoint state, or candidate digest can never install. The local repository
-uses deterministic account-derived identities for cloud profiles; switching
-iCloud accounts opens a separate profile and never silently merges identities.
+installed candidate only after cleanup succeeds. If final journal removal is
+ambiguous, no release proof is minted. A live-handle retry may reconcile
+durable absence but returns no confirmation and cannot release the barrier;
+startup recovery is rejected while any live admission identity remains. Only
+after the actor and every retained handle are gone may the account coordinator
+invoke a later startup pass before ordinary `loadOrCreate`.
 
-The exact repository-adoption seam is implemented but dormant. It validates the
-journal before file-system I/O, requires no journal or quarantine barrier,
-requires both profile copies to equal the exact candidate, and then swaps only
-the actor's document and canonical persisted artifact without rotating the
-profile session or publishing UI state.
+Startup recovery is a distinct diagnostic-only path. It rejects any pending,
+ready, or attempting live admission, including filesystem aliases. When an
+exact durable journal exists, only its exact predecessor or target checkpoint
+can authorize deterministic abort or cleanup, and both profile copies must
+match the journal's corresponding source or candidate. When no journal or
+quarantine evidence exists, startup may return only diagnostic
+`noDurableJournal`. It never installs a candidate, releases a live actor
+barrier, or turns an ambiguous observation into mutation authority. A wrong
+account, profile binding, schema scope, authority epoch, checkpoint state, or
+candidate digest can never install. The local repository uses deterministic
+account-derived identities for cloud profiles; switching iCloud accounts opens
+a separate profile and never silently merges identities.
+
+The exact repository-adoption seam is implemented but dormant. Adoption first
+matches the active capability, exact journal and session, sealed target-cleanup
+confirmation, and unchanged persisted source. The file store then requires no
+journal or quarantine barrier and both profile copies to equal the exact
+candidate. Only after account and profile validation does the actor swap its
+document and canonical persisted artifact; the session is not rotated and UI
+state is not published. Every failed validation retains the barrier.
 
 The process-local account-generation authority is also implemented but dormant.
 It binds one opaque, nonpersistable token to the exact cloud account, all
@@ -294,11 +328,31 @@ a later accepted checkpoint rejects a stale journal before profile mutation.
 The enforced lock order is checkpoint account lock followed by profile-file
 lock.
 
-Typed checkpoint fetching and publication are implemented but dormant. Release
-code obtains `CloudReplicaScopedChangeFetcherV1` only from the complete
-validated production cloud-write configuration. The wrapper derives the exact
-replica scope and hard-codes `requireExisting`, so callers cannot pair an
-asserted scope with an unrelated transport or request zone creation.
+Typed first-zone genesis publication is implemented but dormant. Genesis begins
+with an account-generation-bound metadata preflight and a durable reservation
+written before network access. Reservation state advances from
+`reservedBeforeNetwork` to `networkMayHaveBeenInvoked`; a process registry keyed
+by the physical authority directory and lock shares bounded reservation
+issuance and permits only one live network attempt across aliases. A zero or
+newly issued duplicate reservation identifier, attempt-sequence overflow, or
+exhaustion of the bounded process issuance history fails closed; recovery
+deliberately retains the exact durable reservation identifier.
+
+The sealed genesis context is one-shot. Only the nil-cursor request of attempt
+one may ask CloudKit to create the zone; continuation pages require the existing
+zone. After an ambiguous attempt, a separately minted recovery context durably
+increments the monotonic attempt sequence before network access, and every
+recovery request uses `requireExisting`, so zone creation is never replayed.
+Generation-one checkpoint save requires the exact account generation, account,
+scope, epoch, reservation, attempt sequence, and live save lease, then consumes
+the reservation under the authority lock.
+
+Typed checkpoint fetching and publication are implemented but dormant. The
+ordinary incremental and cache-loss reconstruction wrappers derive the exact
+replica scope from the complete validated production cloud-write configuration
+and hard-code `requireExisting`, so callers cannot pair an asserted scope with
+an unrelated transport or request zone creation. The raw transport also rejects
+zone creation unless the sealed first-zone context presents its opaque permit.
 
 Cache-loss reconstruction begins only when durable accepted history exists and
 no usable accepted checkpoint copy remains. Its sealed context owns the nil
@@ -322,20 +376,20 @@ revalidates the exact durable predecessor and any pending candidate under the
 account lock. Raw checkpoint save is private in Release and exposed only as a
 Debug test seam.
 
-Live composition now requires a separately sealed first-zone genesis path, a
-repository hydration-mutation barrier, a durable one-time local-profile
-account-claim transaction, outbound initial profile publication, and the
-account-scoped runtime coordinator. The barrier must verify the exact source
-and prevent gameplay, settings, or economy mutations from racing journal
-creation and candidate installation. Existing hydration deliberately rejects
-changing a local profile's account-derived identity, and the Release fetcher
-deliberately cannot create a zone, so neither boundary may be widened as a
-shortcut. A fetch context is minted under bounded generation admission,
-network work occurs after leaving that gate, and durable publication later
-reacquires a fresh lease that must match the context's opaque generation
-provenance. The coordinator must then perform checkpoint publication, leased
-profile mutation, journal cleanup, repository adoption, generation recheck,
-and authoritative state publication in the documented crash-recoverable order.
+Live composition now requires a durable one-time local-profile account-claim
+transaction, outbound initial profile publication, and the account-scoped
+runtime coordinator. The coordinator must use the sealed first-zone genesis and
+repository hydration barrier exactly as implemented; neither boundary may be
+widened or bypassed as a shortcut. Existing hydration deliberately rejects
+changing a local profile's account-derived identity, and ordinary Release
+fetchers deliberately cannot create a zone.
+
+A fetch or publication context is minted under bounded generation admission,
+network work occurs after leaving that gate, and each durable save later
+reacquires fresh matching authority. The coordinator must revalidate the exact
+checkpoint, profile, journal, adoption, account generation, and repository
+state in crash-recoverable order, then publish authoritative state only after
+all required profile and checkpoint durability is proven.
 
 Material hydration advances local player and economy revisions exactly once
 without copying a remote root revision. A no-op merge does not advance either
