@@ -171,7 +171,8 @@ final class RewardedAdServiceTests: XCTestCase {
             binding: sessionA1.binding,
             offerID: offerID,
             attemptID: attemptID,
-            providerTransactionID: providerID
+            providerTransactionID: providerID,
+            rewardedAt: now.addingTimeInterval(10)
         )
         XCTAssertNil(coordinator.verificationDidSucceed(receipt, at: now))
         XCTAssertEqual(coordinator.recoveryCommands(at: now), [])

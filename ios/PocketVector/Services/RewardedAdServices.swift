@@ -52,6 +52,8 @@ struct VerifiedRewardReceipt: Codable, Equatable, Hashable, Sendable {
     let offerID: RewardOfferID
     let attemptID: UUID
     let providerTransactionID: AdProviderTransactionID
+    /// Immutable server-owned time from the replayable verification result.
+    let rewardedAt: Date
 }
 
 enum RewardedAdSettlementDisposition: String, Codable, Equatable, Sendable {

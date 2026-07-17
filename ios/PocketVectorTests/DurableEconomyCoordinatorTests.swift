@@ -1424,8 +1424,9 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         }
         let eligible = try await fixture.repository.snapshot()
         let offerID = try XCTUnwrap(eligible.player.rewardedAdState.eligibleOfferID)
-        let request = VerifiedRewardedAdDurableDeliveryRequest(
+        let request = try await verifiedRewardRequest(
             session: eligible.session,
+            accountBinding: fixture.context.accountBinding,
             offerID: offerID,
             providerTransactionID: AdProviderTransactionID("verified-ssv-transaction"),
             rewardedAt: baseDate.addingTimeInterval(20_000)
@@ -1656,8 +1657,9 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         let eligible = try await fixture.repository.snapshot()
         let offerID = try XCTUnwrap(eligible.player.rewardedAdState.eligibleOfferID)
         _ = try await fixture.coordinator.deliverVerifiedReward(
-            VerifiedRewardedAdDurableDeliveryRequest(
+            try await verifiedRewardRequest(
                 session: eligible.session,
+                accountBinding: fixture.context.accountBinding,
                 offerID: offerID,
                 providerTransactionID: AdProviderTransactionID("stale-cycle-redemption"),
                 rewardedAt: baseDate.addingTimeInterval(50_000)
@@ -1992,8 +1994,9 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         let eligible = try await fixture.repository.snapshot()
         let offerID = try XCTUnwrap(eligible.player.rewardedAdState.eligibleOfferID)
         _ = try await fixture.coordinator.deliverVerifiedReward(
-            VerifiedRewardedAdDurableDeliveryRequest(
+            try await verifiedRewardRequest(
                 session: eligible.session,
+                accountBinding: fixture.context.accountBinding,
                 offerID: offerID,
                 providerTransactionID: AdProviderTransactionID("verify-complete-history"),
                 rewardedAt: baseDate.addingTimeInterval(25_000)
@@ -2721,8 +2724,9 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
         )
 
         _ = try await fixture.coordinator.deliverVerifiedReward(
-            VerifiedRewardedAdDurableDeliveryRequest(
+            try await verifiedRewardRequest(
                 session: eligible.session,
+                accountBinding: fixture.context.accountBinding,
                 offerID: offerID,
                 providerTransactionID: AdProviderTransactionID("provider-a"),
                 rewardedAt: baseDate.addingTimeInterval(40_000)
@@ -2732,8 +2736,9 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
 
         do {
             _ = try await staleCoordinator.deliverVerifiedReward(
-                VerifiedRewardedAdDurableDeliveryRequest(
+                try await verifiedRewardRequest(
                     session: staleSnapshot.session,
+                    accountBinding: staleContext.accountBinding,
                     offerID: offerID,
                     providerTransactionID: AdProviderTransactionID("provider-b"),
                     rewardedAt: baseDate.addingTimeInterval(40_001)
@@ -2941,6 +2946,36 @@ private extension DurableEconomyCoordinatorTests {
             ),
             pack: pack,
             ledgerEntry: entry
+        )
+    }
+
+    func verifiedRewardRequest(
+        session: ProfileSessionToken,
+        accountBinding: DurableAccountBinding,
+        offerID: RewardOfferID,
+        providerTransactionID: AdProviderTransactionID,
+        rewardedAt: Date
+    ) async throws -> VerifiedRewardedAdDurableDeliveryRequest {
+        let attempt = RewardedAdAttempt(
+            binding: accountBinding,
+            presentationSessionNonce: session.nonce,
+            offerID: offerID,
+            attemptID: UUID()
+        )
+        let transport = DurableEconomyRewardVerificationTransport(
+            attempt: attempt,
+            providerTransactionID: providerTransactionID,
+            rewardedAt: rewardedAt
+        )
+        let client = RewardedAdVerificationClient(testingTransport: transport)
+        let challenge = try await client.prepareChallenge(for: attempt)
+        let status = try await client.verificationStatus(for: challenge)
+        guard case let .verified(claim) = status else {
+            throw DurableEconomyTestFixtureError.malformedCloudPayload
+        }
+        return try claim.durableDeliveryRequest(
+            session: session,
+            currentBinding: accountBinding
         )
     }
 
@@ -3688,6 +3723,52 @@ private actor MutateRepositoryAfterCommitTransport: CloudSyncTransport {
             )
         }
         return receipt
+    }
+}
+
+private actor DurableEconomyRewardVerificationTransport:
+    RewardedAdVerificationTransport
+{
+    private let attempt: RewardedAdAttempt
+    private let providerTransactionID: AdProviderTransactionID
+    private let rewardedAt: Date
+    private let handle: String
+    private let customData: String
+
+    init(
+        attempt: RewardedAdAttempt,
+        providerTransactionID: AdProviderTransactionID,
+        rewardedAt: Date
+    ) {
+        self.attempt = attempt
+        self.providerTransactionID = providerTransactionID
+        self.rewardedAt = rewardedAt
+        handle = "durable-test-handle-\(attempt.attemptID.uuidString)"
+        customData = "durable-test-custom-\(attempt.attemptID.uuidString)"
+    }
+
+    func prepareChallenge(
+        _ request: RewardedAdVerificationPreparationRequest
+    ) -> RewardedAdVerificationPreparationResponse {
+        RewardedAdVerificationPreparationResponse(
+            attempt: request.attempt,
+            verificationHandle: handle,
+            providerCustomData: customData
+        )
+    }
+
+    func verificationStatus(
+        _: RewardedAdVerificationStatusRequest
+    ) -> RewardedAdVerificationServerStatus {
+        .verified(
+            RewardedAdVerifiedServerResponse(
+                attempt: attempt,
+                verificationHandle: handle,
+                providerCustomData: customData,
+                uniqueProviderTransactionID: providerTransactionID.rawValue,
+                rewardedAt: rewardedAt
+            )
+        )
     }
 }
 

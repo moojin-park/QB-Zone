@@ -122,6 +122,8 @@
 		1F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift */; };
 		1F000000000000000000000D /* GameCenterDeliveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000D /* GameCenterDeliveryCoordinator.swift */; };
 		1F000000000000000000000E /* GameCenterDeliveryCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F000000000000000000000E /* GameCenterDeliveryCoordinatorTests.swift */; };
+		1F0000000000000000000011 /* RewardedAdVerificationClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000011 /* RewardedAdVerificationClient.swift */; };
+		1F0000000000000000000012 /* RewardedAdVerificationClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F0000000000000000000012 /* RewardedAdVerificationClientTests.swift */; };
 		120000000000000000000007 /* GameCenterServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000007 /* GameCenterServiceTests.swift */; };
 		120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000008 /* StoreTransactionServiceTests.swift */; };
 		120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220000000000000000000009 /* RewardedAdServiceTests.swift */; };
@@ -259,6 +261,8 @@
 		2F0000000000000000000010 /* StoreKitRuntimeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreKitRuntimeCoordinatorTests.swift; sourceTree = "<group>"; };
 		2F000000000000000000000D /* GameCenterDeliveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterDeliveryCoordinator.swift; sourceTree = "<group>"; };
 		2F000000000000000000000E /* GameCenterDeliveryCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterDeliveryCoordinatorTests.swift; sourceTree = "<group>"; };
+		2F0000000000000000000011 /* RewardedAdVerificationClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdVerificationClient.swift; sourceTree = "<group>"; };
+		2F0000000000000000000012 /* RewardedAdVerificationClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdVerificationClientTests.swift; sourceTree = "<group>"; };
 		220000000000000000000007 /* GameCenterServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCenterServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000008 /* StoreTransactionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreTransactionServiceTests.swift; sourceTree = "<group>"; };
 		220000000000000000000009 /* RewardedAdServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardedAdServiceTests.swift; sourceTree = "<group>"; };
@@ -397,6 +401,7 @@
 				2F000000000000000000000E /* GameCenterDeliveryCoordinatorTests.swift */,
 				220000000000000000000008 /* StoreTransactionServiceTests.swift */,
 				220000000000000000000009 /* RewardedAdServiceTests.swift */,
+				2F0000000000000000000012 /* RewardedAdVerificationClientTests.swift */,
 				22000000000000000000000A /* CloudSyncServiceTests.swift */,
 				22000000000000000000000B /* TelemetryDiagnosticsServiceTests.swift */,
 				230000000000000000000008 /* PlayerProfilePersistenceTests.swift */,
@@ -488,6 +493,7 @@
 				270000000000000000000005 /* StoreKit2TransactionAdapter.swift */,
 				2F000000000000000000000F /* StoreKitRuntimeCoordinator.swift */,
 				220000000000000000000003 /* RewardedAdServices.swift */,
+				2F0000000000000000000011 /* RewardedAdVerificationClient.swift */,
 				220000000000000000000004 /* CloudSyncServices.swift */,
 				270000000000000000000003 /* CloudKitCloudSyncAdapter.swift */,
 				2E0000000000000000000001 /* CloudReplicaCheckpoint.swift */,
@@ -700,6 +706,7 @@
 				120000000000000000000001 /* GameCenterServices.swift in Sources */,
 				120000000000000000000002 /* StoreTransactionServices.swift in Sources */,
 				120000000000000000000003 /* RewardedAdServices.swift in Sources */,
+				1F0000000000000000000011 /* RewardedAdVerificationClient.swift in Sources */,
 				120000000000000000000004 /* CloudSyncServices.swift in Sources */,
 				120000000000000000000005 /* TelemetryServices.swift in Sources */,
 				120000000000000000000006 /* DiagnosticsServices.swift in Sources */,
@@ -764,6 +771,7 @@
 				1F000000000000000000000E /* GameCenterDeliveryCoordinatorTests.swift in Sources */,
 				120000000000000000000008 /* StoreTransactionServiceTests.swift in Sources */,
 				120000000000000000000009 /* RewardedAdServiceTests.swift in Sources */,
+				1F0000000000000000000012 /* RewardedAdVerificationClientTests.swift in Sources */,
 				12000000000000000000000A /* CloudSyncServiceTests.swift in Sources */,
 				12000000000000000000000B /* TelemetryDiagnosticsServiceTests.swift in Sources */,
 				130000000000000000000008 /* PlayerProfilePersistenceTests.swift in Sources */,

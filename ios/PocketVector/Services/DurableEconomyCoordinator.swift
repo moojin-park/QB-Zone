@@ -545,14 +545,39 @@ struct DurableCatalogUnlockResult: Equatable, Sendable {
     let cloudReceipt: DurableEconomyCloudCommitReceipt
 }
 
-/// This is intentionally downstream of provider verification. It does not
-/// validate an ad SDK callback or invent server-side verification; it only
-/// durably delivers evidence accepted by the future SSV coordinator.
+/// This is intentionally downstream of provider verification. Its only
+/// initializer requires a non-Codable process claim minted by the verification
+/// client after exact server correlation.
 struct VerifiedRewardedAdDurableDeliveryRequest: Equatable, Sendable {
     let session: ProfileSessionToken
-    let offerID: RewardOfferID
-    let providerTransactionID: AdProviderTransactionID
-    let rewardedAt: Date
+    private let verifiedClaim: VerifiedRewardedAdClaim
+
+    var offerID: RewardOfferID { verifiedClaim.receipt.offerID }
+    var providerTransactionID: AdProviderTransactionID {
+        verifiedClaim.receipt.providerTransactionID
+    }
+    var rewardedAt: Date { verifiedClaim.receipt.rewardedAt }
+    var verifiedBinding: DurableAccountBinding {
+        verifiedClaim.receipt.binding
+    }
+
+    init(
+        session: ProfileSessionToken,
+        currentBinding: DurableAccountBinding,
+        verifiedClaim: VerifiedRewardedAdClaim
+    ) throws {
+        // Durable ownership survives session rollover. The presentation nonce
+        // is correlation evidence, not owner authority; the coordinator still
+        // requires `session` to equal its exact current mutation session.
+        guard currentBinding == verifiedClaim.receipt.binding else {
+            throw RewardedAdVerificationError.durableOwnerMismatch
+        }
+        guard session.profileID == currentBinding.profileID else {
+            throw RewardedAdVerificationError.profileSessionMismatch
+        }
+        self.session = session
+        self.verifiedClaim = verifiedClaim
+    }
 }
 
 struct DurableRewardedAdDeliveryResult: Equatable, Sendable {
@@ -914,6 +939,7 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
         _ request: VerifiedRewardedAdDurableDeliveryRequest
     ) async throws -> DurableRewardedAdDeliveryResult {
         guard request.session == context.profileSession,
+              request.verifiedBinding == context.accountBinding,
               request.rewardedAt.timeIntervalSince1970.isFinite
         else {
             throw DurableEconomyCoordinatorError.invalidRewardedAdRequest
