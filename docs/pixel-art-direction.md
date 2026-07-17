@@ -55,6 +55,28 @@ vector/material choice and remains attached to the player across teams.
   preload behind an unresponsive scene.
 - Reduced motion must remove ornamental motion without changing simulation.
 
+## Main menu
+
+The main menu is a full-stadium arcade marquee, not a stack of generic app
+cards. Its hierarchy is: team banner and `POCKET VECTOR` wordmark, team name,
+large central Play control, compact utility actions, then the three primary
+destinations. Pixel players flank Play without becoming interactive targets.
+
+The selected offense drives the menu's primary and secondary accents, emblem,
+wordmark, and both player uniforms. Nova City Comets is the fresh-profile
+default; a returning player's persisted selection remains authoritative. The
+stadium base stays neutral so team color comes from runtime overlays rather
+than baked identity.
+
+- Preserve the concept's dark navy, bright stadium lighting, framed marquee,
+  oversized Play control, and clear bottom navigation rhythm.
+- Keep every interactive control inside landscape safe areas on compact iPhone,
+  regular iPhone, and iPad.
+- Decorative stadium and player layers remain hidden from accessibility; every
+  control has a concise label and the Play control includes an action hint.
+- Prefer nearest-neighbor scaling for character sprites and high-contrast text
+  over fine pixel detail when the compact layout must compress.
+
 ## Source and runtime boundaries
 
 Editable sources live under `ios/AssetSources/`; regeneration tools live under

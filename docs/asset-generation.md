@@ -75,6 +75,31 @@ Requirements: Node.js and ImageMagick.
 node ios/Tools/generate-native-field-plate.mjs
 ```
 
+## Main-menu stadium
+
+Editable source:
+
+```text
+ios/AssetSources/Menu/menu-stadium-neutral-v1.png
+```
+
+Runtime asset-catalog image:
+
+```text
+ios/PocketVector/Resources/Assets.xcassets/MenuStadium.imageset/menu-stadium-neutral-v1.png
+```
+
+The 1672 x 941 lossless PNG was created with the built-in image generator from
+the approved menu concept and the existing stadium-field source. The generation
+prompt requested a neutral 16:9 nighttime pixel-football stadium with a bright
+crowd and floodlights, blank banners, sideline equipment, and no lettering,
+logos, characters, or baked team identity. `MainMenuView` adds the selected
+team's colors, mark, wordmark, and runtime-recolored players above this plate.
+
+The neutral source must stay free of team marks so all eight launch teams can
+share the same composition. Validate it through the asset-catalog build; it is
+not part of the exact `native-assets.json` runtime inventory.
+
 ## HUD control icons
 
 Sources:
