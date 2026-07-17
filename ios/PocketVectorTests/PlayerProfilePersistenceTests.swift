@@ -461,6 +461,1415 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(decoded.document.player.profileID, loaded.player.profileID)
     }
 
+    func testHydrationBarrierBlocksEveryMutationAndAuthorityProducerAcrossSuspension()
+        async throws
+    {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+        let loaded = harness.loaded
+        let transactionID = harness.fixture.transactionID
+
+        await Task.yield()
+        let readableSnapshot = try await harness.repository.snapshot()
+        let readableReceipt = try await harness.repository.settlementReceipt(
+            for: fixedRunID(901),
+            session: loaded.session
+        )
+        XCTAssertEqual(readableSnapshot, loaded)
+        XCTAssertNil(readableReceipt)
+
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.hydrationSource(session: loaded.session)
+        }
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.prepareUnlock(
+                itemID: CatalogItemID(
+                    "unlock.team.\(LaunchTeamID.lumaCoastPrisms.rawValue)"
+                ),
+                operationID: OperationID("barrier-prepare-unlock"),
+                session: loaded.session
+            )
+        }
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.settle(
+                self.makeRun(id: self.fixedRunID(902), score: 15),
+                session: loaded.session,
+                recordedAt: self.baseDate
+            )
+        }
+
+        let confirmation = DurableEconomyConfirmation(
+            confirmationID: OperationID("barrier-confirmation"),
+            session: loaded.session,
+            entries: [:],
+            expectedEconomyRevision: loaded.economyRevision,
+            confirmedBalanceBefore: loaded.coinBalances.confirmed,
+            confirmedAt: baseDate,
+            authority: .localTest
+        )
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.confirmPendingCredits(
+                [],
+                session: loaded.session,
+                confirmation: confirmation,
+                savedAt: self.baseDate
+            )
+        }
+
+        let credit = CoinLedgerEntry(
+            id: CoinLedgerID.storeKit(transactionID: 999_001),
+            delta: 500,
+            reason: .storeKit(
+                transactionID: 999_001,
+                packID: PersistedEconomyRulesV1.coinPackCoins.keys.sorted {
+                    $0.rawValue < $1.rawValue
+                }[0]
+            ),
+            createdAt: baseDate
+        )
+        let creditConfirmation = DurableEconomyConfirmation(
+            confirmationID: OperationID("barrier-credit-confirmation"),
+            session: loaded.session,
+            entries: [credit.id: credit],
+            expectedEconomyRevision: loaded.economyRevision,
+            confirmedBalanceBefore: loaded.coinBalances.confirmed,
+            confirmedAt: baseDate,
+            authority: .localTest
+        )
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.recordConfirmedCredit(
+                credit,
+                session: loaded.session,
+                confirmation: creditConfirmation,
+                savedAt: self.baseDate
+            )
+        }
+
+        let unlockItemID = CatalogItemID(
+            "unlock.team.\(LaunchTeamID.lumaCoastPrisms.rawValue)"
+        )
+        let unlockPrice = PersistedEconomyRulesV1.catalogPrice(
+            for: try XCTUnwrap(LaunchCatalog.approved.item(id: unlockItemID))
+        )
+        let unlockReceipt = DurableCatalogUnlockReceipt(
+            receiptID: OperationID("barrier-unlock-receipt"),
+            requestOperationID: OperationID("barrier-unlock-request"),
+            session: loaded.session,
+            itemID: unlockItemID,
+            ledgerEntryID: CoinLedgerID.catalogUnlock(itemID: unlockItemID),
+            price: unlockPrice,
+            expectedEconomyRevision: loaded.economyRevision,
+            confirmedBalanceBefore: loaded.coinBalances.confirmed,
+            confirmedBalanceAfter: loaded.coinBalances.confirmed,
+            confirmedAt: baseDate,
+            authority: .localTest
+        )
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.unlock(
+                using: unlockReceipt,
+                session: loaded.session,
+                at: self.baseDate
+            )
+        }
+
+        let rewardedReceipt = DurableRewardedAdReceipt(
+            receiptID: OperationID("barrier-rewarded-receipt"),
+            session: loaded.session,
+            offerID: RewardOfferID("barrier-offer"),
+            providerTransactionID: AdProviderTransactionID(
+                "barrier-provider-transaction"
+            ),
+            expectedEconomyRevision: loaded.economyRevision,
+            confirmedBalanceBefore: loaded.coinBalances.confirmed,
+            rewardedAt: baseDate,
+            authority: .localTest
+        )
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.settleRewardedAd(
+                using: rewardedReceipt,
+                session: loaded.session,
+                savedAt: self.baseDate
+            )
+        }
+
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.selectTeam(
+                loaded.player.selection.selectedTeamID,
+                session: loaded.session,
+                at: self.baseDate
+            )
+        }
+        let selectedTeamID = loaded.player.selection.selectedTeamID
+        let selectedJerseyID = try XCTUnwrap(
+            loaded.player.selection.selectedJerseyByTeam[selectedTeamID]
+        )
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.equipJersey(
+                selectedJerseyID,
+                for: selectedTeamID,
+                session: loaded.session,
+                at: self.baseDate
+            )
+        }
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.equipFootball(
+                loaded.player.selection.selectedFootballID,
+                session: loaded.session,
+                at: self.baseDate
+            )
+        }
+        await assertHydrationBarrier(transactionID) {
+            try await harness.repository.updateSettings(
+                loaded.player.settings,
+                session: loaded.session,
+                at: self.baseDate
+            )
+        }
+
+        let unchangedSnapshot = try await harness.repository.snapshot()
+        XCTAssertEqual(unchangedSnapshot, loaded)
+        XCTAssertEqual(
+            try Data(
+                contentsOf: ProfileStorageLocations(
+                    directoryURL: harness.directory
+                ).primaryURL
+            ),
+            harness.fixture.sourceEnvelope
+        )
+    }
+
+    func testHydrationBarrierRejectsDuplicateBeginAndForeignCapability() async throws {
+        let first = try await makeHydrationBarrierHarness()
+        let second = try await makeHydrationBarrierHarness()
+        defer {
+            removeTemporaryDirectory(first.directory)
+            removeTemporaryDirectory(second.directory)
+        }
+
+        do {
+            _ = try await first.repository.beginHydration(
+                first.fixture.journal,
+                session: first.loaded.session,
+                transactionStore: first.transactionStore
+            )
+            XCTFail("A competing begin must not receive another capability")
+        } catch {
+            XCTAssertEqual(
+                error as? LocalProfileHydrationBarrierError,
+                .hydrationInProgress(
+                    transactionID: first.fixture.transactionID
+                )
+            )
+        }
+
+        let cleanup = try await installAndConfirmHydrationTarget(
+            fixture: first.fixture,
+            transactionStore: first.transactionStore,
+            recoveryHandle: first.admission.recoveryHandle
+        )
+        do {
+            _ = try await first.repository.adoptCommittedHydration(
+                first.fixture.journal,
+                session: first.loaded.session,
+                capability: second.admission.capability,
+                cleanupConfirmation: cleanup
+            )
+            XCTFail("A capability issued by another repository must fail")
+        } catch {
+            XCTAssertEqual(
+                error as? LocalProfileHydrationBarrierError,
+                .capabilityMismatch
+            )
+        }
+        await assertHydrationBarrier(first.fixture.transactionID) {
+            try await first.repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: first.loaded.session,
+                at: self.baseDate
+            )
+        }
+
+        _ = try await first.repository.adoptCommittedHydration(
+            first.fixture.journal,
+            session: first.loaded.session,
+            capability: first.admission.capability,
+            cleanupConfirmation: cleanup
+        )
+        do {
+            _ = try await first.repository.adoptCommittedHydration(
+                first.fixture.journal,
+                session: first.loaded.session,
+                capability: first.admission.capability,
+                cleanupConfirmation: cleanup
+            )
+            XCTFail("A released capability must be stale")
+        } catch {
+            XCTAssertEqual(
+                error as? LocalProfileHydrationBarrierError,
+                .capabilityMismatch
+            )
+        }
+    }
+
+    func testHydrationBarrierRetainsFreezeWhenSourceDriftsBeforeJournalAdmission()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture
+        )
+        let loaded = try await repository.load(at: fixture.date)
+        let transactionStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: directory
+        )
+        try writeExactProfileCopies(
+            primary: fixture.candidateEnvelope,
+            backup: fixture.candidateEnvelope,
+            to: directory
+        )
+
+        do {
+            _ = try await repository.beginHydration(
+                fixture.journal,
+                session: loaded.session,
+                transactionStore: transactionStore
+            )
+            XCTFail("The exact source compare-and-swap must detect drift")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .sourceProfileCASMismatch(.candidate)
+            )
+        }
+        await assertHydrationBarrier(fixture.transactionID) {
+            try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: loaded.session,
+                at: self.baseDate
+            )
+        }
+    }
+
+    func testHydrationBarrierSurvivesCallerCancellation() async throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture
+        )
+        let loaded = try await repository.load(at: fixture.date)
+        let transactionStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: directory
+        )
+
+        let task = Task<Void, Error> {
+            _ = try await repository.beginHydration(
+                fixture.journal,
+                session: loaded.session,
+                transactionStore: transactionStore
+            )
+            throw CancellationError()
+        }
+        let result = await task.result
+        guard case .failure(let error) = result else {
+            return XCTFail("The harness task must cancel after admission")
+        }
+        XCTAssertTrue(error is CancellationError)
+        await assertHydrationBarrier(fixture.transactionID) {
+            try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: loaded.session,
+                at: self.baseDate
+            )
+        }
+    }
+
+    func testLockContentionPendingClaimBlocksStartupAndRetryAdmissionRecovers()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture,
+            fileSystem: fileSystem
+        )
+        let loaded = try await repository.load(at: fixture.date)
+        let transactionStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: directory,
+            fileSystem: fileSystem
+        )
+        fileSystem.failNext(
+            .beforeLock(transactionStore.locations.lockURL.lastPathComponent)
+        )
+
+        do {
+            _ = try await repository.beginHydration(
+                fixture.journal,
+                session: loaded.session,
+                transactionStore: transactionStore
+            )
+            XCTFail("The injected lock contention must fail admission")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .lockContended
+            )
+        }
+        let resumed = try await repository.resumeHydrationBarrier(
+            fixture.journal,
+            session: loaded.session
+        )
+        do {
+            _ = try await recoverHydrationPredecessorWithoutCapability(
+                fixture: fixture,
+                transactionStore: transactionStore
+            )
+            XCTFail("Startup must not race the pending admission claim")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .repositoryLiveAdmissionInProgress
+            )
+        }
+
+        let retried = try await repository.retryHydrationAdmission(
+            fixture.journal,
+            session: loaded.session,
+            transactionStore: transactionStore
+        )
+        XCTAssertEqual(retried.recoveryHandle, resumed)
+        try assertExactHydrationJournalCopies(
+            fixture.journal,
+            transactionStore: transactionStore
+        )
+        let confirmation = try await confirmHydrationPredecessorAbort(
+            fixture: fixture,
+            transactionStore: transactionStore,
+            recoveryHandle: retried.recoveryHandle
+        )
+        let proof = try XCTUnwrap(confirmation)
+        _ = try await repository.releaseHydrationAfterConfirmedPredecessorAbort(
+            proof,
+            journal: fixture.journal,
+            session: loaded.session,
+            capability: retried.capability
+        )
+    }
+
+    func testPhysicalIdentityFailureBeforePendingClaimDoesNotInstallActorBarrier()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture
+        )
+        let loaded = try await repository.load(at: fixture.date)
+        let transactionStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: directory
+        )
+        try FileManager.default.removeItem(at: directory)
+
+        do {
+            _ = try await repository.beginHydration(
+                fixture.journal,
+                session: loaded.session,
+                transactionStore: transactionStore
+            )
+            XCTFail("A missing physical directory must fail before admission")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .profileDirectoryIdentityUnavailableBeforeAdmission
+            )
+        }
+        do {
+            _ = try await repository.resumeHydrationBarrier(
+                fixture.journal,
+                session: loaded.session
+            )
+            XCTFail("No actor barrier may exist before a pending claim")
+        } catch {
+            XCTAssertEqual(
+                error as? LocalProfileHydrationBarrierError,
+                .capabilityMismatch
+            )
+        }
+        let source = try await repository.hydrationSource(
+            session: loaded.session
+        )
+        XCTAssertEqual(source.exactEnvelopeBytes, fixture.sourceEnvelope)
+    }
+
+    func testConfirmedPredecessorAbortReleasesHydrationBarrier() async throws {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+        let confirmation = try await confirmHydrationPredecessorAbort(
+            fixture: harness.fixture,
+            transactionStore: harness.transactionStore,
+            recoveryHandle: harness.admission.recoveryHandle
+        )
+        let proof = try XCTUnwrap(confirmation)
+
+        let released = try await harness.repository
+            .releaseHydrationAfterConfirmedPredecessorAbort(
+                proof,
+                journal: harness.fixture.journal,
+                session: harness.loaded.session,
+                capability: harness.admission.capability
+            )
+        XCTAssertEqual(released, harness.loaded)
+
+        let mutated = try await harness.repository.updateSettings(
+            PlayerSettings(isMuted: true),
+            session: harness.loaded.session,
+            at: baseDate.addingTimeInterval(5)
+        )
+        XCTAssertTrue(mutated.player.settings.isMuted)
+        XCTAssertEqual(mutated.player.revision, harness.loaded.player.revision + 1)
+    }
+
+    func testNoJournalConfirmationCannotReleaseAmbiguousHydrationBarrier()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture,
+            fileSystem: fileSystem
+        )
+        let loaded = try await repository.load(at: fixture.date)
+        let transactionStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: directory,
+            fileSystem: fileSystem
+        )
+        fileSystem.failNext(.beforeWrite("profile-hydration-journal.json"))
+
+        do {
+            _ = try await repository.beginHydration(
+                fixture.journal,
+                session: loaded.session,
+                transactionStore: transactionStore
+            )
+            XCTFail("The injected journal write must fail")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .ioFailure
+            )
+        }
+        let recoveredHandle = try await repository.resumeHydrationBarrier(
+            fixture.journal,
+            session: loaded.session
+        )
+        let noProof = try await confirmHydrationPredecessorAbort(
+            fixture: fixture,
+            transactionStore: transactionStore,
+            recoveryHandle: recoveredHandle
+        )
+        XCTAssertNil(noProof)
+        await assertHydrationBarrier(fixture.transactionID) {
+            try await repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: loaded.session,
+                at: self.baseDate
+            )
+        }
+    }
+
+    func testSuccessfulTargetAdoptionReleasesHydrationBarrier() async throws {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+        let cleanup = try await installAndConfirmHydrationTarget(
+            fixture: harness.fixture,
+            transactionStore: harness.transactionStore,
+            recoveryHandle: harness.admission.recoveryHandle
+        )
+
+        let adopted = try await harness.repository.adoptCommittedHydration(
+            harness.fixture.journal,
+            session: harness.loaded.session,
+            capability: harness.admission.capability,
+            cleanupConfirmation: cleanup
+        )
+        XCTAssertEqual(
+            adopted.player.revision,
+            harness.fixture.candidateDocument.player.revision
+        )
+        let mutated = try await harness.repository.updateSettings(
+            PlayerSettings(isMuted: true),
+            session: harness.loaded.session,
+            at: baseDate.addingTimeInterval(6)
+        )
+        XCTAssertTrue(mutated.player.settings.isMuted)
+        XCTAssertEqual(mutated.player.revision, adopted.player.revision + 1)
+    }
+
+    func testInvalidTargetAdoptionRetainsHydrationBarrier() async throws {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+        let cleanup = try await installAndConfirmHydrationTarget(
+            fixture: harness.fixture,
+            transactionStore: harness.transactionStore,
+            recoveryHandle: harness.admission.recoveryHandle
+        )
+        let locations = ProfileStorageLocations(directoryURL: harness.directory)
+        try harness.fixture.sourceEnvelope.write(
+            to: locations.backupURL,
+            options: .atomic
+        )
+
+        do {
+            _ = try await harness.repository.adoptCommittedHydration(
+                harness.fixture.journal,
+                session: harness.loaded.session,
+                capability: harness.admission.capability,
+                cleanupConfirmation: cleanup
+            )
+            XCTFail("A partial candidate installation must not be adopted")
+        } catch {
+            XCTAssertEqual(
+                error as? AtomicProfileFileStoreError,
+                .hydrationCandidateNotExactlyInstalled(
+                    primary: .candidate,
+                    backup: .source
+                )
+            )
+        }
+        await assertHydrationBarrier(harness.fixture.transactionID) {
+            try await harness.repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: harness.loaded.session,
+                at: self.baseDate
+            )
+        }
+    }
+
+    func testAccountSwitchInvalidationCannotReleaseHydrationBarrier() async throws {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+        await harness.repository.invalidateForAccountSwitch()
+
+        do {
+            _ = try await harness.repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: harness.loaded.session,
+                at: baseDate
+            )
+            XCTFail("An invalidated session must stay unusable")
+        } catch {
+            XCTAssertEqual(
+                error as? LocalPlayerRepositoryError,
+                .sessionInvalidated
+            )
+        }
+        let relaunched = makeHydrationAdoptionRepository(
+            directory: harness.directory,
+            fixture: harness.fixture
+        )
+        do {
+            _ = try await relaunched.load(at: baseDate)
+            XCTFail("Durable journal recovery must precede a switched account load")
+        } catch {
+            XCTAssertEqual(
+                error as? AtomicProfileFileStoreError,
+                .hydrationRecoveryRequired
+            )
+        }
+    }
+
+    func testRelaunchRecoveryUsesDurableJournalNotPersistedProcessCapability()
+        async throws
+    {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+        let beforeRecovery = makeHydrationAdoptionRepository(
+            directory: harness.directory,
+            fixture: harness.fixture
+        )
+        do {
+            _ = try await beforeRecovery.load(at: baseDate)
+            XCTFail("A relaunch must stop at durable hydration recovery")
+        } catch {
+            XCTAssertEqual(
+                error as? AtomicProfileFileStoreError,
+                .hydrationRecoveryRequired
+            )
+        }
+
+        let recoveryConfirmation = try await confirmHydrationPredecessorAbort(
+            fixture: harness.fixture,
+            transactionStore: harness.transactionStore,
+            recoveryHandle: harness.admission.recoveryHandle
+        )
+        XCTAssertNotNil(recoveryConfirmation)
+        let afterRecovery = makeHydrationAdoptionRepository(
+            directory: harness.directory,
+            fixture: harness.fixture
+        )
+        let loaded = try await afterRecovery.load(at: baseDate)
+        XCTAssertEqual(loaded.player.revision, harness.loaded.player.revision)
+        XCTAssertEqual(loaded.economyRevision, harness.loaded.economyRevision)
+    }
+
+    func testStartupPredecessorRecoveryRejectsLiveAdmissionAndPreservesEvidence()
+        async throws
+    {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+
+        do {
+            _ = try await recoverHydrationPredecessorWithoutCapability(
+                fixture: harness.fixture,
+                transactionStore: harness.transactionStore
+            )
+            XCTFail("Startup recovery must not bypass a live admission")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .repositoryLiveAdmissionInProgress
+            )
+        }
+        try assertExactHydrationJournalCopies(
+            harness.fixture.journal,
+            transactionStore: harness.transactionStore
+        )
+        await assertHydrationBarrier(harness.fixture.transactionID) {
+            try await harness.repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: harness.loaded.session,
+                at: self.baseDate
+            )
+        }
+    }
+
+    func testStartupRecoveryViaSymlinkAliasRejectsLivePhysicalDirectoryAdmission()
+        async throws
+    {
+        let harness = try await makeHydrationBarrierHarness()
+        let aliasRoot = makeTemporaryDirectory()
+        defer {
+            removeTemporaryDirectory(harness.directory)
+            removeTemporaryDirectory(aliasRoot)
+        }
+        try FileManager.default.createDirectory(
+            at: aliasRoot,
+            withIntermediateDirectories: true
+        )
+        let aliasURL = aliasRoot.appendingPathComponent("profile-link")
+        try FileManager.default.createSymbolicLink(
+            at: aliasURL,
+            withDestinationURL: harness.directory
+        )
+        let aliasStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: aliasURL
+        )
+
+        do {
+            _ = try await recoverHydrationPredecessorWithoutCapability(
+                fixture: harness.fixture,
+                transactionStore: aliasStore
+            )
+            XCTFail("A symlink alias must share the live physical authority")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .repositoryLiveAdmissionInProgress
+            )
+        }
+        try assertExactHydrationJournalCopies(
+            harness.fixture.journal,
+            transactionStore: harness.transactionStore
+        )
+        try assertExactHydrationJournalCopies(
+            harness.fixture.journal,
+            transactionStore: aliasStore
+        )
+    }
+
+    func testStartupRecoveryViaCaseAliasRejectsWhenFilesystemResolvesSameDirectory()
+        async throws
+    {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+        let aliasURL = harness.directory.deletingLastPathComponent()
+            .appendingPathComponent(
+                harness.directory.lastPathComponent.lowercased(),
+                isDirectory: true
+            )
+        guard aliasURL.path != harness.directory.path,
+              FileManager.default.fileExists(atPath: aliasURL.path) else {
+            throw XCTSkip("The test filesystem is case-sensitive")
+        }
+        let aliasStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: aliasURL
+        )
+
+        do {
+            _ = try await recoverHydrationPredecessorWithoutCapability(
+                fixture: harness.fixture,
+                transactionStore: aliasStore
+            )
+            XCTFail("A case alias must share the live physical authority")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .repositoryLiveAdmissionInProgress
+            )
+        }
+        try assertExactHydrationJournalCopies(
+            harness.fixture.journal,
+            transactionStore: aliasStore
+        )
+    }
+
+    func testStartupTargetRecoveryRejectsLiveAdmissionAndPreservesEvidence()
+        async throws
+    {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+
+        do {
+            _ = try await installAndRecoverHydrationTargetWithoutCapability(
+                fixture: harness.fixture,
+                transactionStore: harness.transactionStore
+            )
+            XCTFail("Startup target cleanup must not bypass a live admission")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .repositoryLiveAdmissionInProgress
+            )
+        }
+        try assertExactHydrationJournalCopies(
+            harness.fixture.journal,
+            transactionStore: harness.transactionStore
+        )
+        await assertHydrationBarrier(harness.fixture.transactionID) {
+            try await harness.repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: harness.loaded.session,
+                at: self.baseDate
+            )
+        }
+    }
+
+    func testStartupPredecessorRecoveryWithoutLiveProcessAuthority() async throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let transactionStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: directory
+        )
+        _ = try transactionStore._testOnlyBeginHydration(fixture.journal)
+
+        let recovery = try await recoverHydrationPredecessorWithoutCapability(
+            fixture: fixture,
+            transactionStore: transactionStore
+        )
+        XCTAssertEqual(recovery.disposition, .predecessorAborted)
+        XCTAssertEqual(recovery.transactionID, fixture.transactionID)
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture
+        )
+        let loaded = try await repository.load(at: baseDate)
+        XCTAssertEqual(loaded.player.revision, fixture.sourceDocument.player.revision)
+    }
+
+    func testStartupTargetRecoveryWithoutLiveProcessAuthority() async throws {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let transactionStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: directory
+        )
+        _ = try transactionStore._testOnlyBeginHydration(fixture.journal)
+
+        let recovery = try await installAndRecoverHydrationTargetWithoutCapability(
+            fixture: fixture,
+            transactionStore: transactionStore
+        )
+        XCTAssertEqual(recovery.disposition, .targetCleaned)
+        XCTAssertEqual(recovery.transactionID, fixture.transactionID)
+
+        let relaunched = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture
+        )
+        let loaded = try await relaunched.load(at: baseDate)
+        XCTAssertEqual(
+            loaded.player.revision,
+            fixture.candidateDocument.player.revision
+        )
+        XCTAssertEqual(
+            loaded.economyRevision,
+            fixture.candidateDocument.economyRevision
+        )
+    }
+
+    func testCapabilityRejectsSameTargetDifferentFullJournalBeforeRemovingEvidence()
+        async throws
+    {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+        var differentCandidate = harness.fixture.candidateDocument
+        differentCandidate.player.settings = Stamped(
+            value: PlayerSettings(isMuted: true),
+            modifiedAt: baseDate.addingTimeInterval(2),
+            deviceID: "different-journal-device",
+            logicalCounter: 1
+        )
+        let differentCandidateEnvelope = try PlayerProfileMigrator().encode(
+            differentCandidate,
+            savedAt: baseDate.addingTimeInterval(2)
+        )
+        let differentJournal = try harness.fixture.makeJournal(
+            candidateEnvelope: differentCandidateEnvelope
+        )
+        XCTAssertEqual(
+            differentJournal.transactionID,
+            harness.fixture.journal.transactionID
+        )
+        XCTAssertEqual(differentJournal.target, harness.fixture.journal.target)
+        XCTAssertNotEqual(differentJournal, harness.fixture.journal)
+
+        let journalBytes = try ProfileHydrationCanonicalCodec.encode(
+            differentJournal
+        )
+        try journalBytes.write(
+            to: harness.transactionStore.locations.journalPrimaryURL,
+            options: .atomic
+        )
+        try journalBytes.write(
+            to: harness.transactionStore.locations.journalBackupURL,
+            options: .atomic
+        )
+
+        do {
+            _ = try await confirmHydrationPredecessorAbort(
+                fixture: harness.fixture,
+                transactionStore: harness.transactionStore,
+                recoveryHandle: harness.admission.recoveryHandle
+            )
+            XCTFail("A capability must match the exact full resolved journal")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .repositoryAdmissionMismatch
+            )
+        }
+        XCTAssertEqual(
+            try Data(
+                contentsOf:
+                    harness.transactionStore.locations.journalPrimaryURL
+            ),
+            journalBytes
+        )
+        XCTAssertEqual(
+            try Data(
+                contentsOf:
+                    harness.transactionStore.locations.journalBackupURL
+            ),
+            journalBytes
+        )
+        await assertHydrationBarrier(harness.fixture.transactionID) {
+            try await harness.repository.updateSettings(
+                PlayerSettings(isMuted: true),
+                session: harness.loaded.session,
+                at: self.baseDate
+            )
+        }
+    }
+
+    func testConsumedAbortHandleCannotReplayAgainstIdenticalReadmissionByNewRepository()
+        async throws
+    {
+        let first = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(first.directory) }
+        let staleHandle = first.admission.recoveryHandle
+        let firstConfirmation = try await confirmHydrationPredecessorAbort(
+            fixture: first.fixture,
+            transactionStore: first.transactionStore,
+            recoveryHandle: staleHandle
+        )
+        let firstProof = try XCTUnwrap(firstConfirmation)
+        _ = try await first.repository
+            .releaseHydrationAfterConfirmedPredecessorAbort(
+                firstProof,
+                journal: first.fixture.journal,
+                session: first.loaded.session,
+                capability: staleHandle.capability
+            )
+
+        let secondRepository = makeHydrationAdoptionRepository(
+            directory: first.directory,
+            fixture: first.fixture
+        )
+        let secondLoaded = try await secondRepository.load(at: baseDate)
+        let secondAdmission = try await secondRepository.beginHydration(
+            first.fixture.journal,
+            session: secondLoaded.session,
+            transactionStore: first.transactionStore
+        )
+
+        do {
+            _ = try await confirmHydrationPredecessorAbort(
+                fixture: first.fixture,
+                transactionStore: first.transactionStore,
+                recoveryHandle: staleHandle
+            )
+            XCTFail("A completed abort authority must stay stale")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .repositoryCompletionAuthorityConsumed
+            )
+        }
+        try assertExactHydrationJournalCopies(
+            first.fixture.journal,
+            transactionStore: first.transactionStore
+        )
+        let secondProof = try await confirmHydrationPredecessorAbort(
+            fixture: first.fixture,
+            transactionStore: first.transactionStore,
+            recoveryHandle: secondAdmission.recoveryHandle
+        )
+        XCTAssertNotNil(secondProof)
+    }
+
+    func testSameRepositoryIdenticalReadmissionUsesFreshCapabilityIdentity()
+        async throws
+    {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+        let firstHandle = harness.admission.recoveryHandle
+        let firstConfirmation = try await confirmHydrationPredecessorAbort(
+            fixture: harness.fixture,
+            transactionStore: harness.transactionStore,
+            recoveryHandle: firstHandle
+        )
+        let firstProof = try XCTUnwrap(firstConfirmation)
+        _ = try await harness.repository
+            .releaseHydrationAfterConfirmedPredecessorAbort(
+                firstProof,
+                journal: harness.fixture.journal,
+                session: harness.loaded.session,
+                capability: firstHandle.capability
+            )
+
+        let secondAdmission = try await harness.repository.beginHydration(
+            harness.fixture.journal,
+            session: harness.loaded.session,
+            transactionStore: harness.transactionStore
+        )
+        XCTAssertNotEqual(
+            firstHandle.capability,
+            secondAdmission.capability
+        )
+        do {
+            _ = try await harness.repository
+                .releaseHydrationAfterConfirmedPredecessorAbort(
+                    firstProof,
+                    journal: harness.fixture.journal,
+                    session: harness.loaded.session,
+                    capability: firstHandle.capability
+                )
+            XCTFail("An old capability must not match identical re-admission")
+        } catch {
+            XCTAssertEqual(
+                error as? LocalProfileHydrationBarrierError,
+                .capabilityMismatch
+            )
+        }
+        try assertExactHydrationJournalCopies(
+            harness.fixture.journal,
+            transactionStore: harness.transactionStore
+        )
+        let secondProof = try await confirmHydrationPredecessorAbort(
+            fixture: harness.fixture,
+            transactionStore: harness.transactionStore,
+            recoveryHandle: secondAdmission.recoveryHandle
+        )
+        XCTAssertNotNil(secondProof)
+    }
+
+    func testConsumedTargetHandleCannotReplayAgainstIdenticalReadmissionByNewRepository()
+        async throws
+    {
+        let first = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(first.directory) }
+        let staleHandle = first.admission.recoveryHandle
+        let firstCleanup = try await installAndConfirmHydrationTarget(
+            fixture: first.fixture,
+            transactionStore: first.transactionStore,
+            recoveryHandle: staleHandle
+        )
+        _ = try await first.repository.adoptCommittedHydration(
+            first.fixture.journal,
+            session: first.loaded.session,
+            capability: staleHandle.capability,
+            cleanupConfirmation: firstCleanup
+        )
+
+        // Recreate the identical persisted predecessor to prove that authority
+        // freshness does not depend on journal bytes or repository identity.
+        try writeExactProfileCopies(
+            primary: first.fixture.sourceEnvelope,
+            backup: first.fixture.sourceEnvelope,
+            to: first.directory
+        )
+        let secondRepository = makeHydrationAdoptionRepository(
+            directory: first.directory,
+            fixture: first.fixture
+        )
+        let secondLoaded = try await secondRepository.load(at: baseDate)
+        let secondAdmission = try await secondRepository.beginHydration(
+            first.fixture.journal,
+            session: secondLoaded.session,
+            transactionStore: first.transactionStore
+        )
+
+        do {
+            _ = try await installAndConfirmHydrationTarget(
+                fixture: first.fixture,
+                transactionStore: first.transactionStore,
+                recoveryHandle: staleHandle
+            )
+            XCTFail("A completed target authority must stay stale")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .repositoryCompletionAuthorityConsumed
+            )
+        }
+        try assertExactHydrationJournalCopies(
+            first.fixture.journal,
+            transactionStore: first.transactionStore
+        )
+        _ = try await installAndConfirmHydrationTarget(
+            fixture: first.fixture,
+            transactionStore: first.transactionStore,
+            recoveryHandle: secondAdmission.recoveryHandle
+        )
+    }
+
+    func testCompletionAuthorityRejectsOverlappingClaimAndDuplicateCleanup()
+        async throws
+    {
+        let harness = try await makeHydrationBarrierHarness()
+        defer { removeTemporaryDirectory(harness.directory) }
+        let handle = harness.admission.recoveryHandle
+        let claimed = try harness.transactionStore
+            ._testOnlyClaimCompletionAttempt(
+                recoveryHandle: handle
+            )
+        XCTAssertThrowsError(
+            try harness.transactionStore._testOnlyClaimCompletionAttempt(
+                recoveryHandle: handle
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? ProfileHydrationTransactionStoreError,
+                .repositoryCompletionAttemptInProgress
+            )
+        }
+        harness.transactionStore._testOnlyReleaseCompletionAttempt(claimed)
+
+        let proof = try await confirmHydrationPredecessorAbort(
+            fixture: harness.fixture,
+            transactionStore: harness.transactionStore,
+            recoveryHandle: handle
+        )
+        XCTAssertNotNil(proof)
+        do {
+            _ = try await confirmHydrationPredecessorAbort(
+                fixture: harness.fixture,
+                transactionStore: harness.transactionStore,
+                recoveryHandle: handle
+            )
+            XCTFail("A consumed completion authority must be one-shot")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .repositoryCompletionAuthorityConsumed
+            )
+        }
+    }
+
+    func testCompletionAuthorityRetriesAfterThrownPreRemovalAttempt() async throws {
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        let harness = try await makeHydrationBarrierHarness(fileSystem: fileSystem)
+        defer { removeTemporaryDirectory(harness.directory) }
+        fileSystem.failNext(
+            .beforeRemove(
+                harness.transactionStore.locations.journalBackupURL
+                    .lastPathComponent
+            )
+        )
+
+        do {
+            _ = try await confirmHydrationPredecessorAbort(
+                fixture: harness.fixture,
+                transactionStore: harness.transactionStore,
+                recoveryHandle: harness.admission.recoveryHandle
+            )
+            XCTFail("The injected pre-removal failure must throw")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .ioFailure
+            )
+        }
+        try assertExactHydrationJournalCopies(
+            harness.fixture.journal,
+            transactionStore: harness.transactionStore
+        )
+        let retryProof = try await confirmHydrationPredecessorAbort(
+            fixture: harness.fixture,
+            transactionStore: harness.transactionStore,
+            recoveryHandle: harness.admission.recoveryHandle
+        )
+        XCTAssertNotNil(retryProof)
+    }
+
+    func testResumeHandleRetriesAfterAmbiguousPartialRemoval() async throws {
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        let harness = try await makeHydrationBarrierHarness(fileSystem: fileSystem)
+        defer { removeTemporaryDirectory(harness.directory) }
+        fileSystem.failNext(
+            .afterRemove(
+                harness.transactionStore.locations.journalBackupURL
+                    .lastPathComponent
+            )
+        )
+
+        do {
+            _ = try await confirmHydrationPredecessorAbort(
+                fixture: harness.fixture,
+                transactionStore: harness.transactionStore,
+                recoveryHandle: harness.admission.recoveryHandle
+            )
+            XCTFail("The ambiguous backup-removal outcome must throw")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .ioFailure
+            )
+        }
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: harness.transactionStore.locations.journalPrimaryURL.path
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: harness.transactionStore.locations.journalBackupURL.path
+            )
+        )
+
+        let resumed = try await harness.repository.resumeHydrationBarrier(
+            harness.fixture.journal,
+            session: harness.loaded.session
+        )
+        XCTAssertEqual(resumed, harness.admission.recoveryHandle)
+        let resumedConfirmation = try await confirmHydrationPredecessorAbort(
+            fixture: harness.fixture,
+            transactionStore: harness.transactionStore,
+            recoveryHandle: resumed
+        )
+        let proof = try XCTUnwrap(resumedConfirmation)
+        _ = try await harness.repository
+            .releaseHydrationAfterConfirmedPredecessorAbort(
+                proof,
+                journal: harness.fixture.journal,
+                session: harness.loaded.session,
+                capability: resumed.capability
+            )
+        _ = try await harness.repository.updateSettings(
+            PlayerSettings(isMuted: true),
+            session: harness.loaded.session,
+            at: baseDate.addingTimeInterval(10)
+        )
+    }
+
+    func testFinalJournalRemovalAmbiguityStaysFailClosedUntilActorRecreation()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        var repository: LocalPlayerProfileRepository? =
+            makeHydrationAdoptionRepository(
+                directory: directory,
+                fixture: fixture,
+                fileSystem: fileSystem
+            )
+        let loaded = try await repository!.load(at: fixture.date)
+        let transactionStore = ProfileHydrationFileTransactionStore(
+            profileDirectoryURL: directory,
+            fileSystem: fileSystem
+        )
+        var recoveryHandle: LocalProfileHydrationRecoveryHandleV1?
+        do {
+            let admission = try await repository!.beginHydration(
+                fixture.journal,
+                session: loaded.session,
+                transactionStore: transactionStore
+            )
+            recoveryHandle = admission.recoveryHandle
+        }
+        fileSystem.failNext(
+            .afterRemove(
+                transactionStore.locations.journalPrimaryURL.lastPathComponent
+            )
+        )
+
+        do {
+            _ = try await confirmHydrationPredecessorAbort(
+                fixture: fixture,
+                transactionStore: transactionStore,
+                recoveryHandle: recoveryHandle!
+            )
+            XCTFail("The final removal durability ambiguity must throw")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .ioFailure
+            )
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: transactionStore.locations.journalPrimaryURL.path
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: transactionStore.locations.journalBackupURL.path
+            )
+        )
+
+        recoveryHandle = try await repository!.resumeHydrationBarrier(
+            fixture.journal,
+            session: loaded.session
+        )
+        let unauthenticatedAbsence = try await confirmHydrationPredecessorAbort(
+            fixture: fixture,
+            transactionStore: transactionStore,
+            recoveryHandle: recoveryHandle!
+        )
+        XCTAssertNil(unauthenticatedAbsence)
+        do {
+            let liveRepository = try XCTUnwrap(repository)
+            await assertHydrationBarrier(fixture.transactionID) {
+                try await liveRepository.updateSettings(
+                    PlayerSettings(isMuted: true),
+                    session: loaded.session,
+                    at: self.baseDate
+                )
+            }
+        }
+        do {
+            _ = try await recoverHydrationPredecessorWithoutCapability(
+                fixture: fixture,
+                transactionStore: transactionStore
+            )
+            XCTFail("Startup recovery must reject while the actor is alive")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .repositoryLiveAdmissionInProgress
+            )
+        }
+        do {
+            _ = try await repository!.retryHydrationAdmission(
+                fixture.journal,
+                session: loaded.session,
+                transactionStore: transactionStore
+            )
+            XCTFail("Completion ambiguity must not reopen begin admission")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileHydrationTransactionStoreError,
+                .repositoryAdmissionMismatch
+            )
+        }
+
+        // The registry holds the active identity weakly. Releasing both the
+        // actor-owned barrier and caller handle models process/actor
+        // recreation without a test-only Release bypass.
+        recoveryHandle = nil
+        repository = nil
+        let startup = try await recoverHydrationPredecessorWithoutCapability(
+            fixture: fixture,
+            transactionStore: transactionStore
+        )
+        XCTAssertEqual(startup.disposition, .noDurableJournal)
+        let recreated = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture,
+            fileSystem: fileSystem
+        )
+        let recreatedSnapshot = try await recreated.load(at: baseDate)
+        XCTAssertEqual(
+            recreatedSnapshot.player.revision,
+            fixture.sourceDocument.player.revision
+        )
+    }
+
     func testCommittedHydrationSeamInstallsCleansAndAdoptsWithoutRotatingSession()
         async throws
     {
@@ -487,7 +1896,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let transactionStore = ProfileHydrationFileTransactionStore(
             profileDirectoryURL: directory
         )
-        _ = try transactionStore.beginHydration(fixture.journal)
+        _ = try transactionStore._testOnlyBeginHydration(fixture.journal)
         let accountAuthority = CloudAccountGenerationAuthority()
         let checkpointStore = AtomicCloudReplicaCheckpointDiskStore(
             rootDirectoryURL: checkpointDirectory,
@@ -525,7 +1934,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         }
 
         do {
-            _ = try await repository.adoptCommittedHydration(
+            _ = try await repository._testOnlyAdoptCommittedHydration(
                 fixture.journal,
                 session: loaded.session
             )
@@ -544,7 +1953,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
                 generationLease: accountLease,
                 at: checkpointDate
             ) { lease in
-                try transactionStore.removeJournalAfterCheckpointConfirmation(
+                try transactionStore._testOnlyRemoveJournalAfterCheckpointConfirmation(
                     transactionID: transactionID,
                     expected: expectedBinding,
                     checkpointLease: lease
@@ -552,7 +1961,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             }
         }
         XCTAssertTrue(removedJournal)
-        let adopted = try await repository.adoptCommittedHydration(
+        let adopted = try await repository._testOnlyAdoptCommittedHydration(
             fixture.journal,
             session: loaded.session
         )
@@ -633,7 +2042,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
                 let backupBefore = try optionalProfileData(at: locations.backupURL)
 
                 if primary.state == .candidate, backup.state == .candidate {
-                    let adopted = try await repository.adoptCommittedHydration(
+                    let adopted = try await repository._testOnlyAdoptCommittedHydration(
                         fixture.journal,
                         session: loaded.session
                     )
@@ -649,7 +2058,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
                     )
                 } else {
                     do {
-                        _ = try await repository.adoptCommittedHydration(
+                        _ = try await repository._testOnlyAdoptCommittedHydration(
                             fixture.journal,
                             session: loaded.session
                         )
@@ -735,7 +2144,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             try evidence.write(to: evidenceURL, options: .atomic)
 
             do {
-                _ = try await repository.adoptCommittedHydration(
+                _ = try await repository._testOnlyAdoptCommittedHydration(
                     fixture.journal,
                     session: loaded.session
                 )
@@ -793,7 +2202,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         )
 
         do {
-            _ = try await repository.adoptCommittedHydration(
+            _ = try await repository._testOnlyAdoptCommittedHydration(
                 fixture.journal,
                 session: staleSession
             )
@@ -802,7 +2211,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(error, .sessionMismatch)
         }
         do {
-            _ = try await repository.adoptCommittedHydration(
+            _ = try await repository._testOnlyAdoptCommittedHydration(
                 fixture.journal,
                 session: loaded.session
             )
@@ -845,7 +2254,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let locations = ProfileStorageLocations(directoryURL: directory)
 
         do {
-            _ = try await repository.adoptCommittedHydration(
+            _ = try await repository._testOnlyAdoptCommittedHydration(
                 wrongJournal,
                 session: loaded.session
             )
@@ -895,7 +2304,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             )
 
             do {
-                _ = try await repository.adoptCommittedHydration(
+                _ = try await repository._testOnlyAdoptCommittedHydration(
                     fixture.journal,
                     session: loaded.session
                 )
@@ -925,7 +2334,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
                 backup: fixture.candidateEnvelope,
                 to: directory
             )
-            let adopted = try await repository.adoptCommittedHydration(
+            let adopted = try await repository._testOnlyAdoptCommittedHydration(
                 fixture.journal,
                 session: loaded.session
             )
@@ -963,7 +2372,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         await repository.invalidateForAccountSwitch()
 
         do {
-            _ = try await repository.adoptCommittedHydration(
+            _ = try await repository._testOnlyAdoptCommittedHydration(
                 fixture.journal,
                 session: loaded.session
             )
@@ -1011,7 +2420,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
 
         for _ in 0 ..< 2 {
             do {
-                _ = try await repository.adoptCommittedHydration(
+                _ = try await repository._testOnlyAdoptCommittedHydration(
                     fixture.journal,
                     session: loaded.session
                 )
@@ -1059,7 +2468,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         )
 
         do {
-            _ = try await repository.adoptCommittedHydration(
+            _ = try await repository._testOnlyAdoptCommittedHydration(
                 fixture.journal,
                 session: fixture.sourceSession
             )
@@ -4024,6 +5433,271 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         return try Data(contentsOf: url)
     }
 
+    private func assertExactHydrationJournalCopies(
+        _ journal: ProfileHydrationJournalV1,
+        transactionStore: ProfileHydrationFileTransactionStore,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let exact = try ProfileHydrationCanonicalCodec.encode(journal)
+        XCTAssertEqual(
+            try Data(
+                contentsOf: transactionStore.locations.journalPrimaryURL
+            ),
+            exact,
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            try Data(
+                contentsOf: transactionStore.locations.journalBackupURL
+            ),
+            exact,
+            file: file,
+            line: line
+        )
+    }
+
+    private struct HydrationBarrierHarness {
+        let fixture: ProfileHydrationTestFixture
+        let directory: URL
+        let repository: LocalPlayerProfileRepository
+        let transactionStore: ProfileHydrationFileTransactionStore
+        let loaded: LocalPlayerProfileSnapshot
+        let admission: LocalProfileHydrationAdmissionV1
+    }
+
+    private func makeHydrationBarrierHarness(
+        fileSystem: any ProfileHydrationFileSystem =
+            FoundationProfileHydrationFileSystem()
+    ) async throws -> HydrationBarrierHarness {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        do {
+            try writeExactProfileCopies(
+                primary: fixture.sourceEnvelope,
+                backup: fixture.sourceEnvelope,
+                to: directory
+            )
+            let repository = makeHydrationAdoptionRepository(
+                directory: directory,
+                fixture: fixture,
+                fileSystem: fileSystem
+            )
+            let loaded = try await repository.load(at: fixture.date)
+            let transactionStore = ProfileHydrationFileTransactionStore(
+                profileDirectoryURL: directory,
+                fileSystem: fileSystem
+            )
+            let admission = try await repository.beginHydration(
+                fixture.journal,
+                session: loaded.session,
+                transactionStore: transactionStore
+            )
+            return HydrationBarrierHarness(
+                fixture: fixture,
+                directory: directory,
+                repository: repository,
+                transactionStore: transactionStore,
+                loaded: loaded,
+                admission: admission
+            )
+        } catch {
+            removeTemporaryDirectory(directory)
+            throw error
+        }
+    }
+
+    private func confirmHydrationPredecessorAbort(
+        fixture: ProfileHydrationTestFixture,
+        transactionStore: ProfileHydrationFileTransactionStore,
+        recoveryHandle: LocalProfileHydrationRecoveryHandleV1
+    ) async throws -> ProfileHydrationPredecessorAbortConfirmationV1? {
+        let checkpointDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(checkpointDirectory) }
+        let authority = CloudAccountGenerationAuthority()
+        let checkpointStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: checkpointDirectory,
+            accountGenerationAuthority: authority
+        )
+        try await checkpointStore.activate(
+            replicaEpoch: fixture.replicaEpoch,
+            configurationScopeFingerprint: fixture.scope,
+            for: fixture.cloudAccountID
+        )
+        let generation = try await authority.activate(
+            accountID: fixture.cloudAccountID,
+            configurationScopeFingerprint: fixture.scope,
+            replicaEpoch: fixture.replicaEpoch
+        )
+        return try await authority.withCurrentGeneration(generation) {
+            generationLease in
+            try await checkpointStore.withCurrentCheckpointLease(
+                generationLease: generationLease,
+                at: fixture.date
+            ) { checkpointLease in
+                try transactionStore.confirmPredecessorAbort(
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    checkpointLease: checkpointLease,
+                    recoveryHandle: recoveryHandle
+                )
+            }
+        }
+    }
+
+    private func recoverHydrationPredecessorWithoutCapability(
+        fixture: ProfileHydrationTestFixture,
+        transactionStore: ProfileHydrationFileTransactionStore
+    ) async throws -> ProfileHydrationStartupRecoveryResultV1 {
+        let checkpointDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(checkpointDirectory) }
+        let authority = CloudAccountGenerationAuthority()
+        let checkpointStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: checkpointDirectory,
+            accountGenerationAuthority: authority
+        )
+        try await checkpointStore.activate(
+            replicaEpoch: fixture.replicaEpoch,
+            configurationScopeFingerprint: fixture.scope,
+            for: fixture.cloudAccountID
+        )
+        let generation = try await authority.activate(
+            accountID: fixture.cloudAccountID,
+            configurationScopeFingerprint: fixture.scope,
+            replicaEpoch: fixture.replicaEpoch
+        )
+        return try await authority.withCurrentGeneration(generation) {
+            generationLease in
+            try await checkpointStore.withCurrentCheckpointLease(
+                generationLease: generationLease,
+                at: fixture.date
+            ) { checkpointLease in
+                try transactionStore.recoverPredecessorBeforeRepositoryLoad(
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    checkpointLease: checkpointLease
+                )
+            }
+        }
+    }
+
+    private func installAndConfirmHydrationTarget(
+        fixture: ProfileHydrationTestFixture,
+        transactionStore: ProfileHydrationFileTransactionStore,
+        recoveryHandle: LocalProfileHydrationRecoveryHandleV1
+    ) async throws -> ProfileHydrationTargetCleanupConfirmationV1 {
+        let checkpointDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(checkpointDirectory) }
+        let authority = CloudAccountGenerationAuthority()
+        let checkpointStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: checkpointDirectory,
+            accountGenerationAuthority: authority
+        )
+        try await checkpointStore.activate(
+            replicaEpoch: fixture.replicaEpoch,
+            configurationScopeFingerprint: fixture.scope,
+            for: fixture.cloudAccountID
+        )
+        try await checkpointStore._testOnlySaveRawCheckpoint(
+            fixture.targetCheckpoint,
+            at: fixture.date
+        )
+        let generation = try await authority.activate(
+            accountID: fixture.cloudAccountID,
+            configurationScopeFingerprint: fixture.scope,
+            replicaEpoch: fixture.replicaEpoch
+        )
+        let confirmation = try await authority.withCurrentGeneration(generation) {
+            generationLease in
+            try await checkpointStore.withCurrentCheckpointLease(
+                generationLease: generationLease,
+                at: fixture.date
+            ) { checkpointLease in
+                _ = try transactionStore.installCandidate(
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    checkpointLease: checkpointLease
+                )
+                return try transactionStore.confirmTargetCleanup(
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    checkpointLease: checkpointLease,
+                    recoveryHandle: recoveryHandle
+                )
+            }
+        }
+        return try XCTUnwrap(confirmation)
+    }
+
+    private func installAndRecoverHydrationTargetWithoutCapability(
+        fixture: ProfileHydrationTestFixture,
+        transactionStore: ProfileHydrationFileTransactionStore
+    ) async throws -> ProfileHydrationStartupRecoveryResultV1 {
+        let checkpointDirectory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(checkpointDirectory) }
+        let authority = CloudAccountGenerationAuthority()
+        let checkpointStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: checkpointDirectory,
+            accountGenerationAuthority: authority
+        )
+        try await checkpointStore.activate(
+            replicaEpoch: fixture.replicaEpoch,
+            configurationScopeFingerprint: fixture.scope,
+            for: fixture.cloudAccountID
+        )
+        try await checkpointStore._testOnlySaveRawCheckpoint(
+            fixture.targetCheckpoint,
+            at: fixture.date
+        )
+        let generation = try await authority.activate(
+            accountID: fixture.cloudAccountID,
+            configurationScopeFingerprint: fixture.scope,
+            replicaEpoch: fixture.replicaEpoch
+        )
+        return try await authority.withCurrentGeneration(generation) {
+            generationLease in
+            try await checkpointStore.withCurrentCheckpointLease(
+                generationLease: generationLease,
+                at: fixture.date
+            ) { checkpointLease in
+                _ = try transactionStore.installCandidate(
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    checkpointLease: checkpointLease
+                )
+                return try transactionStore.recoverTargetBeforeRepositoryLoad(
+                    transactionID: fixture.transactionID,
+                    expected: fixture.expectedBinding,
+                    checkpointLease: checkpointLease
+                )
+            }
+        }
+    }
+
+    private func assertHydrationBarrier<Result>(
+        _ transactionID: UUID,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        operation: () async throws -> Result
+    ) async {
+        do {
+            _ = try await operation()
+            XCTFail(
+                "The active hydration barrier must reject the operation",
+                file: file,
+                line: line
+            )
+        } catch {
+            XCTAssertEqual(
+                error as? LocalProfileHydrationBarrierError,
+                .hydrationInProgress(transactionID: transactionID),
+                file: file,
+                line: line
+            )
+        }
+    }
+
     private func makeHydrationAdoptionRepository(
         directory: URL,
         fixture: ProfileHydrationTestFixture,
@@ -4386,6 +6060,9 @@ private final class FaultInjectingProfileStoreFileSystem:
         case afterWrite(String)
         case beforeRead(String)
         case beforeStatus(String)
+        case beforeRemove(String)
+        case afterRemove(String)
+        case beforeLock(String)
     }
 
     private let base = FoundationProfileHydrationFileSystem()
@@ -4448,10 +6125,19 @@ private final class FaultInjectingProfileStoreFileSystem:
     }
 
     func removeItemDurably(at url: URL) throws {
+        if consume(.beforeRemove(url.lastPathComponent)) {
+            throw ProfileHydrationFileSystemError.ioFailure
+        }
         try base.removeItemDurably(at: url)
+        if consume(.afterRemove(url.lastPathComponent)) {
+            throw ProfileHydrationFileSystemError.atomicWriteOutcomeUnknown
+        }
     }
 
     func withExclusiveLock(at url: URL, perform: () throws -> Void) throws {
+        if consume(.beforeLock(url.lastPathComponent)) {
+            throw ProfileHydrationFileSystemError.lockContended
+        }
         try base.withExclusiveLock(at: url, perform: perform)
     }
 

@@ -305,6 +305,13 @@ enum ProfileHydrationTransactionStoreError: Error, Equatable, Sendable {
     case unrecoverableJournalEvidence
     case quarantineCapacityExceeded
     case journalVerificationFailed
+    case repositoryAdmissionMismatch
+    case repositoryLiveAdmissionInProgress
+    case repositoryCompletionAttemptInProgress
+    case repositoryCompletionAuthorityConsumed
+    case profileDirectoryIdentityUnavailableBeforeAdmission
+    case profileDirectoryIdentityUnavailable
+    case profileDirectoryIdentityMismatch
     case bindingMismatch(ProfileHydrationBindingMismatch)
     case transactionMismatch
     case checkpointConfirmationMismatch
@@ -321,6 +328,341 @@ enum ProfileHydrationTransactionStoreError: Error, Equatable, Sendable {
     case ioFailure
     case encodingFailure
 }
+
+/// Strong process identity prevents ABA without retaining an issuance history.
+/// A stale handle keeps its own terminal identity alive, while the registry
+/// stores at most one live identity per physical profile directory.
+fileprivate struct ProfileHydrationPhysicalDirectoryIdentityV1:
+    Equatable,
+    Hashable,
+    Sendable
+{
+    let device: UInt64
+    let inode: UInt64
+}
+
+fileprivate final class LocalProfileHydrationAdmissionIdentityV1:
+    @unchecked Sendable
+{
+    fileprivate enum Phase {
+        case issued
+        case pending
+        case ready
+        case attempting(LocalProfileHydrationAttemptIdentityV1)
+        case consumed
+    }
+
+    fileprivate var phase: Phase = .issued
+    fileprivate var physicalDirectoryIdentity:
+        ProfileHydrationPhysicalDirectoryIdentityV1?
+    fileprivate var hasBegunCompletionAttempt = false
+}
+
+fileprivate final class LocalProfileHydrationAttemptIdentityV1:
+    @unchecked Sendable
+{}
+
+/// The Release recovery handle is deliberately inert. Only the transaction
+/// store, co-located in this file, can inspect its binding or mutate the
+/// private completion registry.
+struct LocalProfileHydrationRecoveryHandleV1: Equatable, Sendable {
+    let capability: LocalProfileHydrationCapabilityV1
+    fileprivate let admissionIdentity: LocalProfileHydrationAdmissionIdentityV1
+    fileprivate let standardizedProfileDirectoryURL: URL
+    fileprivate let journal: ProfileHydrationJournalV1
+
+    init(
+        capability: LocalProfileHydrationCapabilityV1,
+        standardizedProfileDirectoryURL: URL,
+        journal: ProfileHydrationJournalV1
+    ) {
+        self.capability = capability
+        admissionIdentity = LocalProfileHydrationAdmissionIdentityV1()
+        self.standardizedProfileDirectoryURL =
+            standardizedProfileDirectoryURL.standardizedFileURL
+        self.journal = journal
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.capability == rhs.capability
+            && lhs.admissionIdentity === rhs.admissionIdentity
+    }
+}
+
+fileprivate struct LocalProfileHydrationCompletionAttemptV1: Sendable {
+    let admissionIdentity: LocalProfileHydrationAdmissionIdentityV1
+    let attemptIdentity: LocalProfileHydrationAttemptIdentityV1
+    let physicalDirectoryIdentity:
+        ProfileHydrationPhysicalDirectoryIdentityV1
+    let standardizedProfileDirectoryURL: URL
+    let journal: ProfileHydrationJournalV1
+}
+
+/// Registry methods never acquire the file lock. The store calls activation,
+/// startup preflight, revalidation, and consumption while it already holds the
+/// file lock. Attempt preclaim releases this registry lock before the store
+/// waits for the file lock, so lock order cannot invert.
+private final class LocalProfileHydrationCompletionRegistryV1:
+    @unchecked Sendable
+{
+    static let shared = LocalProfileHydrationCompletionRegistryV1()
+
+    private struct WeakAdmissionIdentity {
+        weak var value: LocalProfileHydrationAdmissionIdentityV1?
+    }
+
+    private let lock = NSLock()
+    private var currentByDirectory:
+        [ProfileHydrationPhysicalDirectoryIdentityV1: WeakAdmissionIdentity] = [:]
+
+    /// Called before waiting on the file lock. It installs a pending claim so
+    /// an aliased startup store cannot pass its under-lock preflight while the
+    /// repository barrier is waiting to enter the transaction.
+    func claimPending(
+        _ handle: LocalProfileHydrationRecoveryHandleV1,
+        physicalDirectoryIdentity:
+            ProfileHydrationPhysicalDirectoryIdentityV1,
+        journal: ProfileHydrationJournalV1,
+        profileDirectoryURL: URL
+    ) throws {
+        let lexicalDirectory = profileDirectoryURL.standardizedFileURL
+        guard handle.standardizedProfileDirectoryURL == lexicalDirectory,
+              handle.journal == journal else {
+            throw ProfileHydrationTransactionStoreError
+                .repositoryAdmissionMismatch
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        pruneReleasedIdentities()
+        switch handle.admissionIdentity.phase {
+        case .consumed:
+            throw ProfileHydrationTransactionStoreError
+                .repositoryCompletionAuthorityConsumed
+        case .attempting:
+            throw ProfileHydrationTransactionStoreError
+                .repositoryCompletionAttemptInProgress
+        case .pending:
+            guard handle.admissionIdentity.physicalDirectoryIdentity
+                    == physicalDirectoryIdentity,
+                  currentByDirectory[physicalDirectoryIdentity]?.value
+                    === handle.admissionIdentity else {
+                throw ProfileHydrationTransactionStoreError
+                    .repositoryAdmissionMismatch
+            }
+            return
+        case .ready:
+            guard !handle.admissionIdentity.hasBegunCompletionAttempt,
+                  handle.admissionIdentity.physicalDirectoryIdentity
+                    == physicalDirectoryIdentity,
+                  currentByDirectory[physicalDirectoryIdentity]?.value
+                    === handle.admissionIdentity else {
+                throw ProfileHydrationTransactionStoreError
+                    .repositoryAdmissionMismatch
+            }
+            return
+        case .issued:
+            break
+        }
+        if let current = currentByDirectory[physicalDirectoryIdentity]?.value {
+            guard current === handle.admissionIdentity else {
+                throw ProfileHydrationTransactionStoreError
+                    .repositoryLiveAdmissionInProgress
+            }
+            throw ProfileHydrationTransactionStoreError
+                .repositoryAdmissionMismatch
+        }
+        handle.admissionIdentity.physicalDirectoryIdentity =
+            physicalDirectoryIdentity
+        handle.admissionIdentity.phase = .pending
+        currentByDirectory[physicalDirectoryIdentity] = WeakAdmissionIdentity(
+            value: handle.admissionIdentity
+        )
+    }
+
+    /// Called with the file lock held after resolving physical identity again.
+    func activateCurrent(
+        _ handle: LocalProfileHydrationRecoveryHandleV1,
+        physicalDirectoryIdentity:
+            ProfileHydrationPhysicalDirectoryIdentityV1,
+        journal: ProfileHydrationJournalV1,
+        profileDirectoryURL: URL
+    ) throws {
+        let lexicalDirectory = profileDirectoryURL.standardizedFileURL
+        guard handle.standardizedProfileDirectoryURL == lexicalDirectory,
+              handle.journal == journal else {
+            throw ProfileHydrationTransactionStoreError
+                .repositoryAdmissionMismatch
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        pruneReleasedIdentities()
+        guard handle.admissionIdentity.physicalDirectoryIdentity
+                == physicalDirectoryIdentity,
+              currentByDirectory[physicalDirectoryIdentity]?.value
+                === handle.admissionIdentity else {
+            throw ProfileHydrationTransactionStoreError
+                .profileDirectoryIdentityMismatch
+        }
+        switch handle.admissionIdentity.phase {
+        case .pending:
+            handle.admissionIdentity.phase = .ready
+        case .ready:
+            return
+        case .issued, .attempting, .consumed:
+            throw ProfileHydrationTransactionStoreError
+                .repositoryAdmissionMismatch
+        }
+    }
+
+    func rejectStartupRecoveryIfLiveAdmission(
+        physicalDirectoryIdentity:
+            ProfileHydrationPhysicalDirectoryIdentityV1
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        pruneReleasedIdentities()
+        guard currentByDirectory[physicalDirectoryIdentity]?.value == nil else {
+            throw ProfileHydrationTransactionStoreError
+                .repositoryLiveAdmissionInProgress
+        }
+    }
+
+    func beginAttempt(
+        _ handle: LocalProfileHydrationRecoveryHandleV1,
+        physicalDirectoryIdentity:
+            ProfileHydrationPhysicalDirectoryIdentityV1,
+        profileDirectoryURL: URL
+    ) throws -> LocalProfileHydrationCompletionAttemptV1 {
+        let lexicalDirectory = profileDirectoryURL.standardizedFileURL
+        guard handle.standardizedProfileDirectoryURL == lexicalDirectory else {
+            throw ProfileHydrationTransactionStoreError
+                .repositoryAdmissionMismatch
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        pruneReleasedIdentities()
+        switch handle.admissionIdentity.phase {
+        case .consumed:
+            throw ProfileHydrationTransactionStoreError
+                .repositoryCompletionAuthorityConsumed
+        case .attempting:
+            throw ProfileHydrationTransactionStoreError
+                .repositoryCompletionAttemptInProgress
+        case .issued, .pending:
+            throw ProfileHydrationTransactionStoreError
+                .repositoryAdmissionMismatch
+        case .ready:
+            guard handle.admissionIdentity.physicalDirectoryIdentity
+                    == physicalDirectoryIdentity,
+                  currentByDirectory[physicalDirectoryIdentity]?.value
+                    === handle.admissionIdentity else {
+                throw ProfileHydrationTransactionStoreError
+                    .repositoryAdmissionMismatch
+            }
+            let attemptIdentity = LocalProfileHydrationAttemptIdentityV1()
+            handle.admissionIdentity.hasBegunCompletionAttempt = true
+            handle.admissionIdentity.phase = .attempting(attemptIdentity)
+            return LocalProfileHydrationCompletionAttemptV1(
+                admissionIdentity: handle.admissionIdentity,
+                attemptIdentity: attemptIdentity,
+                physicalDirectoryIdentity: physicalDirectoryIdentity,
+                standardizedProfileDirectoryURL: lexicalDirectory,
+                journal: handle.journal
+            )
+        }
+    }
+
+    func revalidateCurrent(
+        _ attempt: LocalProfileHydrationCompletionAttemptV1,
+        physicalDirectoryIdentity:
+            ProfileHydrationPhysicalDirectoryIdentityV1,
+        journal: ProfileHydrationJournalV1,
+        profileDirectoryURL: URL
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        pruneReleasedIdentities()
+        try validateCurrent(
+            attempt,
+            physicalDirectoryIdentity: physicalDirectoryIdentity,
+            journal: journal,
+            profileDirectoryURL: profileDirectoryURL
+        )
+    }
+
+    func consumeAfterDurableRemoval(
+        _ attempt: LocalProfileHydrationCompletionAttemptV1,
+        physicalDirectoryIdentity:
+            ProfileHydrationPhysicalDirectoryIdentityV1,
+        journal: ProfileHydrationJournalV1,
+        profileDirectoryURL: URL
+    ) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        pruneReleasedIdentities()
+        try validateCurrent(
+            attempt,
+            physicalDirectoryIdentity: physicalDirectoryIdentity,
+            journal: journal,
+            profileDirectoryURL: profileDirectoryURL
+        )
+        attempt.admissionIdentity.phase = .consumed
+        currentByDirectory.removeValue(
+            forKey: physicalDirectoryIdentity
+        )
+    }
+
+    func resetRetryableIfCurrent(
+        _ attempt: LocalProfileHydrationCompletionAttemptV1
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        pruneReleasedIdentities()
+        let physicalDirectoryIdentity = attempt.physicalDirectoryIdentity
+        guard currentByDirectory[physicalDirectoryIdentity]?.value
+                === attempt.admissionIdentity,
+              case let .attempting(currentAttempt) =
+                attempt.admissionIdentity.phase,
+              currentAttempt === attempt.attemptIdentity else {
+            return
+        }
+        attempt.admissionIdentity.phase = .ready
+    }
+
+    private func validateCurrent(
+        _ attempt: LocalProfileHydrationCompletionAttemptV1,
+        physicalDirectoryIdentity:
+            ProfileHydrationPhysicalDirectoryIdentityV1,
+        journal: ProfileHydrationJournalV1,
+        profileDirectoryURL: URL
+    ) throws {
+        let lexicalDirectory = profileDirectoryURL.standardizedFileURL
+        guard attempt.standardizedProfileDirectoryURL == lexicalDirectory,
+              attempt.physicalDirectoryIdentity == physicalDirectoryIdentity,
+              attempt.journal == journal,
+              currentByDirectory[physicalDirectoryIdentity]?.value
+                === attempt.admissionIdentity,
+              case let .attempting(currentAttempt) =
+                attempt.admissionIdentity.phase,
+              currentAttempt === attempt.attemptIdentity else {
+            throw ProfileHydrationTransactionStoreError
+                .repositoryAdmissionMismatch
+        }
+    }
+
+    private func pruneReleasedIdentities() {
+        currentByDirectory = currentByDirectory.filter {
+            $0.value.value != nil
+        }
+    }
+}
+
+#if DEBUG
+/// Test-only controlled overlap claim. It exposes no Release mutation surface.
+struct ProfileHydrationCompletionClaimTestTokenV1: Sendable {
+    fileprivate let attempt: LocalProfileHydrationCompletionAttemptV1
+}
+#endif
 
 enum ProfileHydrationJournalRepair: Equatable, Sendable {
     case none
@@ -363,6 +705,93 @@ struct ProfileHydrationCandidateInstallResult: Equatable, Sendable {
     let wasAlreadyInstalled: Bool
 }
 
+/// Sealed evidence that the exact durable journal was removed only while a
+/// scoped checkpoint lease confirmed its predecessor and both profile copies
+/// remained the exact source. Only the transaction store can mint it.
+struct ProfileHydrationPredecessorAbortConfirmationV1: Equatable, Sendable {
+    private let standardizedProfileDirectoryURL: URL
+    private let journal: ProfileHydrationJournalV1
+    private let capability: LocalProfileHydrationCapabilityV1
+
+    fileprivate init(
+        standardizedProfileDirectoryURL: URL,
+        journal: ProfileHydrationJournalV1,
+        capability: LocalProfileHydrationCapabilityV1
+    ) {
+        self.standardizedProfileDirectoryURL = standardizedProfileDirectoryURL
+        self.journal = journal
+        self.capability = capability
+    }
+
+    func confirmsPredecessorAbort(
+        journal: ProfileHydrationJournalV1,
+        profileDirectoryURL: URL,
+        capability: LocalProfileHydrationCapabilityV1
+    ) -> Bool {
+        self.journal == journal
+            && standardizedProfileDirectoryURL
+                == profileDirectoryURL.standardizedFileURL
+            && self.capability == capability
+    }
+}
+
+/// Sealed evidence that the exact target candidate was installed and its
+/// journal removed while a scoped checkpoint lease confirmed the target.
+/// Repository adoption still verifies both installed profile copies.
+struct ProfileHydrationTargetCleanupConfirmationV1: Equatable, Sendable {
+    private let standardizedProfileDirectoryURL: URL
+    private let journal: ProfileHydrationJournalV1
+    private let capability: LocalProfileHydrationCapabilityV1
+
+    fileprivate init(
+        standardizedProfileDirectoryURL: URL,
+        journal: ProfileHydrationJournalV1,
+        capability: LocalProfileHydrationCapabilityV1
+    ) {
+        self.standardizedProfileDirectoryURL = standardizedProfileDirectoryURL
+        self.journal = journal
+        self.capability = capability
+    }
+
+    func confirmsTargetCleanup(
+        journal: ProfileHydrationJournalV1,
+        profileDirectoryURL: URL,
+        capability: LocalProfileHydrationCapabilityV1
+    ) -> Bool {
+        self.journal == journal
+            && standardizedProfileDirectoryURL
+                == profileDirectoryURL.standardizedFileURL
+            && self.capability == capability
+    }
+}
+
+enum ProfileHydrationStartupRecoveryDispositionV1: Equatable, Sendable {
+    case noDurableJournal
+    case predecessorAborted
+    case targetCleaned
+}
+
+/// Diagnostic evidence for recovery performed before any repository is
+/// loaded, when a prior process capability cannot exist. It is deliberately a
+/// different sealed type from both active-transaction confirmations and is
+/// never accepted by `LocalPlayerProfileRepository` to release a live barrier.
+struct ProfileHydrationStartupRecoveryResultV1: Equatable, Sendable {
+    let disposition: ProfileHydrationStartupRecoveryDispositionV1
+    let transactionID: UUID?
+    let journalSourceDigest: ProfileHydrationDigest?
+    let journalCandidateDigest: ProfileHydrationDigest?
+
+    fileprivate init(
+        disposition: ProfileHydrationStartupRecoveryDispositionV1,
+        journal: ProfileHydrationJournalV1?
+    ) {
+        self.disposition = disposition
+        transactionID = journal?.transactionID
+        journalSourceDigest = journal?.sourceProfileEnvelopeDigest
+        journalCandidateDigest = journal?.candidateProfileEnvelopeDigest
+    }
+}
+
 /// Durable file transaction only. It never calls `loadOrCreate`, publishes a
 /// repository snapshot, or assumes that a checkpoint has committed. The later
 /// coordinator must perform the profile CAS before writing the journal and may
@@ -394,10 +823,86 @@ struct ProfileHydrationFileTransactionStore: Sendable {
     /// Atomically prepares one hydration intent. Once repositories adopt the
     /// shared lock exposed by `locations`, this is the sole boundary at which an
     /// exact local source may become recoverable hydration work.
-    func beginHydration(
+    func admitHydration(
+        _ journal: ProfileHydrationJournalV1,
+        permit: borrowing LocalProfileHydrationAdmissionPermitV1,
+        onPendingClaimEstablished: () -> Void
+    ) throws -> ProfileHydrationJournalWriteResult {
+        guard permit.authorizesHydrationAdmission(
+            journal: journal,
+            profileDirectoryURL: locations.profileDirectoryURL
+        ) else {
+            throw ProfileHydrationTransactionStoreError
+                .repositoryAdmissionMismatch
+        }
+        let recoveryHandle = try permit.completionRecoveryHandle(
+            journal: journal,
+            profileDirectoryURL: locations.profileDirectoryURL
+        )
+        let physicalDirectoryIdentity = try physicalProfileDirectoryIdentity(
+            beforeAdmission: true
+        )
+        try LocalProfileHydrationCompletionRegistryV1.shared.claimPending(
+            recoveryHandle,
+            physicalDirectoryIdentity: physicalDirectoryIdentity,
+            journal: journal,
+            profileDirectoryURL: locations.profileDirectoryURL
+        )
+        // The caller installs its actor barrier synchronously here. Pending
+        // physical authority already blocks aliased startup recovery, and the
+        // file lock has not yet been requested, closing the issued-only race.
+        onPendingClaimEstablished()
+        return try beginHydrationCore(
+            journal,
+            recoveryHandle: recoveryHandle,
+            preclaimedPhysicalDirectoryIdentity: physicalDirectoryIdentity
+        )
+    }
+
+#if DEBUG
+    /// Low-level durability tests exercise the file transaction independently.
+    /// Release builds require the bounded repository admission permit above.
+    func _testOnlyBeginHydration(
         _ journal: ProfileHydrationJournalV1
     ) throws -> ProfileHydrationJournalWriteResult {
+        try beginHydrationCore(
+            journal,
+            recoveryHandle: nil,
+            preclaimedPhysicalDirectoryIdentity: nil
+        )
+    }
+#endif
+
+    private func beginHydrationCore(
+        _ journal: ProfileHydrationJournalV1,
+        recoveryHandle: LocalProfileHydrationRecoveryHandleV1?,
+        preclaimedPhysicalDirectoryIdentity:
+            ProfileHydrationPhysicalDirectoryIdentityV1?
+    ) throws -> ProfileHydrationJournalWriteResult {
         try withLock {
+            if let recoveryHandle {
+                guard let preclaimedPhysicalDirectoryIdentity else {
+                    throw ProfileHydrationTransactionStoreError
+                        .repositoryAdmissionMismatch
+                }
+                let lockedPhysicalDirectoryIdentity =
+                    try physicalProfileDirectoryIdentity(
+                        beforeAdmission: false
+                    )
+                guard lockedPhysicalDirectoryIdentity
+                        == preclaimedPhysicalDirectoryIdentity else {
+                    throw ProfileHydrationTransactionStoreError
+                        .profileDirectoryIdentityMismatch
+                }
+                try LocalProfileHydrationCompletionRegistryV1.shared
+                    .activateCurrent(
+                        recoveryHandle,
+                        physicalDirectoryIdentity:
+                            lockedPhysicalDirectoryIdentity,
+                        journal: journal,
+                        profileDirectoryURL: locations.profileDirectoryURL
+                    )
+            }
             let canonicalData = try validatedCanonicalData(for: journal)
             let preflight = try resolveJournal(expected: nil, repair: false)
             if let preflight {
@@ -574,27 +1079,70 @@ struct ProfileHydrationFileTransactionStore: Sendable {
     /// confirms that the journal's exact predecessor is still current and both
     /// profile copies remain the exact source bytes. No missing or divergent
     /// profile copy is repaired: ambiguous state retains the complete barrier.
-    /// When no journal or quarantine evidence exists, `false` is an
+    /// When no journal or quarantine evidence exists, `nil` is an
     /// unauthenticated, non-destructive durable-absence reconciliation; there
     /// is no journal against which transaction, binding, or lease inputs
     /// could be authenticated.
-    @discardableResult
-    func abortHydrationAfterPredecessorConfirmation(
+    func confirmPredecessorAbort(
         transactionID: UUID,
         expected: ProfileHydrationExpectedBinding,
-        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1
-    ) throws -> Bool {
+        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1,
+        recoveryHandle: LocalProfileHydrationRecoveryHandleV1
+    ) throws -> ProfileHydrationPredecessorAbortConfirmationV1? {
+        let physicalDirectoryIdentity = try physicalProfileDirectoryIdentity(
+            beforeAdmission: false
+        )
+        let attempt = try LocalProfileHydrationCompletionRegistryV1.shared
+            .beginAttempt(
+            recoveryHandle,
+            physicalDirectoryIdentity: physicalDirectoryIdentity,
+            profileDirectoryURL: locations.profileDirectoryURL
+        )
+        do {
+            guard let journal = try confirmPredecessorAbortCore(
+                transactionID: transactionID,
+                expected: expected,
+                checkpointLease: checkpointLease,
+                admission: .active(attempt)
+            ) else {
+                return nil
+            }
+            return ProfileHydrationPredecessorAbortConfirmationV1(
+                standardizedProfileDirectoryURL:
+                    locations.profileDirectoryURL.standardizedFileURL,
+                journal: journal,
+                capability: recoveryHandle.capability
+            )
+        } catch {
+            LocalProfileHydrationCompletionRegistryV1.shared
+                .resetRetryableIfCurrent(attempt)
+            throw error
+        }
+    }
+
+    private func confirmPredecessorAbortCore(
+        transactionID: UUID,
+        expected: ProfileHydrationExpectedBinding,
+        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1,
+        admission: HydrationRemovalAdmission
+    ) throws -> ProfileHydrationJournalV1? {
         try withLock {
+            try validateRemovalAdmission(admission, journal: nil)
             guard let resolved = try resolveJournal(
                 expected: expected,
                 repair: false
             ) else {
                 try removeDurableBarrier()
-                return false
+                resetRemovalAdmissionAfterUnauthenticatedAbsence(admission)
+                return nil
             }
             guard resolved.journal.transactionID == transactionID else {
                 throw ProfileHydrationTransactionStoreError.transactionMismatch
             }
+            try validateRemovalAdmission(
+                admission,
+                journal: resolved.journal
+            )
             guard checkpointLease.relationship(to: resolved.journal)
                 == .predecessor else {
                 throw ProfileHydrationTransactionStoreError
@@ -617,34 +1165,81 @@ struct ProfileHydrationFileTransactionStore: Sendable {
             }
 
             try removeDurableBarrier(preserving: resolved.data)
-            return true
+            try consumeRemovalAdmission(
+                admission,
+                journal: resolved.journal
+            )
+            return resolved.journal
         }
     }
 
     /// The caller supplies a scoped lease minted while the checkpoint store
     /// holds the account authority lock. No cleanup occurs unless it confirms
     /// the exact target bound into the journal.
-    /// When no journal or quarantine evidence exists, `false` is an
+    /// When no journal or quarantine evidence exists, `nil` is an
     /// unauthenticated, non-destructive durable-absence reconciliation; there
     /// is no journal against which transaction, binding, or lease inputs
     /// could be authenticated.
-    @discardableResult
-    func removeJournalAfterCheckpointConfirmation(
+    func confirmTargetCleanup(
         transactionID: UUID,
         expected: ProfileHydrationExpectedBinding,
-        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1
-    ) throws -> Bool {
+        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1,
+        recoveryHandle: LocalProfileHydrationRecoveryHandleV1
+    ) throws -> ProfileHydrationTargetCleanupConfirmationV1? {
+        let physicalDirectoryIdentity = try physicalProfileDirectoryIdentity(
+            beforeAdmission: false
+        )
+        let attempt = try LocalProfileHydrationCompletionRegistryV1.shared
+            .beginAttempt(
+            recoveryHandle,
+            physicalDirectoryIdentity: physicalDirectoryIdentity,
+            profileDirectoryURL: locations.profileDirectoryURL
+        )
+        do {
+            guard let journal = try confirmTargetCleanupCore(
+                transactionID: transactionID,
+                expected: expected,
+                checkpointLease: checkpointLease,
+                admission: .active(attempt)
+            ) else {
+                return nil
+            }
+            return ProfileHydrationTargetCleanupConfirmationV1(
+                standardizedProfileDirectoryURL:
+                    locations.profileDirectoryURL.standardizedFileURL,
+                journal: journal,
+                capability: recoveryHandle.capability
+            )
+        } catch {
+            LocalProfileHydrationCompletionRegistryV1.shared
+                .resetRetryableIfCurrent(attempt)
+            throw error
+        }
+    }
+
+    private func confirmTargetCleanupCore(
+        transactionID: UUID,
+        expected: ProfileHydrationExpectedBinding,
+        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1,
+        admission: HydrationRemovalAdmission
+    ) throws -> ProfileHydrationJournalV1? {
         try withLock {
+            try validateRemovalAdmission(admission, journal: nil)
             guard let resolved = try resolveJournal(
                 expected: expected,
                 repair: false
             ) else {
                 try removeDurableBarrier()
-                return false
+                resetRemovalAdmissionAfterUnauthenticatedAbsence(admission)
+                return nil
             }
             guard resolved.journal.transactionID == transactionID else {
                 throw ProfileHydrationTransactionStoreError.transactionMismatch
             }
+            try validateRemovalAdmission(
+                admission,
+                journal: resolved.journal
+            )
             guard checkpointLease.relationship(to: resolved.journal)
                 == .target else {
                 throw ProfileHydrationTransactionStoreError.checkpointConfirmationMismatch
@@ -655,9 +1250,174 @@ struct ProfileHydrationFileTransactionStore: Sendable {
             }
 
             try removeDurableBarrier(preserving: resolved.data)
-            return true
+            try consumeRemovalAdmission(
+                admission,
+                journal: resolved.journal
+            )
+            return resolved.journal
         }
     }
+
+    /// Startup recovery is admitted only when the store's file-lock-protected
+    /// registry preflight proves that this process has no live completion
+    /// authority for the directory. The checkpoint lease and exact durable
+    /// journal then authorize deterministic predecessor recovery. This result
+    /// is diagnostic only and cannot release any repository barrier.
+    func recoverPredecessorBeforeRepositoryLoad(
+        transactionID: UUID,
+        expected: ProfileHydrationExpectedBinding,
+        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1
+    ) throws -> ProfileHydrationStartupRecoveryResultV1 {
+        let journal = try confirmPredecessorAbortCore(
+            transactionID: transactionID,
+            expected: expected,
+            checkpointLease: checkpointLease,
+            admission: .startupRecovery
+        )
+        return ProfileHydrationStartupRecoveryResultV1(
+            disposition: journal == nil
+                ? .noDurableJournal
+                : .predecessorAborted,
+            journal: journal
+        )
+    }
+
+    /// Completes target cleanup before repository load after the candidate is
+    /// exactly installed and the scoped checkpoint lease confirms its target.
+    /// It never mints the active-process proof required by repository adoption.
+    func recoverTargetBeforeRepositoryLoad(
+        transactionID: UUID,
+        expected: ProfileHydrationExpectedBinding,
+        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1
+    ) throws -> ProfileHydrationStartupRecoveryResultV1 {
+        let journal = try confirmTargetCleanupCore(
+            transactionID: transactionID,
+            expected: expected,
+            checkpointLease: checkpointLease,
+            admission: .startupRecovery
+        )
+        return ProfileHydrationStartupRecoveryResultV1(
+            disposition: journal == nil
+                ? .noDurableJournal
+                : .targetCleaned,
+            journal: journal
+        )
+    }
+
+    private enum HydrationRemovalAdmission {
+        case active(LocalProfileHydrationCompletionAttemptV1)
+        case startupRecovery
+    }
+
+    private func validateRemovalAdmission(
+        _ admission: HydrationRemovalAdmission,
+        journal: ProfileHydrationJournalV1?
+    ) throws {
+        let physicalDirectoryIdentity = try physicalProfileDirectoryIdentity(
+            beforeAdmission: false
+        )
+        switch admission {
+        case let .active(attempt):
+            try LocalProfileHydrationCompletionRegistryV1.shared
+                .revalidateCurrent(
+                    attempt,
+                    physicalDirectoryIdentity: physicalDirectoryIdentity,
+                    journal: journal ?? attempt.journal,
+                    profileDirectoryURL: locations.profileDirectoryURL
+                )
+        case .startupRecovery:
+            try LocalProfileHydrationCompletionRegistryV1.shared
+                .rejectStartupRecoveryIfLiveAdmission(
+                    physicalDirectoryIdentity: physicalDirectoryIdentity
+            )
+        }
+    }
+
+    /// Called under the file lock immediately after the last exact journal
+    /// copy is durably absent. Consumption therefore cannot race an identical
+    /// re-admission in this process.
+    private func consumeRemovalAdmission(
+        _ admission: HydrationRemovalAdmission,
+        journal: ProfileHydrationJournalV1
+    ) throws {
+        guard case let .active(attempt) = admission else { return }
+        let physicalDirectoryIdentity = try physicalProfileDirectoryIdentity(
+            beforeAdmission: false
+        )
+        try LocalProfileHydrationCompletionRegistryV1.shared
+            .consumeAfterDurableRemoval(
+                attempt,
+                physicalDirectoryIdentity: physicalDirectoryIdentity,
+                journal: journal,
+                profileDirectoryURL: locations.profileDirectoryURL
+            )
+    }
+
+    /// Missing durable evidence cannot mint a repository-release proof. The
+    /// current authority remains retryable, while a superseded authority is
+    /// deliberately left terminal.
+    private func resetRemovalAdmissionAfterUnauthenticatedAbsence(
+        _ admission: HydrationRemovalAdmission
+    ) {
+        guard case let .active(attempt) = admission else { return }
+        LocalProfileHydrationCompletionRegistryV1.shared
+            .resetRetryableIfCurrent(attempt)
+    }
+
+#if DEBUG
+    func _testOnlyClaimCompletionAttempt(
+        recoveryHandle: LocalProfileHydrationRecoveryHandleV1
+    ) throws -> ProfileHydrationCompletionClaimTestTokenV1 {
+        let physicalDirectoryIdentity = try physicalProfileDirectoryIdentity(
+            beforeAdmission: false
+        )
+        return ProfileHydrationCompletionClaimTestTokenV1(
+            attempt: try LocalProfileHydrationCompletionRegistryV1.shared
+                .beginAttempt(
+                    recoveryHandle,
+                    physicalDirectoryIdentity: physicalDirectoryIdentity,
+                    profileDirectoryURL: locations.profileDirectoryURL
+                )
+        )
+    }
+
+    func _testOnlyReleaseCompletionAttempt(
+        _ token: ProfileHydrationCompletionClaimTestTokenV1
+    ) {
+        LocalProfileHydrationCompletionRegistryV1.shared
+            .resetRetryableIfCurrent(token.attempt)
+    }
+
+    /// Compatibility seams for low-level file-transaction matrix tests. Release
+    /// code receives sealed confirmations rather than unauthenticated Booleans.
+    @discardableResult
+    func _testOnlyAbortHydrationAfterPredecessorConfirmation(
+        transactionID: UUID,
+        expected: ProfileHydrationExpectedBinding,
+        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1
+    ) throws -> Bool {
+        try confirmPredecessorAbortCore(
+            transactionID: transactionID,
+            expected: expected,
+            checkpointLease: checkpointLease,
+            admission: .startupRecovery
+        ) != nil
+    }
+
+    @discardableResult
+    func _testOnlyRemoveJournalAfterCheckpointConfirmation(
+        transactionID: UUID,
+        expected: ProfileHydrationExpectedBinding,
+        checkpointLease: borrowing CloudReplicaCheckpointFreshnessLeaseV1
+    ) throws -> Bool {
+        try confirmTargetCleanupCore(
+            transactionID: transactionID,
+            expected: expected,
+            checkpointLease: checkpointLease,
+            admission: .startupRecovery
+        ) != nil
+    }
+#endif
 
     func quarantinedEvidenceURLs() throws -> [URL] {
         try withLock {
@@ -1154,8 +1914,11 @@ struct ProfileHydrationFileTransactionStore: Sendable {
     }
 
     /// Evidence is removed first and an exact journal copy last, so a usable
-    /// barrier remains until the final removal attempt. A retry with no journal
-    /// still executes this complete durable-absence sequence.
+    /// barrier remains until the final removal attempt. If that final removal
+    /// reports a durability ambiguity after unlink, no active-process proof is
+    /// minted: retry observes unauthenticated absence and the live authority
+    /// keeps startup recovery blocked until actor/process recreation. A retry
+    /// with no journal still executes this complete durable-absence sequence.
     private func removeDurableBarrier(
         preserving journalData: Data? = nil
     ) throws {
@@ -1218,6 +1981,28 @@ struct ProfileHydrationFileTransactionStore: Sendable {
         } catch {
             throw mapped(error)
         }
+    }
+
+    private func physicalProfileDirectoryIdentity(
+        beforeAdmission: Bool
+    ) throws -> ProfileHydrationPhysicalDirectoryIdentityV1 {
+        var metadata = stat()
+        let result = locations.profileDirectoryURL.path.withCString {
+            stat($0, &metadata)
+        }
+        guard result == 0,
+              metadata.st_mode & S_IFMT == S_IFDIR,
+              metadata.st_ino != 0 else {
+            throw beforeAdmission
+                ? ProfileHydrationTransactionStoreError
+                    .profileDirectoryIdentityUnavailableBeforeAdmission
+                : ProfileHydrationTransactionStoreError
+                    .profileDirectoryIdentityUnavailable
+        }
+        return ProfileHydrationPhysicalDirectoryIdentityV1(
+            device: UInt64(metadata.st_dev),
+            inode: UInt64(metadata.st_ino)
+        )
     }
 
     private func withLock<T>(_ perform: () throws -> T) throws -> T {

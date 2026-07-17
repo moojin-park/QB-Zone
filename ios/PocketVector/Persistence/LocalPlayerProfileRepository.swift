@@ -1,5 +1,107 @@
 import Foundation
 
+/// Recoverable, process-local admission failures for the exact profile source
+/// frozen while a durable hydration transaction is in flight. These errors do
+/// not remove durable recovery evidence or release an active mutation barrier.
+enum LocalProfileHydrationBarrierError: Error, Equatable, Sendable {
+    case hydrationInProgress(transactionID: UUID)
+    case transactionStoreMismatch
+    case hydrationSourceMismatch
+    case capabilityMismatch
+    case predecessorAbortConfirmationMismatch
+    case targetCleanupConfirmationMismatch
+}
+
+/// Retained by every capability so allocator reuse cannot make a later
+/// repository instance appear to own an earlier hydration admission.
+fileprivate final class LocalProfileHydrationRepositoryIdentity: Sendable {}
+fileprivate final class LocalProfileHydrationCapabilityIdentity: Sendable {}
+
+/// Opaque, non-persisted proof that one repository actor froze one exact
+/// source for one exact journal. It is intentionally copyable: dropping every
+/// caller copy never releases the repository-owned barrier, so task
+/// cancellation and ambiguous failures remain fail-closed.
+struct LocalProfileHydrationCapabilityV1: Equatable, Hashable, Sendable {
+    private let repositoryIdentity: LocalProfileHydrationRepositoryIdentity
+    private let admissionIdentity: LocalProfileHydrationCapabilityIdentity
+    private let standardizedProfileDirectoryURL: URL
+    private let journal: ProfileHydrationJournalV1
+
+    fileprivate init(
+        repositoryIdentity: LocalProfileHydrationRepositoryIdentity,
+        admissionIdentity: LocalProfileHydrationCapabilityIdentity,
+        standardizedProfileDirectoryURL: URL,
+        journal: ProfileHydrationJournalV1
+    ) {
+        self.repositoryIdentity = repositoryIdentity
+        self.admissionIdentity = admissionIdentity
+        self.standardizedProfileDirectoryURL = standardizedProfileDirectoryURL
+        self.journal = journal
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.repositoryIdentity === rhs.repositoryIdentity
+            && lhs.admissionIdentity === rhs.admissionIdentity
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(ObjectIdentifier(repositoryIdentity))
+        hasher.combine(ObjectIdentifier(admissionIdentity))
+    }
+
+}
+
+/// A bounded, noncopyable permit used only during the actor-isolated journal
+/// admission call. The long-lived capability cannot be replayed directly
+/// against the transaction store after the repository releases its barrier.
+struct LocalProfileHydrationAdmissionPermitV1: ~Copyable, Sendable {
+    private let standardizedProfileDirectoryURL: URL
+    private let journal: ProfileHydrationJournalV1
+    private let recoveryHandle: LocalProfileHydrationRecoveryHandleV1
+
+    fileprivate init(
+        standardizedProfileDirectoryURL: URL,
+        journal: ProfileHydrationJournalV1,
+        recoveryHandle: LocalProfileHydrationRecoveryHandleV1
+    ) {
+        self.standardizedProfileDirectoryURL = standardizedProfileDirectoryURL
+        self.journal = journal
+        self.recoveryHandle = recoveryHandle
+    }
+
+    func authorizesHydrationAdmission(
+        journal: ProfileHydrationJournalV1,
+        profileDirectoryURL: URL
+    ) -> Bool {
+        self.journal == journal
+            && standardizedProfileDirectoryURL
+                == profileDirectoryURL.standardizedFileURL
+    }
+
+    func completionRecoveryHandle(
+        journal: ProfileHydrationJournalV1,
+        profileDirectoryURL: URL
+    ) throws -> LocalProfileHydrationRecoveryHandleV1 {
+        guard authorizesHydrationAdmission(
+            journal: journal,
+            profileDirectoryURL: profileDirectoryURL
+        ) else {
+            throw ProfileHydrationTransactionStoreError
+                .repositoryAdmissionMismatch
+        }
+        return recoveryHandle
+    }
+}
+
+struct LocalProfileHydrationAdmissionV1: Equatable, Sendable {
+    let recoveryHandle: LocalProfileHydrationRecoveryHandleV1
+    let journalWrite: ProfileHydrationJournalWriteResult
+
+    var capability: LocalProfileHydrationCapabilityV1 {
+        recoveryHandle.capability
+    }
+}
+
 actor LocalPlayerProfileRepository {
     private let fileStore: AtomicProfileFileStore
     private let catalog: LaunchCatalog
@@ -10,9 +112,18 @@ actor LocalPlayerProfileRepository {
     private var document: LocalPlayerDocumentV1?
     private var persistedArtifact: CanonicalProfileEnvelopeArtifactV1?
     private var pendingReplacementIntent: ExactProfileReplacementIntentV1?
+    private let hydrationRepositoryIdentity = LocalProfileHydrationRepositoryIdentity()
+    private var activeHydrationBarrier: ActiveHydrationBarrier?
     private let sessionNonce: UUID
     private var sessionIsActive = false
     private(set) var lastLoadReport: ProfileLoadReport?
+
+    private struct ActiveHydrationBarrier {
+        let recoveryHandle: LocalProfileHydrationRecoveryHandleV1
+        let journal: ProfileHydrationJournalV1
+        let sourceArtifact: CanonicalProfileEnvelopeArtifactV1
+        let sourceSession: ProfileSessionToken
+    }
 
     init(
         directoryURL: URL,
@@ -79,6 +190,144 @@ actor LocalPlayerProfileRepository {
         try makeSnapshot(for: requireActiveDocument())
     }
 
+    /// Freezes one exact persisted source before the durable journal is
+    /// admitted. Actor isolation covers source verification, barrier install,
+    /// and the synchronous transaction-store call without an unsafe blocking
+    /// bridge or suspension window. A proven pre-claim failure never installs
+    /// the barrier; every outcome after the pending physical claim leaves it
+    /// installed for explicit recovery.
+    func beginHydration(
+        _ journal: ProfileHydrationJournalV1,
+        session: ProfileSessionToken,
+        transactionStore: ProfileHydrationFileTransactionStore
+    ) throws -> LocalProfileHydrationAdmissionV1 {
+        let current = try requireActiveDocument()
+        try validateSession(session, against: current)
+        if let activeHydrationBarrier {
+            throw LocalProfileHydrationBarrierError.hydrationInProgress(
+                transactionID: activeHydrationBarrier.journal.transactionID
+            )
+        }
+        guard pendingReplacementIntent == nil else {
+            throw LocalPlayerRepositoryError.profileWriteOutcomeUnknown
+        }
+        guard transactionStore.locations.profileDirectoryURL.standardizedFileURL
+                == fileStore.locations.directoryURL.standardizedFileURL else {
+            throw LocalProfileHydrationBarrierError.transactionStoreMismatch
+        }
+        guard let sourceArtifact = persistedArtifact,
+              hydrationSourceMatches(
+                journal,
+                document: current,
+                artifact: sourceArtifact,
+                session: session
+              ) else {
+            throw LocalProfileHydrationBarrierError.hydrationSourceMismatch
+        }
+
+        let capability = LocalProfileHydrationCapabilityV1(
+            repositoryIdentity: hydrationRepositoryIdentity,
+            admissionIdentity: LocalProfileHydrationCapabilityIdentity(),
+            standardizedProfileDirectoryURL:
+                fileStore.locations.directoryURL.standardizedFileURL,
+            journal: journal
+        )
+        let recoveryHandle = LocalProfileHydrationRecoveryHandleV1(
+            capability: capability,
+            standardizedProfileDirectoryURL:
+                fileStore.locations.directoryURL.standardizedFileURL,
+            journal: journal
+        )
+        let admissionPermit = LocalProfileHydrationAdmissionPermitV1(
+            standardizedProfileDirectoryURL:
+                fileStore.locations.directoryURL.standardizedFileURL,
+            journal: journal,
+            recoveryHandle: recoveryHandle
+        )
+        let barrier = ActiveHydrationBarrier(
+            recoveryHandle: recoveryHandle,
+            journal: journal,
+            sourceArtifact: sourceArtifact,
+            sourceSession: session
+        )
+
+        let journalWrite = try transactionStore.admitHydration(
+            journal,
+            permit: admissionPermit
+        ) {
+            activeHydrationBarrier = barrier
+        }
+        return LocalProfileHydrationAdmissionV1(
+            recoveryHandle: recoveryHandle,
+            journalWrite: journalWrite
+        )
+    }
+
+    /// Recovers the already-installed process barrier after an ambiguous begin
+    /// throw or caller cancellation. It never creates a second admission and
+    /// returns authority only for the exact active journal and source session.
+    func resumeHydrationBarrier(
+        _ journal: ProfileHydrationJournalV1,
+        session: ProfileSessionToken
+    ) throws -> LocalProfileHydrationRecoveryHandleV1 {
+        let current = try requireActiveDocument()
+        try validateSession(session, against: current)
+        guard let barrier = activeHydrationBarrier,
+              barrier.journal == journal,
+              barrier.sourceSession == session,
+              persistedArtifact == barrier.sourceArtifact,
+              current == barrier.sourceArtifact.document else {
+            throw LocalProfileHydrationBarrierError.capabilityMismatch
+        }
+        return barrier.recoveryHandle
+    }
+
+    /// Re-enters the bounded store admission with the exact actor-owned handle
+    /// after lock contention or another ambiguous begin outcome. It never
+    /// issues a second capability and revalidates the full journal, source,
+    /// session, and store binding before the synchronous retry.
+    func retryHydrationAdmission(
+        _ journal: ProfileHydrationJournalV1,
+        session: ProfileSessionToken,
+        transactionStore: ProfileHydrationFileTransactionStore
+    ) throws -> LocalProfileHydrationAdmissionV1 {
+        let current = try requireActiveDocument()
+        try validateSession(session, against: current)
+        guard let barrier = activeHydrationBarrier,
+              barrier.journal == journal,
+              barrier.sourceSession == session,
+              persistedArtifact == barrier.sourceArtifact,
+              current == barrier.sourceArtifact.document else {
+            throw LocalProfileHydrationBarrierError.capabilityMismatch
+        }
+        guard transactionStore.locations.profileDirectoryURL.standardizedFileURL
+                == fileStore.locations.directoryURL.standardizedFileURL else {
+            throw LocalProfileHydrationBarrierError.transactionStoreMismatch
+        }
+        guard hydrationSourceMatches(
+            journal,
+            document: current,
+            artifact: barrier.sourceArtifact,
+            session: session
+        ) else {
+            throw LocalProfileHydrationBarrierError.hydrationSourceMismatch
+        }
+        let permit = LocalProfileHydrationAdmissionPermitV1(
+            standardizedProfileDirectoryURL:
+                fileStore.locations.directoryURL.standardizedFileURL,
+            journal: journal,
+            recoveryHandle: barrier.recoveryHandle
+        )
+        let journalWrite = try transactionStore.admitHydration(
+            journal,
+            permit: permit
+        ) {}
+        return LocalProfileHydrationAdmissionV1(
+            recoveryHandle: barrier.recoveryHandle,
+            journalWrite: journalWrite
+        )
+    }
+
     /// Supplies the exact canonical bytes returned by persistence. Re-encoding
     /// the in-memory document would discard the persisted envelope identity and
     /// is never accepted as hydration compare-and-swap evidence.
@@ -87,6 +336,7 @@ actor LocalPlayerProfileRepository {
     ) throws -> CloudProfileHydrationSourceV1 {
         let document = try requireActiveDocument()
         try validateSession(session, against: document)
+        try rejectAuthorityProductionDuringHydration()
         guard let persistedArtifact else {
             throw LocalPlayerRepositoryError.notLoaded
         }
@@ -96,57 +346,106 @@ actor LocalPlayerProfileRepository {
         )
     }
 
-    /// Adopts only a hydration candidate that has already completed its durable
-    /// file transaction. This method does not rotate the profile session or
-    /// publish application state; a coordinator must revalidate its account
-    /// generation before forwarding the returned snapshot.
+    /// Adopts only the exact candidate whose target checkpoint cleanup was
+    /// confirmed by the transaction store. Invalid candidates or foreign proof
+    /// retain the mutation barrier. A successful adoption is the sole target
+    /// path that releases it.
     @discardableResult
     func adoptCommittedHydration(
         _ journal: ProfileHydrationJournalV1,
+        session: ProfileSessionToken,
+        capability: LocalProfileHydrationCapabilityV1,
+        cleanupConfirmation: ProfileHydrationTargetCleanupConfirmationV1
+    ) throws -> LocalPlayerProfileSnapshot {
+        let current = try requireActiveDocument()
+        try validateSession(session, against: current)
+        let barrier = try matchingHydrationBarrier(
+            journal: journal,
+            session: session,
+            capability: capability
+        )
+        guard cleanupConfirmation.confirmsTargetCleanup(
+            journal: journal,
+            profileDirectoryURL: fileStore.locations.directoryURL,
+            capability: capability
+        ) else {
+            throw LocalProfileHydrationBarrierError
+                .targetCleanupConfirmationMismatch
+        }
+        guard persistedArtifact == barrier.sourceArtifact,
+              current == barrier.sourceArtifact.document else {
+            throw LocalProfileHydrationBarrierError.hydrationSourceMismatch
+        }
+
+        let snapshot = try adoptExactInstalledCandidate(
+            journal,
+            session: session,
+            current: current,
+            sourceArtifact: barrier.sourceArtifact
+        )
+        activeHydrationBarrier = nil
+        return snapshot
+    }
+
+    /// Releases only after the store proves that the exact predecessor is
+    /// still current, both profile copies are the source, and durable journal
+    /// evidence was removed. Missing-journal reconciliation returns no proof
+    /// and therefore cannot call this API.
+    @discardableResult
+    func releaseHydrationAfterConfirmedPredecessorAbort(
+        _ confirmation: ProfileHydrationPredecessorAbortConfirmationV1,
+        journal: ProfileHydrationJournalV1,
+        session: ProfileSessionToken,
+        capability: LocalProfileHydrationCapabilityV1
+    ) throws -> LocalPlayerProfileSnapshot {
+        let current = try requireActiveDocument()
+        try validateSession(session, against: current)
+        let barrier = try matchingHydrationBarrier(
+            journal: journal,
+            session: session,
+            capability: capability
+        )
+        guard confirmation.confirmsPredecessorAbort(
+            journal: journal,
+            profileDirectoryURL: fileStore.locations.directoryURL,
+            capability: capability
+        ) else {
+            throw LocalProfileHydrationBarrierError
+                .predecessorAbortConfirmationMismatch
+        }
+        guard persistedArtifact == barrier.sourceArtifact,
+              current == barrier.sourceArtifact.document else {
+            throw LocalProfileHydrationBarrierError.hydrationSourceMismatch
+        }
+        let snapshot = try makeSnapshot(for: current)
+        activeHydrationBarrier = nil
+        return snapshot
+    }
+
+#if DEBUG
+    /// Legacy adoption coverage for low-level fixture matrices. Release builds
+    /// expose only the capability-and-proof API above.
+    @discardableResult
+    func _testOnlyAdoptCommittedHydration(
+        _ journal: ProfileHydrationJournalV1,
         session: ProfileSessionToken
     ) throws -> LocalPlayerProfileSnapshot {
-        guard sessionIsActive else {
-            throw document == nil
-                ? LocalPlayerRepositoryError.notLoaded
-                : LocalPlayerRepositoryError.sessionInvalidated
-        }
-        guard let current = document,
-              let sourceArtifact = persistedArtifact else {
-            throw LocalPlayerRepositoryError.notLoaded
-        }
-        try validateSession(session, against: current)
         guard pendingReplacementIntent == nil else {
             throw LocalPlayerRepositoryError.profileWriteOutcomeUnknown
         }
-        guard sourceArtifact.document == current,
-              sourceArtifact.exactBytes == journal.sourceProfileEnvelope,
-              sourceArtifact.digest == journal.sourceProfileEnvelopeDigest,
-              journal.source.accountIdentity == session.accountIdentity,
-              journal.source.sessionNonce == session.nonce,
-              journal.source.profileID == session.profileID,
-              journal.source.playerRevision == current.player.revision,
-              journal.source.economyRevision == current.economyRevision else {
-            throw LocalPlayerRepositoryError.hydrationAdoptionSourceMismatch
+        let current = try requireActiveDocument()
+        try validateSession(session, against: current)
+        guard let sourceArtifact = persistedArtifact else {
+            throw LocalPlayerRepositoryError.notLoaded
         }
-
-        let candidate = try fileStore.readExactInstalledCandidate(
+        return try adoptExactInstalledCandidate(
             journal,
-            catalog: catalog
+            session: session,
+            current: current,
+            sourceArtifact: sourceArtifact
         )
-        guard candidate.document.accountIdentity == accountIdentity else {
-            throw LocalPlayerRepositoryError.accountIdentityMismatch(
-                expected: accountIdentity,
-                actual: candidate.document.accountIdentity
-            )
-        }
-        guard candidate.document.player.profileID == session.profileID else {
-            throw LocalPlayerRepositoryError.hydrationAdoptionSourceMismatch
-        }
-        let snapshot = try makeSnapshot(for: candidate.document)
-        document = candidate.document
-        persistedArtifact = candidate
-        return snapshot
     }
+#endif
 
     func settlementReceipt(
         for runID: RunID,
@@ -172,6 +471,7 @@ actor LocalPlayerProfileRepository {
     ) throws -> RunSettlementResult {
         let current = try requireActiveDocument()
         try validateSession(session, against: current)
+        try rejectMutationDuringHydration()
         do {
             try CompletedRunValidator.validate(
                 run,
@@ -306,6 +606,7 @@ actor LocalPlayerProfileRepository {
     ) throws -> LocalPlayerProfileSnapshot {
         var next = try requireActiveDocument()
         try validateSession(session, against: next)
+        try rejectMutationDuringHydration()
         let balances = try PlayerProfileProjection.coinBalances(for: next)
         var expectedEntries: [LedgerEntryID: CoinLedgerEntry] = [:]
 
@@ -353,6 +654,7 @@ actor LocalPlayerProfileRepository {
 
         var next = try requireActiveDocument()
         try validateSession(session, against: next)
+        try rejectMutationDuringHydration()
         let balances = try PlayerProfileProjection.coinBalances(for: next)
         try validateConfirmationBinding(
             confirmation,
@@ -395,6 +697,7 @@ actor LocalPlayerProfileRepository {
     ) throws -> DurableCatalogUnlockRequest {
         let current = try requireActiveDocument()
         try validateSession(session, against: current)
+        try rejectAuthorityProductionDuringHydration()
         guard let item = catalog.item(id: itemID) else {
             throw LocalPlayerRepositoryError.inventory(.unknownCatalogItem(itemID))
         }
@@ -429,6 +732,7 @@ actor LocalPlayerProfileRepository {
         try validateAuthority(receipt.authority)
         let current = try requireActiveDocument()
         try validateSession(session, against: current)
+        try rejectMutationDuringHydration()
         guard receipt.session == session,
               !receipt.requestOperationID.rawValue.isEmpty,
               receipt.confirmedAt.timeIntervalSince1970.isFinite else {
@@ -549,6 +853,7 @@ actor LocalPlayerProfileRepository {
     ) throws -> RewardedAdSettlementOutcome {
         let current = try requireActiveDocument()
         try validateSession(session, against: current)
+        try rejectMutationDuringHydration()
         try validateAuthority(receipt.authority)
         guard receipt.session == session,
               receipt.rewardedAt.timeIntervalSince1970.isFinite else {
@@ -635,6 +940,7 @@ actor LocalPlayerProfileRepository {
     ) throws -> LocalPlayerProfileSnapshot {
         var next = try requireActiveDocument()
         try validateSession(session, against: next)
+        try rejectMutationDuringHydration()
         guard let team = catalog.team(id: teamID) else {
             throw LocalPlayerRepositoryError.inventory(.unknownTeam(teamID))
         }
@@ -666,6 +972,7 @@ actor LocalPlayerProfileRepository {
     ) throws -> LocalPlayerProfileSnapshot {
         var next = try requireActiveDocument()
         try validateSession(session, against: next)
+        try rejectMutationDuringHydration()
         guard next.player.inventory.ownedTeamIDs.contains(teamID) else {
             throw LocalPlayerRepositoryError.inventory(.teamNotOwned(teamID))
         }
@@ -699,6 +1006,7 @@ actor LocalPlayerProfileRepository {
     ) throws -> LocalPlayerProfileSnapshot {
         var next = try requireActiveDocument()
         try validateSession(session, against: next)
+        try rejectMutationDuringHydration()
         guard catalog.football(id: footballID) != nil else {
             throw LocalPlayerRepositoryError.inventory(.unknownFootball(footballID))
         }
@@ -724,6 +1032,7 @@ actor LocalPlayerProfileRepository {
     ) throws -> LocalPlayerProfileSnapshot {
         var next = try requireActiveDocument()
         try validateSession(session, against: next)
+        try rejectMutationDuringHydration()
         let sanitized = PlayerSettings(
             musicVolume: settings.musicVolume,
             sfxVolume: settings.sfxVolume,
@@ -738,6 +1047,87 @@ actor LocalPlayerProfileRepository {
         try applySettingsMutation(sanitized, to: &next, at: date)
         try persist(next, at: date)
         return try makeSnapshot(for: next)
+    }
+
+    private func matchingHydrationBarrier(
+        journal: ProfileHydrationJournalV1,
+        session: ProfileSessionToken,
+        capability: LocalProfileHydrationCapabilityV1
+    ) throws -> ActiveHydrationBarrier {
+        guard let barrier = activeHydrationBarrier else {
+            throw LocalProfileHydrationBarrierError.capabilityMismatch
+        }
+        guard barrier.recoveryHandle.capability == capability,
+              barrier.journal == journal,
+              barrier.sourceSession == session else {
+            throw LocalProfileHydrationBarrierError.capabilityMismatch
+        }
+        return barrier
+    }
+
+    private func hydrationSourceMatches(
+        _ journal: ProfileHydrationJournalV1,
+        document: LocalPlayerDocumentV1,
+        artifact: CanonicalProfileEnvelopeArtifactV1,
+        session: ProfileSessionToken
+    ) -> Bool {
+        artifact.document == document
+            && artifact.exactBytes == journal.sourceProfileEnvelope
+            && artifact.digest == journal.sourceProfileEnvelopeDigest
+            && journal.source.accountIdentity == session.accountIdentity
+            && journal.source.sessionNonce == session.nonce
+            && journal.source.profileID == session.profileID
+            && journal.source.playerRevision == document.player.revision
+            && journal.source.economyRevision == document.economyRevision
+    }
+
+    @discardableResult
+    private func adoptExactInstalledCandidate(
+        _ journal: ProfileHydrationJournalV1,
+        session: ProfileSessionToken,
+        current: LocalPlayerDocumentV1,
+        sourceArtifact: CanonicalProfileEnvelopeArtifactV1
+    ) throws -> LocalPlayerProfileSnapshot {
+        guard pendingReplacementIntent == nil else {
+            throw LocalPlayerRepositoryError.profileWriteOutcomeUnknown
+        }
+        guard hydrationSourceMatches(
+            journal,
+            document: current,
+            artifact: sourceArtifact,
+            session: session
+        ) else {
+            throw LocalPlayerRepositoryError.hydrationAdoptionSourceMismatch
+        }
+
+        let candidate = try fileStore.readExactInstalledCandidate(
+            journal,
+            catalog: catalog
+        )
+        guard candidate.document.accountIdentity == accountIdentity else {
+            throw LocalPlayerRepositoryError.accountIdentityMismatch(
+                expected: accountIdentity,
+                actual: candidate.document.accountIdentity
+            )
+        }
+        guard candidate.document.player.profileID == session.profileID else {
+            throw LocalPlayerRepositoryError.hydrationAdoptionSourceMismatch
+        }
+        let snapshot = try makeSnapshot(for: candidate.document)
+        document = candidate.document
+        persistedArtifact = candidate
+        return snapshot
+    }
+
+    private func rejectMutationDuringHydration() throws {
+        guard let activeHydrationBarrier else { return }
+        throw LocalProfileHydrationBarrierError.hydrationInProgress(
+            transactionID: activeHydrationBarrier.journal.transactionID
+        )
+    }
+
+    private func rejectAuthorityProductionDuringHydration() throws {
+        try rejectMutationDuringHydration()
     }
 
     private func requireActiveDocument() throws -> LocalPlayerDocumentV1 {

@@ -103,7 +103,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             locations: store.locations
         )
 
-        let result = try store.beginHydration(fixture.journal)
+        let result = try store._testOnlyBeginHydration(fixture.journal)
 
         XCTAssertFalse(result.wasAlreadyPresent)
         XCTAssertEqual(
@@ -132,7 +132,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         try writeProfile(staleBytes, locations: store.locations)
 
         XCTAssertThrowsError(
-            try store.beginHydration(fixture.journal)
+            try store._testOnlyBeginHydration(fixture.journal)
         ) { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
@@ -170,7 +170,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
 
         XCTAssertThrowsError(
-            try store.beginHydration(fixture.journal)
+            try store._testOnlyBeginHydration(fixture.journal)
         ) { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
@@ -226,7 +226,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             )
 
             if testCase.accepted {
-                let result = try store.beginHydration(fixture.journal)
+                let result = try store._testOnlyBeginHydration(fixture.journal)
                 XCTAssertFalse(result.wasAlreadyPresent, testCase.name)
                 XCTAssertEqual(
                     try Data(contentsOf: store.locations.profilePrimaryURL),
@@ -241,7 +241,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 assertJournalCopiesEqual(store.locations)
             } else {
                 XCTAssertThrowsError(
-                    try store.beginHydration(fixture.journal),
+                    try store._testOnlyBeginHydration(fixture.journal),
                     testCase.name
                 ) { error in
                     XCTAssertEqual(
@@ -287,7 +287,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
         fault.failNext(.beforeWrite("player-profile.backup.json"))
 
-        XCTAssertThrowsError(try store.beginHydration(fixture.journal))
+        XCTAssertThrowsError(try store._testOnlyBeginHydration(fixture.journal))
         XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: store.locations.journalPrimaryURL.path
@@ -298,7 +298,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             olderBytes
         )
 
-        let recovered = try makeStore(root: root).beginHydration(
+        let recovered = try makeStore(root: root)._testOnlyBeginHydration(
             fixture.journal
         )
         XCTAssertFalse(recovered.wasAlreadyPresent)
@@ -327,7 +327,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(journal)
+        _ = try store._testOnlyBeginHydration(journal)
 
         let inspection = try XCTUnwrap(
             makeStore(root: root).inspectRecovery(
@@ -348,13 +348,13 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         try seedSourceProfile(fixture, locations: store.locations)
         fault.failNext(.beforeWrite("profile-hydration-journal.backup.json"))
 
-        XCTAssertThrowsError(try store.beginHydration(fixture.journal)) { error in
+        XCTAssertThrowsError(try store._testOnlyBeginHydration(fixture.journal)) { error in
             XCTAssertEqual(error as? ProfileHydrationTransactionStoreError, .ioFailure)
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.locations.journalPrimaryURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.locations.journalBackupURL.path))
 
-        let recovered = try makeStore(root: root).beginHydration(fixture.journal)
+        let recovered = try makeStore(root: root)._testOnlyBeginHydration(fixture.journal)
         XCTAssertTrue(recovered.wasAlreadyPresent)
         XCTAssertEqual(recovered.repairedJournalCopy, .backup)
         assertJournalCopiesEqual(store.locations)
@@ -369,9 +369,9 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         try seedSourceProfile(fixture, locations: store.locations)
         fault.failNext(.afterWrite("profile-hydration-journal.backup.json"))
 
-        XCTAssertThrowsError(try store.beginHydration(fixture.journal))
+        XCTAssertThrowsError(try store._testOnlyBeginHydration(fixture.journal))
         assertJournalCopiesEqual(store.locations)
-        let recovered = try makeStore(root: root).beginHydration(fixture.journal)
+        let recovered = try makeStore(root: root)._testOnlyBeginHydration(fixture.journal)
         XCTAssertTrue(recovered.wasAlreadyPresent)
         XCTAssertEqual(recovered.repairedJournalCopy, .none)
     }
@@ -384,7 +384,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         let journalPrimary = try Data(
             contentsOf: store.locations.journalPrimaryURL
         )
@@ -408,7 +408,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         try writeProfile(unexpectedBytes, locations: store.locations)
 
         XCTAssertThrowsError(
-            try store.beginHydration(fixture.journal)
+            try store._testOnlyBeginHydration(fixture.journal)
         ) { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
@@ -440,7 +440,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         let originalPrimary = try Data(contentsOf: store.locations.journalPrimaryURL)
         let corruptBackup = Data("different-intent-corrupt-peer".utf8)
         try FoundationProfileHydrationFileSystem().writeAtomicallyDurably(
@@ -451,7 +451,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             object["transactionID"] = fixture.fixedUUID(803).uuidString.uppercased()
         }
 
-        XCTAssertThrowsError(try store.beginHydration(alternate)) { error in
+        XCTAssertThrowsError(try store._testOnlyBeginHydration(alternate)) { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
                 .journalAlreadyExists
@@ -474,7 +474,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         try FoundationProfileHydrationFileSystem().removeItemDurably(
             at: store.locations.journalPrimaryURL
         )
@@ -501,7 +501,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         try FoundationProfileHydrationFileSystem().writeAtomicallyDurably(
             Data("corrupt".utf8),
             to: store.locations.journalBackupURL
@@ -531,7 +531,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         let canonical = try Data(contentsOf: store.locations.journalPrimaryURL)
         let object = try JSONSerialization.jsonObject(with: canonical)
         let noncanonical = try JSONSerialization.data(
@@ -566,11 +566,11 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         let storeB = makeStore(root: rootB)
         try seedSourceProfile(fixture, locations: storeA.locations)
         try seedSourceProfile(fixture, locations: storeB.locations)
-        _ = try storeA.beginHydration(fixture.journal)
+        _ = try storeA._testOnlyBeginHydration(fixture.journal)
         let alternate = try fixture.mutating(fixture.journal) { object in
             object["transactionID"] = fixture.fixedUUID(800).uuidString.uppercased()
         }
-        _ = try storeB.beginHydration(alternate)
+        _ = try storeB._testOnlyBeginHydration(alternate)
         let alternateData = try Data(contentsOf: storeB.locations.journalBackupURL)
         try FoundationProfileHydrationFileSystem().writeAtomicallyDurably(
             alternateData,
@@ -598,7 +598,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let baseStore = makeStore(root: root)
         try seedSourceProfile(fixture, locations: baseStore.locations)
-        _ = try baseStore.beginHydration(fixture.journal)
+        _ = try baseStore._testOnlyBeginHydration(fixture.journal)
         try FoundationProfileHydrationFileSystem().writeAtomicallyDurably(
             Data("corrupt".utf8),
             to: baseStore.locations.journalBackupURL
@@ -608,12 +608,12 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
 
         XCTAssertThrowsError(
             try makeStore(root: root, fileSystem: fault)
-                .beginHydration(fixture.journal)
+                ._testOnlyBeginHydration(fixture.journal)
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: baseStore.locations.journalBackupURL.path))
         XCTAssertEqual(try baseStore.quarantinedEvidenceURLs().count, 1)
 
-        let recovered = try baseStore.beginHydration(fixture.journal)
+        let recovered = try baseStore._testOnlyBeginHydration(fixture.journal)
         XCTAssertTrue(recovered.wasAlreadyPresent)
         XCTAssertEqual(recovered.repairedJournalCopy, .backup)
         assertJournalCopiesEqual(baseStore.locations)
@@ -630,7 +630,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         let fault = FaultInjectingProfileHydrationFileSystem()
         let store = makeStore(root: root, fileSystem: fault)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         fault.failNext(.beforeWrite("player-profile.json"))
 
         await assertThrowsErrorAsync {
@@ -669,7 +669,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         let fault = FaultInjectingProfileHydrationFileSystem()
         let store = makeStore(root: root, fileSystem: fault)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         fault.failNext(.afterWrite("player-profile.json"))
 
         await assertThrowsErrorAsync {
@@ -700,7 +700,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
 
         let first = try await installCandidate(
             store: store,
@@ -747,7 +747,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 let root = try temporaryDirectory()
                 let store = makeStore(root: root, limits: limits)
                 try seedSourceProfile(fixture, locations: store.locations)
-                _ = try store.beginHydration(fixture.journal)
+                _ = try store._testOnlyBeginHydration(fixture.journal)
                 try applyMatrixState(
                     primaryState,
                     to: store.locations.profilePrimaryURL,
@@ -869,7 +869,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         let sourceEvidence = try [
             Data(contentsOf: store.locations.profilePrimaryURL),
             Data(contentsOf: store.locations.profileBackupURL),
@@ -945,7 +945,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         let evidenceBefore = try [
             Data(contentsOf: store.locations.profilePrimaryURL),
             Data(contentsOf: store.locations.profileBackupURL),
@@ -1002,7 +1002,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             let root = try temporaryDirectory()
             let store = makeStore(root: root)
             try seedSourceProfile(fixture, locations: store.locations)
-            _ = try store.beginHydration(fixture.journal)
+            _ = try store._testOnlyBeginHydration(fixture.journal)
             try fileSystem.writeAtomicallyDurably(
                 corruptJournalBytes,
                 to: store.locations.journalBackupURL
@@ -1078,7 +1078,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         let corruptPeer = Data("repair-then-revalidate-peer".utf8)
         try FoundationProfileHydrationFileSystem().writeAtomicallyDurably(
             corruptPeer,
@@ -1129,7 +1129,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         var stale = fixture.sourceDocument
         stale.player.revision = 5
         stale.economyRevision = 5
@@ -1166,7 +1166,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         let originalPrimary = try Data(contentsOf: store.locations.profilePrimaryURL)
         let target = fixture.expectedBinding
         let cases: [(ProfileHydrationExpectedBinding, ProfileHydrationBindingMismatch)] = [
@@ -1269,7 +1269,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         let fileSystem = FoundationProfileHydrationFileSystem()
         try fileSystem.removeItemDurably(at: store.locations.profilePrimaryURL)
         try fileSystem.removeItemDurably(at: store.locations.profileBackupURL)
@@ -1307,7 +1307,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         try FoundationProfileHydrationFileSystem().removeItemDurably(
             at: store.locations.profileBackupURL
         )
@@ -1336,7 +1336,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         let fault = FaultInjectingProfileHydrationFileSystem()
         let store = makeStore(root: root, fileSystem: fault)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         _ = try await installCandidate(
             store: store,
             transactionID: fixture.transactionID,
@@ -1390,7 +1390,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         _ = try await installCandidate(
             store: store,
             transactionID: fixture.transactionID,
@@ -1434,7 +1434,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 let root = try temporaryDirectory()
                 let store = makeStore(root: root, limits: limits)
                 try seedSourceProfile(fixture, locations: store.locations)
-                _ = try store.beginHydration(fixture.journal)
+                _ = try store._testOnlyBeginHydration(fixture.journal)
                 try applyMatrixState(
                     primaryState,
                     to: store.locations.profilePrimaryURL,
@@ -1694,7 +1694,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
 
         let didAbort = try await abortHydrationAfterPredecessorConfirmation(
             store: store,
@@ -1756,7 +1756,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(journal)
+        _ = try store._testOnlyBeginHydration(journal)
 
         let didAbort = try await abortHydrationAfterPredecessorConfirmation(
             store: store,
@@ -1812,7 +1812,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(journal)
+        _ = try store._testOnlyBeginHydration(journal)
         let evidenceURLs = [
             store.locations.profilePrimaryURL,
             store.locations.profileBackupURL,
@@ -1948,7 +1948,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             let root = try temporaryDirectory()
             let store = makeStore(root: root, limits: limits)
             try seedSourceProfile(fixture, locations: store.locations)
-            _ = try store.beginHydration(fixture.journal)
+            _ = try store._testOnlyBeginHydration(fixture.journal)
 
             if let primaryBytes = testCase.primaryBytes {
                 try fileSystem.writeAtomicallyDurably(
@@ -2039,7 +2039,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 let root = try temporaryDirectory()
                 let store = makeStore(root: root, limits: limits)
                 try seedSourceProfile(fixture, locations: store.locations)
-                _ = try store.beginHydration(fixture.journal)
+                _ = try store._testOnlyBeginHydration(fixture.journal)
                 try applyMatrixState(
                     primaryState,
                     to: store.locations.profilePrimaryURL,
@@ -2122,7 +2122,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         let fault = FaultInjectingProfileHydrationFileSystem()
         let store = makeStore(root: root, fileSystem: fault)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         let fileSystem = FoundationProfileHydrationFileSystem()
         try fileSystem.createDirectory(
             at: store.locations.quarantineDirectoryURL
@@ -2243,7 +2243,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 let fault = FaultInjectingProfileHydrationFileSystem()
                 let store = makeStore(root: root, fileSystem: fault)
                 try seedSourceProfile(fixture, locations: store.locations)
-                _ = try store.beginHydration(fixture.journal)
+                _ = try store._testOnlyBeginHydration(fixture.journal)
                 if usesTargetCleanup {
                     _ = try await installCandidate(
                         store: store,
@@ -2408,7 +2408,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 let fault = FaultInjectingProfileHydrationFileSystem()
                 let store = makeStore(root: root, fileSystem: fault)
                 try seedSourceProfile(fixture, locations: store.locations)
-                _ = try store.beginHydration(fixture.journal)
+                _ = try store._testOnlyBeginHydration(fixture.journal)
                 if usesTargetCleanup {
                     _ = try await installCandidate(
                         store: store,
@@ -2479,7 +2479,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             let fault = FaultInjectingProfileHydrationFileSystem()
             let store = makeStore(root: root, fileSystem: fault)
             try seedSourceProfile(fixture, locations: store.locations)
-            _ = try store.beginHydration(fixture.journal)
+            _ = try store._testOnlyBeginHydration(fixture.journal)
             if usesTargetCleanup {
                 _ = try await installCandidate(
                     store: store,
@@ -2557,7 +2557,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             let root = try temporaryDirectory()
             let store = makeStore(root: root)
             try seedSourceProfile(fixture, locations: store.locations)
-            _ = try store.beginHydration(fixture.journal)
+            _ = try store._testOnlyBeginHydration(fixture.journal)
             if usesTargetCleanup {
                 _ = try await installCandidate(
                     store: store,
@@ -2642,7 +2642,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 let root = try temporaryDirectory()
                 let store = makeStore(root: root)
                 try seedSourceProfile(fixture, locations: store.locations)
-                _ = try store.beginHydration(fixture.journal)
+                _ = try store._testOnlyBeginHydration(fixture.journal)
                 if usesTargetCleanup {
                     _ = try await installCandidate(
                         store: store,
@@ -2720,7 +2720,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         defer { remove(root) }
         let store = makeStore(root: root)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         let fileSystem = FoundationProfileHydrationFileSystem()
         try fileSystem.writeAtomicallyDurably(
             Data("corrupt-primary".utf8),
@@ -2732,7 +2732,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
 
         XCTAssertThrowsError(
-            try store.beginHydration(fixture.journal)
+            try store._testOnlyBeginHydration(fixture.journal)
         ) { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
@@ -2796,7 +2796,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         )
         let store = makeStore(root: root, limits: limits)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         let fileSystem = FoundationProfileHydrationFileSystem()
         try fileSystem.createDirectory(at: store.locations.quarantineDirectoryURL)
         try fileSystem.writeAtomicallyDurably(
@@ -2807,7 +2807,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         try fileSystem.writeAtomicallyDurably(corrupt, to: store.locations.journalBackupURL)
 
         XCTAssertThrowsError(
-            try store.beginHydration(fixture.journal)
+            try store._testOnlyBeginHydration(fixture.journal)
         ) { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
@@ -2858,7 +2858,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
             let root = try temporaryDirectory()
             let baseStore = makeStore(root: root)
             try seedSourceProfile(fixture, locations: baseStore.locations)
-            _ = try baseStore.beginHydration(fixture.journal)
+            _ = try baseStore._testOnlyBeginHydration(fixture.journal)
             let evidenceURLs = [
                 baseStore.locations.profilePrimaryURL,
                 baseStore.locations.profileBackupURL,
@@ -2959,7 +2959,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         fault.failNext(.lock)
 
         XCTAssertThrowsError(
-            try store.beginHydration(fixture.journal)
+            try store._testOnlyBeginHydration(fixture.journal)
         ) { error in
             XCTAssertEqual(
                 error as? ProfileHydrationTransactionStoreError,
@@ -2986,7 +2986,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
         let fault = FaultInjectingProfileHydrationFileSystem()
         let store = makeStore(root: root, fileSystem: fault)
         try seedSourceProfile(fixture, locations: store.locations)
-        _ = try store.beginHydration(fixture.journal)
+        _ = try store._testOnlyBeginHydration(fixture.journal)
         fault.failNext(.lock)
 
         await assertThrowsErrorAsync {
@@ -3039,7 +3039,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 )
             )
             try seedSourceProfile(fixture, locations: store.locations)
-            _ = try store.beginHydration(fixture.journal)
+            _ = try store._testOnlyBeginHydration(fixture.journal)
 
             if operation == "cleanup" {
                 _ = try await installCandidate(
@@ -3215,7 +3215,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 generationLease: accountLease,
                 at: checkpointHarness.observedAt
             ) { lease in
-                try store.removeJournalAfterCheckpointConfirmation(
+                try store._testOnlyRemoveJournalAfterCheckpointConfirmation(
                     transactionID: transactionID,
                     expected: expected,
                     checkpointLease: lease
@@ -3237,7 +3237,7 @@ final class ProfileHydrationFileTransactionTests: XCTestCase, @unchecked Sendabl
                 generationLease: accountLease,
                 at: checkpointHarness.observedAt
             ) { lease in
-                try store.abortHydrationAfterPredecessorConfirmation(
+                try store._testOnlyAbortHydrationAfterPredecessorConfirmation(
                     transactionID: transactionID,
                     expected: expected,
                     checkpointLease: lease
