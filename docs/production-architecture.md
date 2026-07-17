@@ -235,13 +235,22 @@ exposed.
 | Buy a coin pack                                  | Not enabled; future delivery also requires current private-iCloud economy authority                                    |
 | Watch and receive a rewarded advertisement       | Not enabled; dormant recovery is implemented, while live delivery requires consent, SDK readiness, authenticated server verification, retained orchestration, and current private-iCloud economy authority |
 | Game Center authentication                       | Not connected; future authentication remains optional and never blocks gameplay                                      |
-| Leaderboard and achievements                     | Only exact player-bound maxima may later submit; unbound maxima remain quarantined and nonsubmittable                  |
+| Leaderboard and achievements                     | Exact player-bound maxima may later submit; release policy also authorizes one durable claim of unbound maxima to the first authenticated player |
 
 An iCloud account change closes the current sync context and opens a separate
-account-scoped profile. Data from two iCloud identities is never merged
-silently. Game Center bound buckets are scoped to the exact authenticated
-player. A separate unbound quarantine preserves work with unknown provenance
-and has no claim or submission API; it is never silently reassigned.
+account-scoped profile. A known profile from one iCloud identity is never
+merged into another identity. A previously unbound installation profile is
+automatically claimed on its first iCloud association, and offline changes
+automatically reconcile whenever that same account returns. Source profiles
+remain preserved until the claimed or merged cloud state is durably verified.
+
+Game Center bound buckets are scoped to the exact authenticated player. The
+current foundation keeps unknown-provenance work in a separate unbound
+quarantine and exposes no claim API yet. Release policy authorizes that future
+live integration to claim the unbound score and achievement maxima exactly once
+to the first successfully authenticated player, durably preventing a later
+player from claiming the same values. Offline work carrying a known player
+identity remains player-bound and queues for later submission.
 
 ## Cloud merge rules
 
@@ -260,6 +269,12 @@ Private CloudKit protects normal synchronization and two-device conflicts. It
 is not a trusted anti-cheat server; version 1 accepts that limitation while
 keeping all scoring and cosmetic purchases free of gameplay advantage.
 
+The release policy requires automatic reconciliation in the common path. A
+first iCloud association combines the canonical unbound installation profile
+with any valid private profile for that account, and later same-account
+reconnections merge offline work without prompting. Account changes never
+combine profiles belonging to different known iCloud identities.
+
 ## Initial cloud profile seed
 
 The canonical V4 cloud-profile seed is an account-neutral, one-way `Encodable`
@@ -268,14 +283,16 @@ the source bytes, digest, envelope, profile invariants, collection and identifie
 bounds, Game Center queues, initial inventory, runs, ledger, pending credits,
 settings, and selection. It deterministically classifies the source as an empty
 economy that may be publishable, pending credits that require projection, or
-history and ownership that require an explicit owner policy.
+history and ownership that must follow the approved first-association and
+same-account reconciliation policy.
 
 The seed is facts only. It does not claim a local profile, publish or write
 CloudKit data, bind an iCloud account, Game Center player, profile session, or
 transport authority, or compose live Cloud behavior. Its digest is integrity
-identity, not mutation authority. The one-time local-to-cloud claim, the policy
-for reconciling existing local and cloud data, outbound record construction,
-publication, and retained account-scoped runtime remain separate gates.
+identity, not mutation authority. Release policy now authorizes the one-time
+local-to-cloud claim and automatic same-account reconciliation described above;
+their implementation, outbound record construction, publication, and retained
+account-scoped runtime remain separate gates.
 
 ## Cloud replica and economy authority
 
@@ -517,8 +534,8 @@ unbound work for an authenticated player.
   profile identifiers, provider transaction identifiers, exact balances, or
   detailed play history.
 - Diagnostics: one process-owned, restartable FIFO input mailbox feeding
-  privacy-safe `OSLog` categories and Apple MetricKit delivery; third-party
-  crash reporting remains an explicit release decision.
+  privacy-safe `OSLog` categories and Apple MetricKit delivery. Version 1 uses
+  Apple-only crash diagnostics and does not add a third-party crash SDK.
 
 Integration state is service-specific. Live GameKit and StoreKit SDK adapters
 exist but are not retained by production composition; the Game Center

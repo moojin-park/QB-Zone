@@ -140,7 +140,7 @@ entitlement payload; that remains a release-candidate gate.
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Eight-team presentation system                  | Complete            | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, HUD palettes, raster recoloring, and preload readiness ship     |
-| Live Apple and advertising services             | In progress         | Listed foundations pass; owner-approved Cloud merge/claim policy, outbound bootstrap, retained service composition, permanent IDs, products, records, authenticated production transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
+| Live Apple and advertising services             | In progress         | Listed foundations pass; approved Cloud merge/claim implementation, outbound bootstrap, retained service composition, permanent IDs, products, records, authenticated production transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
 | TestFlight release candidate                    | Queued              | Device, accessibility, sandbox, sync, replay, crash, and economy gates pass                                                           |
 | App Store submission                            | Queued              | Signed archive, privacy report, metadata, review notes, screenshots, and owner approval complete                                      |
@@ -261,9 +261,9 @@ Release behavior. A wave is not complete merely because its files exist.
    delivery acknowledgement becomes persisted authority. The barrier remains
    through ambiguous delivery and clears only after sealed exact durable
    completion or an authenticated terminal rejection.
-7. **Owner-dependent live Cloud integration:** obtain the explicit owner
-   policy for reconciling existing local and cloud profiles, then add the
-   durable one-time local-to-cloud account claim and outbound initial-profile
+7. **Owner policy approved; live Cloud integration pending:** implement the
+   approved automatic first-association claim, same-account offline
+   reconciliation, account-switch isolation, and outbound initial-profile
    publication.
    Compose them with typed genesis and hydration in the account-scoped runtime
    coordinator, preserving all generation, checkpoint, journal, and final
@@ -272,8 +272,9 @@ Release behavior. A wave is not complete merely because its files exist.
    exact player buckets, unbound quarantine, and capability-bound single-flight
    delivery are implemented. Add the trusted Release factory, retained
    authentication/foreground/presentation composition, App Store Connect
-   records, and a proof-bearing settlement attribution path. No unbound value
-   may be automatically claimed.
+   records, a proof-bearing settlement attribution path, and the approved
+   durable exactly-once claim of unbound maxima to the first authenticated
+   player. A later player may never claim the same values.
 9. **Complete StoreKit foundation; live integration pending:** localized product
    validation, verified updates, unfinished recovery, durable finish gating,
    account-generation retirement, and serialized purchases are implemented.
@@ -288,9 +289,10 @@ Release behavior. A wave is not complete merely because its files exist.
    coins.
 
 The core account-independent Cloud, Game Center, StoreKit, and rewarded-ad
-verification/recovery boundaries are proven. The release critical path is the
-owner-approved local/cloud merge policy followed by durable claim, outbound
-publication, and retained account-scoped composition. Game Center, StoreKit,
+verification/recovery boundaries are proven. The owner has approved the
+local/cloud reconciliation and Game Center attribution policies. The release
+critical path is now their durable implementation, followed by outbound cloud
+publication and retained account-scoped composition. Game Center, StoreKit,
 and rewarded-ad foundations remain dormant until their listed live integration
 and external-service gates are complete.
 
@@ -299,16 +301,18 @@ and external-service gates are complete.
 These decisions and external dependencies gate the live integration path; the
 account-independent service foundations above are complete:
 
-1. **Locked safety rule:** no local/cloud profile or unbound Game Center value
-   is automatically claimed. The V4 cloud seed remains account-neutral, and
-   unbound Game Center work remains quarantined unless a later explicit policy
-   authorizes otherwise.
-2. **Owner-open iCloud policy:** choose how an existing local profile and an
-   existing private-iCloud profile are reconciled before any claim or outbound
-   publication can be composed.
-3. **Owner-open Game Center policy:** choose whether and how legacy or newly
-   generated unbound score and achievement maxima may ever be attributed to a
-   player. Without that decision, they remain permanently nonsubmittable.
+1. **Locked account-isolation rule:** known profiles from different iCloud
+   identities are never merged. Account changes preserve separate profiles and
+   never transfer coins, purchases, ownership, or progress between identities.
+2. **Owner-approved iCloud policy:** automatically claim and reconcile the
+   canonical unbound installation profile on its first iCloud association, and
+   automatically merge locally saved offline work whenever the same account
+   reconnects. Preserve the source until the cloud result is durably verified.
+3. **Owner-approved Game Center policy:** durably claim legacy or otherwise
+   unbound score and achievement maxima exactly once to the first successfully
+   authenticated Game Center player. Never offer those values to a later
+   player. Queue offline results directly to a known player identity when one
+   is available to the run.
 4. Permanent bundle identifier, iCloud container, privacy URL, and support URL.
    Domain and email setup are tracked in the separate user-owned Codex task.
 5. Verified rewarded-ad infrastructure. The dormant correlation client,
@@ -317,9 +321,10 @@ account-independent service foundations above are complete:
    server-side-verification endpoint, provider-transaction deduplication, the ad
    SDK, consent orchestration, and retained runtime integration remain. AdMob
    client callbacks alone never grant coins.
-6. Crash KPI instrumentation. Apple diagnostics support crash and session
-   review, but an exact crash-free-session percentage requires a provider such
-   as Crashlytics; otherwise the gate must be renamed to an Apple-only proxy.
+6. **Owner-approved Apple-only diagnostics:** use OSLog, Apple crash reports,
+   and MetricKit without a third-party crash SDK. The release gate is zero known
+   reproducible gameplay crashes, no recurring multi-tester crash signature,
+   and completed Apple diagnostics review rather than an exact percentage.
 7. Final audience-policy declarations for AdMob and App Store privacy. The
    product remains general audience and outside Apple's Kids Category; the
    shipping SDK configuration and disclosures still require final review.
@@ -343,9 +348,9 @@ workflow reaches that gate.
 | Known P0/P1 defects                  |      0 | 0 open in the exact audited StoreKit, Game Center, rewarded-ad verification/recovery, and canonical V4 seed scopes; full release audit remains |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
-| Crash-free sessions                  | 99.5%+ | Instrumentation decision open                   |
+| Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
-| Exactly-once economic mutations      |   100% | Local/cloud-history, typed publication/genesis, hydration, StoreKit delivery, server-verified rewarded-ad delivery/recovery, and account-neutral seed foundations pass; owner policy and live composition remain |
+| Exactly-once economic mutations      |   100% | Local/cloud-history, typed publication/genesis, hydration, StoreKit delivery, server-verified rewarded-ad delivery/recovery, and account-neutral seed foundations pass; approved policy implementation and live composition remain |
 | Clean-checkout archive               |   Pass | Latest documented unsigned Release archive remains `1a8036e`; later generic-iOS Debug/Release builds pass but are not archive evidence; final signed entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 

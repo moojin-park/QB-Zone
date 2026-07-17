@@ -189,7 +189,9 @@ Before App Store submission:
   and iPads.
 - Zero known P0 or P1 defects.
 - At least 200 TestFlight sessions and 100 completed runs.
-- At least 99.5% crash-free sessions during the release-candidate test window.
+- Zero known reproducible gameplay crashes, no recurring crash signature across
+  multiple testers, and completed review of Apple crash reports and MetricKit
+  diagnostics during the release-candidate test window.
 - At least 30% results-to-replay rate among eligible completed runs.
 - Game Center authentication failure never blocks offline play.
 - Scores and achievements queue safely while offline and submit once.
@@ -263,3 +265,16 @@ Required order:
 - **2026-07-15:** Locked private CloudKit synchronization, saved settings, one
   all-time leaderboard, eight achievements, and rewarded ads only after every
   five valid completed runs.
+- **2026-07-17:** Locked automatic local/private-iCloud reconciliation for the
+  first iCloud association and for subsequent synchronization with the same
+  account. Offline progress merges automatically after reconnect. A known
+  profile from one iCloud identity is never transferred to another identity;
+  account-scoped profiles are preserved separately during account changes.
+- **2026-07-17:** Locked a durable, exactly-once claim of legacy or otherwise
+  unbound Game Center score and achievement maxima to the first successfully
+  authenticated Game Center player. The same unbound values may never be
+  claimed by a later player. Future offline work is queued to the already-known
+  authenticated player whenever that identity is available to the run.
+- **2026-07-17:** Locked Apple-only production diagnostics using OSLog, Apple
+  crash reports, and MetricKit. The numerical 99.5% crash-free-session target
+  is replaced by the release-candidate crash-review gate above.
