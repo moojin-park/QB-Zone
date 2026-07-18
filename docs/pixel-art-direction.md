@@ -66,6 +66,12 @@ icon row directly below it. Privacy and Support live inside Settings. The
 scoreboard and utility row remain subordinate to Play rather than reading as a
 third destination card.
 
+The live center stack is responsive rather than uniformly scaled. The phone
+scoreboard clears the Play bezel and uses a bottom-aligned compact utility row
+inside 44-point targets. The 4:3 iPad layout gives Personal Best more visual
+weight and uses larger utility artwork inside 52-point targets so the controls
+remain readable and easy to acquire on the larger screen.
+
 The menu has one fixed High Mesa Helions art direction regardless of the
 selected gameplay offense. The fully rendered phone and iPad plates author the
 ember `#F06A3B`, deep indigo `#2B234D`, and glacier `#D8F0EC` palette directly;
@@ -89,6 +95,8 @@ required for iPad; do not letterbox the phone plate over a blurred enlargement.
   upright while omitting the two empty center poles above the title marquee.
 - Keep every interactive control inside landscape safe areas on compact iPhone,
   regular iPhone, and iPad.
+- Utility icon art may scale by form factor, but tap targets never drop below
+  44 x 44 points and Achievements, Store, Settings retain that reading order.
 - Decorative stadium and player layers remain hidden from accessibility; every
   control has a concise label and the Play control includes an action hint.
 - Prefer nearest-neighbor scaling for character sprites and high-contrast text

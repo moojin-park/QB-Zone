@@ -145,11 +145,14 @@ dynamic banner composition, or selected-team asset selection. Gameplay team
 selection remains available and persisted, but it does not change the menu's
 visual appearance.
 
-The live Personal Best plate is approximately 18 percent larger than its prior
-menu placement. Achievements, Store, and Settings use separate 44-point hit
-targets with 28-point rendered icons in a centered row immediately below it.
-The coin and live balance are anchored independently to the top-leading safe
-area in a compact black panel with an ember keyline.
+The live Personal Best plate uses form-factor-specific geometry to remain clear
+of the Play bezel: 260 x 150 phone-source pixels and 240 x 139 iPad-source
+pixels. Achievements, Store, and Settings remain in a centered row immediately
+below it. Phone utilities render 24-point art bottom-aligned inside separate
+44-point targets; iPad utilities render 36-point art inside separate 52-point
+targets. The source rasters retain resolution headroom at both sizes. The coin
+and live balance remain anchored independently to the top-leading safe area in
+a compact black panel with an ember keyline.
 
 ## Main-menu interface assets
 

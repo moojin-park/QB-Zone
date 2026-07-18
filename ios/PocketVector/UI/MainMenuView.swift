@@ -69,7 +69,7 @@ struct MainMenuView: View {
             )
             .frame(frame: mapped(metrics.personalBest, metrics: metrics, into: artRect))
 
-            utilityRow
+            utilityRow(metrics: metrics)
                 .position(mapped(metrics.utilityRowCenter, metrics: metrics, into: artRect))
 
             hotspot(
@@ -121,11 +121,14 @@ struct MainMenuView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private var utilityRow: some View {
-        HStack(spacing: 4) {
+    private func utilityRow(metrics: MenuSceneMetrics) -> some View {
+        HStack(spacing: metrics.utilitySpacing) {
             MenuUtilityIcon(
                 imageName: "MenuAchievementIcon",
                 label: "Achievements",
+                artworkSize: metrics.utilityIconSize,
+                targetSize: metrics.utilityTargetSize,
+                artworkOffsetY: metrics.utilityIconOffsetY,
                 reducedMotion: coordinator.state.settings.reducedMotion,
                 action: coordinator.showAchievements
             )
@@ -133,6 +136,9 @@ struct MainMenuView: View {
             MenuUtilityIcon(
                 imageName: "MenuStoreIcon",
                 label: "Store",
+                artworkSize: metrics.utilityIconSize,
+                targetSize: metrics.utilityTargetSize,
+                artworkOffsetY: metrics.utilityIconOffsetY,
                 reducedMotion: coordinator.state.settings.reducedMotion,
                 action: coordinator.showCoinStore
             )
@@ -140,6 +146,9 @@ struct MainMenuView: View {
             MenuUtilityIcon(
                 imageName: "MenuSettingsIcon",
                 label: "Settings",
+                artworkSize: metrics.utilityIconSize,
+                targetSize: metrics.utilityTargetSize,
+                artworkOffsetY: metrics.utilityIconOffsetY,
                 reducedMotion: coordinator.state.settings.reducedMotion,
                 action: coordinator.showSettings
             )
@@ -218,6 +227,10 @@ private struct MenuSceneMetrics {
     let referenceSize: CGSize
     let personalBest: CGRect
     let utilityRowCenter: CGPoint
+    let utilityIconSize: CGFloat
+    let utilityTargetSize: CGFloat
+    let utilitySpacing: CGFloat
+    let utilityIconOffsetY: CGFloat
     let playHotspot: CGRect
     let lockerHotspot: CGRect
     let leaderboardHotspot: CGRect
@@ -229,8 +242,12 @@ private struct MenuSceneMetrics {
     static let phone = Self(
         assetName: "MenuHighMesaScenePhone",
         referenceSize: CGSize(width: 1_847, height: 851),
-        personalBest: CGRect(x: 811.5, y: 592, width: 224, height: 130),
-        utilityRowCenter: CGPoint(x: 923.5, y: 756),
+        personalBest: CGRect(x: 793.5, y: 618, width: 260, height: 150),
+        utilityRowCenter: CGPoint(x: 923.5, y: 758),
+        utilityIconSize: 24,
+        utilityTargetSize: 44,
+        utilitySpacing: 4,
+        utilityIconOffsetY: 10,
         playHotspot: CGRect(x: 518, y: 366, width: 806, height: 262),
         lockerHotspot: CGRect(x: 281, y: 669, width: 389, height: 139),
         leaderboardHotspot: CGRect(x: 1_148, y: 669, width: 416, height: 140)
@@ -239,8 +256,12 @@ private struct MenuSceneMetrics {
     static let pad = Self(
         assetName: "MenuHighMesaScenePad",
         referenceSize: CGSize(width: 1_448, height: 1_086),
-        personalBest: CGRect(x: 633, y: 710, width: 182, height: 105),
-        utilityRowCenter: CGPoint(x: 724, y: 852),
+        personalBest: CGRect(x: 604, y: 721, width: 240, height: 139),
+        utilityRowCenter: CGPoint(x: 724, y: 888),
+        utilityIconSize: 36,
+        utilityTargetSize: 52,
+        utilitySpacing: 6,
+        utilityIconOffsetY: 0,
         playHotspot: CGRect(x: 406, y: 496, width: 634, height: 202),
         lockerHotspot: CGRect(x: 216, y: 736, width: 312, height: 108),
         leaderboardHotspot: CGRect(x: 902, y: 736, width: 326, height: 108)
@@ -344,6 +365,9 @@ private struct MenuUtilityIcon: View {
 
     let imageName: String
     let label: String
+    let artworkSize: CGFloat
+    let targetSize: CGFloat
+    let artworkOffsetY: CGFloat
     let reducedMotion: Bool
     let action: () -> Void
 
@@ -354,11 +378,12 @@ private struct MenuUtilityIcon: View {
                 .interpolation(.none)
                 .antialiased(false)
                 .scaledToFit()
-                .frame(width: 28, height: 28)
+                .frame(width: artworkSize, height: artworkSize)
+                .offset(y: artworkOffsetY)
                 .contentShape(Rectangle())
         }
         .buttonStyle(UtilityTileButtonStyle(reduceMotion: reduceMotion || reducedMotion))
-        .frame(width: 44, height: 44)
+        .frame(width: targetSize, height: targetSize)
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
