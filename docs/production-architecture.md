@@ -99,6 +99,9 @@ launching
   -> results(runPresentation)
 ```
 
+`privacySupport` remains a coordinator destination, reached through Settings.
+The main menu does not require a separate direct Privacy and Support control.
+
 Starting a run validates the current owned offense team, its remembered owned
 jersey, and the selected owned football. The matchup generator selects a
 defense from the other seven teams using the run seed, then chooses the

@@ -51,7 +51,9 @@ The production menu must expose:
 - Leaderboard
 - Achievements
 - Settings
-- Privacy and Support
+
+Privacy and Support must remain reachable from Settings. Version one does not
+require a separate Privacy and Support control on the main menu.
 
 The results screen must expose:
 
@@ -278,3 +280,6 @@ Required order:
 - **2026-07-17:** Locked Apple-only production diagnostics using OSLog, Apple
   crash reports, and MetricKit. The numerical 99.5% crash-free-session target
   is replaced by the release-candidate crash-review gate above.
+- **2026-07-17:** Approved Settings as the main-menu entry point for Privacy and
+  Support. The destination remains required, but a separate Privacy and Support
+  control on the main menu is not required.

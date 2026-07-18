@@ -325,25 +325,29 @@ account-independent service foundations above are complete:
    authenticated Game Center player. Never offer those values to a later
    player. Queue offline results directly to a known player identity when one
    is available to the run.
-4. Permanent bundle identifier, iCloud container, privacy URL, and support URL.
+4. **Owner-approved Privacy and Support route:** Settings is the main-menu entry
+   point for Privacy and Support. The destination remains required and must
+   preserve its fail-closed configuration, but it does not require a separate
+   main-menu control.
+5. Permanent bundle identifier, iCloud container, privacy URL, and support URL.
    Domain and email setup are tracked in the separate user-owned Codex task.
-5. Verified rewarded-ad infrastructure. The dormant correlation client,
+6. Verified rewarded-ad infrastructure. The dormant correlation client,
    process-only verified claim, and challenge-only recovery journal are
    complete, but an authenticated production transport and replay-stable
    server-side-verification endpoint, provider-transaction deduplication, the ad
    SDK, consent orchestration, and retained runtime integration remain. AdMob
    client callbacks alone never grant coins.
-6. **Owner-approved Apple-only diagnostics:** use OSLog, Apple crash reports,
+7. **Owner-approved Apple-only diagnostics:** use OSLog, Apple crash reports,
    and MetricKit without a third-party crash SDK. The release gate is zero known
    reproducible gameplay crashes, no recurring multi-tester crash signature,
    and completed Apple diagnostics review rather than an exact percentage.
-7. Final audience-policy declarations for AdMob and App Store privacy. The
+8. Final audience-policy declarations for AdMob and App Store privacy. The
    product remains general audience and outside Apple's Kids Category; the
    shipping SDK configuration and disclosures still require final review.
-8. Apple Developer enrollment, Paid Apps agreement, tax and banking, live
+9. Apple Developer enrollment, Paid Apps agreement, tax and banking, live
    consumable products, Game Center records, AdMob app/ad unit, UMP message,
    `app-ads.txt`, and production CloudKit schema deployment.
-9. Final codesigned-entitlement verification. After the permanent iCloud
+10. Final codesigned-entitlement verification. After the permanent iCloud
    container and signing profile exist, inspect the exported release candidate
    and confirm `com.apple.developer.icloud-container-environment` is
    `Production` and the expected iCloud container identifiers and services are
