@@ -4,9 +4,10 @@ Status: implementation contract for version 1
 
 Last updated: 2026-07-18
 
-Implementation baseline: `2efed0a`, the online-only commerce integration,
-including the canonical V4 cloud-profile seed and the StoreKit, player-scoped
-Game Center, and rewarded-ad foundations.
+Implementation baseline: `e9af0bc`, the explicit gameplay-presentation bridge
+integration, including the online-only commerce composition, canonical V4
+cloud-profile seed, and StoreKit, player-scoped Game Center, and rewarded-ad
+foundations.
 
 This document translates the approved release charter into ownership and data
 boundaries. It is deliberately narrower than a feature specification: it says
@@ -30,6 +31,8 @@ ProductionAppRuntime (one retained process graph)
                  -> OnlineCommerceCoordinator
        -> GameplaySessionController
             -> one GameScene for one RunConfiguration
+            <- GameplaySceneSnapshot relay after presentation mount
+            -> explicit Resume and confirmed Exit Run requests
             <- one CompletedRun callback
   -> owned AppleDiagnosticsRuntime task
        -> privacy-safe OSLog and MetricKit adapters

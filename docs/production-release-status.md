@@ -56,6 +56,20 @@ an unsigned generic-iOS Release archive passed. The archived app contains the
 compiled 120-pixel iPhone and 152-pixel iPad icons, the privacy manifest, and
 the exact GameAssets package without source-art or documentation content.
 
+Technical gameplay handoff `955a63e` is integrated patch-equivalently at
+`d5131cf` (`Expose explicit paused gameplay controls`). The PM bridge at
+`e9af0bc` (`Bridge explicit gameplay presentation actions`) retains one
+`GameScene`, seeds presentation from its current `GameplaySceneSnapshot`,
+relays mounted snapshot changes, and routes duplicate-safe Resume and confirmed
+Exit Run requests through explicit scene actions. Confirmed Exit still emits a
+single `CompletedRun`; `AppCoordinator` remains the only settlement and
+navigation authority, including failure and retry. The focused 25-test gate,
+exact 816-test simulator suite, unsigned generic-iOS Release archive, and two
+independent audits passed with no open P0-P2 finding. The Art-owned paused panel
+is not integrated, so release acceptance is explicitly withheld until its
+compact-iPhone, regular-iPhone, and iPad landscape presentation is integrated
+and visually verified by PM.
+
 The dormant StoreKit runtime foundation is versioned at `ce69388` (`Add dormant
 StoreKit runtime coordination`), player-scoped Game Center persistence and
 delivery at `9d749bc` (`Add player-scoped Game Center delivery`), the dormant
@@ -173,6 +187,7 @@ final codesigned entitlement payload; that remains a release-candidate gate.
 | Production app shell and menus                  | Complete            | Art-approved High Mesa main menu, teams, locker, store, leaderboard, achievements, settings-routed privacy/support, tutorial, gameplay, and results ship |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
+| Paused gameplay presentation                    | In progress         | Technical snapshot/actions and PM bridge pass; Art paused panel integration and compact-iPhone, regular-iPhone, and iPad landscape visual QA remain |
 | Eight-team presentation system                  | Complete            | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, HUD palettes, raster recoloring, and preload readiness ship     |
 | Live Apple and advertising services             | In progress         | Cloud claim/hydration and online-only StoreKit composition are implemented and fail closed without complete configuration; permanent IDs, products, records, production schema, Game Center retention, authenticated ad transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
@@ -272,6 +287,9 @@ or runtime ownership boundaries.
 | 2026-07-18 | `bd2b51c` | Exact integrated full simulator suite | 806 total: 805 passed, 0 failed, 1 conditional case-alias skip on a case-sensitive filesystem; clean-boot rerun result bundle `/tmp/PocketVector-Art-abd34bd.9Du355/Logs/Test/Test-PocketVector-2026.07.18_13-21-53--0700.xcresult` |
 | 2026-07-18 | `bd2b51c` | Compact iPhone, regular iPhone, and iPad launcher QA | App icon remained readable and unclipped at actual launcher sizes in `/tmp/PocketVector-AppIcon-abd34bd-compact.png`, `/tmp/PocketVector-AppIcon-abd34bd-regular.png`, and `/tmp/PocketVector-AppIcon-abd34bd-ipad.png` |
 | 2026-07-18 | `bd2b51c` | Unsigned generic-iOS Release archive | Passed at `/tmp/PocketVector-Art-abd34bd-Release.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit condition, compiled iPhone/iPad icons, privacy manifest, and exact 59-file GameAssets package present; no source-art or documentation bundled |
+| 2026-07-18 | `e9af0bc` | Gameplay snapshot/action bridge focused gate | Technical submission `955a63e` integrated patch-equivalently at `d5131cf`; 25 bridge, coordinator, and gameplay tests passed with no failure or skip; independent reviews found no P0-P2 finding and the only P3 test-harness note was fixed before commit |
+| 2026-07-18 | `e9af0bc` | Exact integrated full simulator suite | 816 total: 815 passed, 0 failed, 1 existing conditional case-alias skip on iPhone 17 Pro; result bundle `/tmp/PocketVector-GameplayBridge-e9af0bc-full.xcresult` |
+| 2026-07-18 | `e9af0bc` | Unsigned generic-iOS Release archive | Passed at `/tmp/PocketVector-PausedBridge-e9af0bc.6CD0Tg/PocketVector.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit compile condition/build setting, privacy manifest, and exact 58-asset GameAssets package verified; final codesigned entitlement proof remains pending |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -396,13 +414,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the exact audited online-commerce and Championship app-icon integrations; full release audit remains |
+| Known P0/P1 defects                  |      0 | 0 open in the exact audited online-commerce, Championship app-icon, and gameplay-bridge integrations; paused-panel Art QA and full release audit remain |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud history, initial publication, hydration, online-only catalog debit/ownership, and StoreKit durable delivery pass internal tests; external sandbox/device gates remain |
-| Clean-checkout archive               |   Pass | Unsigned archive for exact integrated commit `bd2b51c` passed; final codesigned entitlement/export proof remains |
+| Clean-checkout archive               |   Pass | Unsigned archive for exact integrated implementation commit `e9af0bc` passed; final codesigned entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
