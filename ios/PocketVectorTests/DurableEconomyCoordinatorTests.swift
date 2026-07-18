@@ -3999,11 +3999,14 @@ private actor DurableEconomyTestStoreKitClient: StoreKit2PlatformClient {
         identifiers.sorted().compactMap { productsByID[$0] }
     }
 
-    func purchase(
+    func purchaseAuthorized(
         productIdentifier: String,
-        appAccountToken: UUID
-    ) -> StoreKit2PlatformPurchaseResult {
-        .userCancelled
+        appAccountToken: UUID,
+        finalAuthorization: @escaping @Sendable () async throws -> Void
+    ) async throws -> StoreKit2PlatformPurchaseResult {
+        try await finalAuthorization()
+        try Task.checkCancellation()
+        return .userCancelled
     }
 
     func unfinishedTransactions() -> [StoreKit2PlatformVerification] {

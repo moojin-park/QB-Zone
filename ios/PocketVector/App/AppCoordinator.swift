@@ -652,6 +652,31 @@ final class AppCoordinator {
                 return false
             }
             return true
+        case let .appliedWithNotice(authoritativeSnapshot, message):
+            let applyResult = applyAuthoritativeUpdate(authoritativeSnapshot)
+            guard applyResult.acceptsRepositorySuccess else {
+                state = self.authoritativeSnapshot?.state ?? previous
+                noticeMessage = "The saved profile response failed an integrity check. No unverified changes were applied."
+                return false
+            }
+            noticeMessage = message
+            return false
+        case let .adoptedVerifiedPrivateCloud(
+            authoritativeSnapshot,
+            authority,
+            message
+        ):
+            let applyResult = applyVerifiedSessionAdoption(
+                authoritativeSnapshot,
+                authority: authority
+            )
+            guard applyResult.acceptsRepositorySuccess else {
+                state = self.authoritativeSnapshot?.state ?? previous
+                noticeMessage = "The saved profile response failed an integrity check. No unverified changes were applied."
+                return false
+            }
+            noticeMessage = message
+            return message == nil
         case .completed:
             state = authoritativeSnapshot?.state ?? previous
             noticeMessage = "The profile service did not return an updated player state."
@@ -679,11 +704,46 @@ final class AppCoordinator {
             if !applyResult.acceptsRepositorySuccess {
                 noticeMessage = "The profile service returned an invalid account state."
             }
+        case let .appliedWithNotice(authoritativeSnapshot, message):
+            let applyResult = applyAuthoritativeUpdate(authoritativeSnapshot)
+            if applyResult.acceptsRepositorySuccess {
+                noticeMessage = message
+            } else {
+                noticeMessage = "The profile service returned an invalid account state."
+            }
+        case let .adoptedVerifiedPrivateCloud(
+            authoritativeSnapshot,
+            authority,
+            message
+        ):
+            let applyResult = applyVerifiedSessionAdoption(
+                authoritativeSnapshot,
+                authority: authority
+            )
+            if applyResult.acceptsRepositorySuccess {
+                noticeMessage = message
+            } else {
+                noticeMessage = "The profile service returned an invalid account state."
+            }
         case .completed:
             break
         case let .failed(message):
             noticeMessage = message
         }
+    }
+
+    private func applyVerifiedSessionAdoption(
+        _ authoritativeSnapshot: AuthoritativeAppStateSnapshot,
+        authority: ProductionVerifiedSessionAdoption
+    ) -> AuthoritativeStateApplyResult {
+        var applyResult = applyAuthoritativeUpdate(authoritativeSnapshot)
+        if applyResult == .rejected(.sessionMismatch),
+           authority.authorizes(authoritativeSnapshot) {
+            self.authoritativeSnapshot = authoritativeSnapshot
+            state = authoritativeSnapshot.state
+            applyResult = .applied
+        }
+        return applyResult
     }
 
     private func showVerifiedRunResults(_ results: RunResultsPresentation) {

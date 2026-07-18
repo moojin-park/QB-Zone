@@ -1,6 +1,232 @@
 import CryptoKit
 import Foundation
 
+enum ProductionProfileRepositoryRouteAuthority: Equatable, Sendable {
+    case local(
+        accountIdentity: PlayerAccountIdentity,
+        sessionNonce: UUID
+    )
+    case verifiedPrivateCloud(ProductionVerifiedAccountClaim)
+}
+
+struct ProductionProfileRepositoryRoute: Sendable {
+    let repository: LocalPlayerProfileRepository
+    let authority: ProductionProfileRepositoryRouteAuthority
+
+    func authorizes(_ snapshot: LocalPlayerProfileSnapshot) -> Bool {
+        switch authority {
+        case let .local(accountIdentity, sessionNonce):
+            snapshot.session.accountIdentity == accountIdentity
+                && snapshot.session.nonce == sessionNonce
+        case let .verifiedPrivateCloud(claim):
+            repository === claim.installedRepository
+                && snapshot.session == claim.snapshot.session
+                && snapshot.player.profileID == claim.snapshot.player.profileID
+                && snapshot.player.revision >= claim.snapshot.player.revision
+                && snapshot.economyRevision >= claim.snapshot.economyRevision
+        }
+    }
+}
+
+/// A bounded proof that one App result was projected from the exact repository
+/// installed by a durable private-cloud claim. Its initializer is sealed; an
+/// arbitrary external-response closure cannot mint session-replacement power.
+struct ProductionVerifiedSessionAdoption: Equatable, Sendable {
+    private let claim: ProductionVerifiedAccountClaim
+
+    private init(claim: ProductionVerifiedAccountClaim) {
+        self.claim = claim
+    }
+
+    fileprivate static func mint(
+        route: ProductionProfileRepositoryRoute,
+        snapshot: LocalPlayerProfileSnapshot
+    ) -> ProductionVerifiedSessionAdoption? {
+        guard case let .verifiedPrivateCloud(claim) = route.authority,
+              route.authorizes(snapshot) else {
+            return nil
+        }
+        return ProductionVerifiedSessionAdoption(claim: claim)
+    }
+
+    func authorizes(_ snapshot: AuthoritativeAppStateSnapshot) -> Bool {
+        snapshot.session == claim.snapshot.session
+            && snapshot.playerRevision >= claim.snapshot.player.revision
+            && snapshot.economyRevision >= claim.snapshot.economyRevision
+    }
+}
+
+private struct ProductionRepositoryRefresh {
+    let snapshot: AuthoritativeAppStateSnapshot
+    let sessionAdoption: ProductionVerifiedSessionAdoption?
+}
+
+protocol ProductionProfileRepositoryRouting: Sendable {
+    func currentRoute() async throws -> ProductionProfileRepositoryRoute
+}
+
+protocol ProductionLaunchRepositoryRouteResolving: Sendable {
+    func resolveLaunchRoute() async throws -> ProductionProfileRepositoryRoute?
+}
+
+final class ProductionLaunchCloudAccountDiscovery: @unchecked Sendable {
+    private let lock = NSLock()
+    private var discovery: (any ProductionCloudAccountDiscovering)?
+
+    func install(_ discovery: any ProductionCloudAccountDiscovering) {
+        lock.withLock { self.discovery = discovery }
+    }
+
+    func accountState() async -> CloudAccountState {
+        let current = lock.withLock { discovery }
+        return await current?.accountState() ?? .unknown
+    }
+}
+
+/// Reopens a committed local-to-private-cloud association before bootstrap can
+/// touch the preserved local source. A present but invalid marker fails closed;
+/// it is never rewritten as permission to fall back to the local repository.
+struct ProductionCommittedAssociationRouteResolver:
+    ProductionLaunchRepositoryRouteResolving
+{
+    let associationStore: ProfileInitialAssociationStoreV1
+    let sourceRepository: LocalPlayerProfileRepository
+    let sourceDirectoryURL: URL
+    let deviceID: String
+    let sessionNonce: UUID
+    let catalog: LaunchCatalog
+    let accountDiscovery: ProductionLaunchCloudAccountDiscovery
+    let now: @Sendable () -> Date
+
+    static func validateProviderAccount(
+        _ state: CloudAccountState,
+        committedAccountID: CloudAccountID
+    ) throws {
+        if case let .available(accountID) = state,
+           accountID != committedAccountID {
+            throw ProductionAppCompositionError.authoritativeSessionMismatch
+        }
+    }
+
+    func resolveLaunchRoute() async throws -> ProductionProfileRepositoryRoute? {
+        guard let association = try await associationStore.committedAssociation(
+            sourceDirectoryURL: sourceDirectoryURL
+        ) else {
+            return nil
+        }
+        try Self.validateProviderAccount(
+            await accountDiscovery.accountState(),
+            committedAccountID: association.cloudAccountID
+        )
+        // Unknown/signed-out/restricted keeps the committed target as the only
+        // durable offline route. Commerce separately remains fail-closed.
+
+        let targetRepository = LocalPlayerProfileRepository(
+            directoryURL: association.targetDirectoryURL,
+            deviceID: deviceID,
+            accountIdentity: association.targetPlayerAccountIdentity,
+            sessionNonce: sessionNonce,
+            catalog: catalog,
+            economyMutationPolicy: .requireDurablePrivateCloud
+        )
+        let result = try await associationStore.reopenCommittedAssociation(
+            association,
+            expectedAccountID: association.cloudAccountID,
+            sourceRepository: sourceRepository,
+            targetRepository: targetRepository,
+            at: now()
+        )
+        let bindings = CloudAccountDerivedBindings.derive(
+            from: association.cloudAccountID
+        )
+        let claim = try await ProductionVerifiedAccountClaim(
+            cloudAccountID: association.cloudAccountID,
+            derivedBindings: bindings,
+            installedRepository: targetRepository
+        )
+        guard result.cloudAccountID == claim.cloudAccountID,
+              result.targetSnapshot == claim.snapshot else {
+            throw ProductionAppCompositionError.authoritativeSessionMismatch
+        }
+        return ProductionProfileRepositoryRoute(
+            repository: targetRepository,
+            authority: .verifiedPrivateCloud(claim)
+        )
+    }
+}
+
+/// App-owned indirection for the repository that owns the active account
+/// session. A launch association lookup can install a verified route before
+/// bootstrap, while first claim can atomically replace the local source route.
+actor ProductionProfileRepositoryRouter: ProductionProfileRepositoryRouting {
+    private var route: ProductionProfileRepositoryRoute
+    private let launchResolver:
+        (any ProductionLaunchRepositoryRouteResolving)?
+    private var launchRouteWasResolved: Bool
+    private var launchResolutionTask:
+        Task<ProductionProfileRepositoryRoute?, Error>?
+
+    init(
+        route: ProductionProfileRepositoryRoute,
+        launchResolver:
+            (any ProductionLaunchRepositoryRouteResolving)? = nil
+    ) {
+        self.route = route
+        self.launchResolver = launchResolver
+        launchRouteWasResolved = launchResolver == nil
+        launchResolutionTask = nil
+    }
+
+    func currentRoute() async throws -> ProductionProfileRepositoryRoute {
+        guard !launchRouteWasResolved else { return route }
+        if launchResolutionTask == nil, let launchResolver {
+            launchResolutionTask = Task {
+                try await launchResolver.resolveLaunchRoute()
+            }
+        }
+        let resolutionTask = launchResolutionTask
+        do {
+            let resolved = try await resolutionTask?.value
+            guard !launchRouteWasResolved else { return route }
+            if let resolved {
+                route = resolved
+            }
+            launchRouteWasResolved = true
+            launchResolutionTask = nil
+        } catch {
+            if !launchRouteWasResolved {
+                launchResolutionTask = nil
+            }
+            throw error
+        }
+        return route
+    }
+
+    /// The claim service calls this only after durable association/adoption and
+    /// exact target-repository reload. The old route becomes unreachable before
+    /// the method returns.
+    func adoptVerifiedPrivateCloud(
+        repository: LocalPlayerProfileRepository,
+        claim: ProductionVerifiedAccountClaim
+    ) async throws {
+        guard repository === claim.installedRepository else {
+            throw ProductionAppCompositionError.authoritativeSessionMismatch
+        }
+        let candidate = ProductionProfileRepositoryRoute(
+            repository: repository,
+            authority: .verifiedPrivateCloud(claim)
+        )
+        let snapshot = try await repository.snapshot()
+        guard candidate.authorizes(snapshot) else {
+            throw ProductionAppCompositionError.authoritativeSessionMismatch
+        }
+        route = candidate
+        launchRouteWasResolved = true
+        launchResolutionTask?.cancel()
+        launchResolutionTask = nil
+    }
+}
+
 /// Dependencies whose values must remain stable for the lifetime of one app
 /// process. Tests inject every value; the release factory obtains only
 /// app-scoped, local values and never logs or displays them.
@@ -147,18 +373,20 @@ final class ProductionAppComposition {
             "The completed run could not be verified and saved. Retry before leaving the run."
         static let gameCenterUnavailable =
             "Game Center is not connected in this build."
-        static let unlockUnavailable =
-            "Unlocks require verified private-cloud coins and are not enabled yet. No coins were spent."
-        static let purchasesUnavailable =
-            "Purchases are not enabled in this build."
+        static let onlinePurchaseWarning =
+            ProductionAccountRuntimeRouter.onlinePurchaseWarning
+        static let purchaseFailed =
+            "The purchase could not be completed. No changes were made."
         static let adsUnavailable =
             "Rewarded ads are not enabled in this build."
     }
 
     private let dependencies: ProductionAppDependencies
-    private let repository: LocalPlayerProfileRepository
+    private let repositoryRouter: any ProductionProfileRepositoryRouting
     private let authoritativeStateChannel: ProductionAuthoritativeStateChannel
     private let diagnosticsSink: AppleDiagnosticsSink?
+    private let commerceRequestService:
+        (any ProductionCommerceRequestServicing)?
     private var currentSnapshot: LocalPlayerProfileSnapshot?
     private var syncStatus: ProfileSyncStatus
     private var syncRevision: UInt64
@@ -166,14 +394,19 @@ final class ProductionAppComposition {
     init(
         dependencies: ProductionAppDependencies,
         authoritativeStateChannel: ProductionAuthoritativeStateChannel = .init(),
-        diagnosticsSink: AppleDiagnosticsSink? = nil
+        diagnosticsSink: AppleDiagnosticsSink? = nil,
+        repository: LocalPlayerProfileRepository? = nil,
+        repositoryRouter: (any ProductionProfileRepositoryRouting)? = nil,
+        commerceRequestService:
+            (any ProductionCommerceRequestServicing)? = nil
     ) {
         self.dependencies = dependencies
         self.authoritativeStateChannel = authoritativeStateChannel
         self.diagnosticsSink = diagnosticsSink
+        self.commerceRequestService = commerceRequestService
         syncStatus = .localOnly
         syncRevision = 0
-        repository = LocalPlayerProfileRepository(
+        let initialRepository = repository ?? LocalPlayerProfileRepository(
             directoryURL: Self.profileDirectoryURL(
                 applicationSupportDirectoryURL: dependencies.applicationSupportDirectoryURL,
                 accountIdentity: dependencies.accountIdentity
@@ -183,6 +416,15 @@ final class ProductionAppComposition {
             sessionNonce: dependencies.sessionNonce,
             catalog: dependencies.catalog,
             economyMutationPolicy: .requireDurablePrivateCloud
+        )
+        self.repositoryRouter = repositoryRouter ?? ProductionProfileRepositoryRouter(
+            route: ProductionProfileRepositoryRoute(
+                repository: initialRepository,
+                authority: .local(
+                    accountIdentity: dependencies.accountIdentity,
+                    sessionNonce: dependencies.sessionNonce
+                )
+            )
         )
     }
 
@@ -230,12 +472,16 @@ final class ProductionAppComposition {
 
         do {
             let loadedAt = dependencies.now()
-            let snapshot = try await repository.load(
+            let route = try await repositoryRouter.currentRoute()
+            let snapshot = try await route.repository.load(
                 at: loadedAt,
                 newProfileID: dependencies.newProfileID
             )
+            guard route.authorizes(snapshot) else {
+                throw ProductionAppCompositionError.authoritativeSessionMismatch
+            }
             let accepted = try accept(snapshot, publishUpdate: false)
-            if let report = await repository.lastLoadReport {
+            if let report = await route.repository.lastLoadReport {
                 reportPersistenceRecovery(report, at: loadedAt)
             }
             return .loaded(authoritativeSnapshot(from: accepted))
@@ -246,14 +492,42 @@ final class ProductionAppComposition {
 
     /// Reprojects the repository only after its caller has committed durable
     /// state. SDK callbacks never construct or publish UI state themselves.
-    func refreshAuthoritativeStateFromRepository() async {
+    @discardableResult
+    private func refreshAuthoritativeStateFromRepository(
+        allowVerifiedSessionAdoption: Bool = false
+    ) async
+        -> ProductionRepositoryRefresh? {
         do {
-            let snapshot = try await repository.snapshot()
-            _ = try accept(snapshot, publishUpdate: true)
+            let route = try await repositoryRouter.currentRoute()
+            let snapshot = try await route.repository.snapshot()
+            guard route.authorizes(snapshot) else { return nil }
+            let accepted: LocalPlayerProfileSnapshot
+            if let currentSnapshot,
+               snapshot.session != currentSnapshot.session {
+                guard allowVerifiedSessionAdoption,
+                      case .verifiedPrivateCloud = route.authority else {
+                    return nil
+                }
+                accepted = try adoptVerifiedSession(
+                    snapshot,
+                    publishUpdate: true
+                )
+            } else {
+                accepted = try accept(snapshot, publishUpdate: true)
+            }
+            let projected = authoritativeSnapshot(from: accepted)
+            return ProductionRepositoryRefresh(
+                snapshot: projected,
+                sessionAdoption: ProductionVerifiedSessionAdoption.mint(
+                    route: route,
+                    snapshot: snapshot
+                )
+            )
         } catch {
             // A refresh is advisory. The last verified projection remains
             // authoritative and foreground mutations continue to surface their
             // own specific failures.
+            return nil
         }
     }
 
@@ -285,14 +559,27 @@ final class ProductionAppComposition {
 
         switch request {
         case let .updateSelection(selection):
-            return await updateSelection(
-                selection,
-                currentSnapshot: currentSnapshot
-            )
+            do {
+                let route = try await repositoryRouter.currentRoute()
+                guard route.authorizes(currentSnapshot) else {
+                    return .failed(message: Message.profileUnavailable)
+                }
+                return await updateSelection(
+                    selection,
+                    currentSnapshot: currentSnapshot,
+                    repository: route.repository
+                )
+            } catch {
+                return .failed(message: Message.mutationFailed)
+            }
 
         case let .updateSettings(settings):
             do {
-                let snapshot = try await repository.updateSettings(
+                let route = try await repositoryRouter.currentRoute()
+                guard route.authorizes(currentSnapshot) else {
+                    return .failed(message: Message.profileUnavailable)
+                }
+                let snapshot = try await route.repository.updateSettings(
                     settings,
                     session: currentSnapshot.session,
                     at: dependencies.now()
@@ -307,20 +594,83 @@ final class ProductionAppComposition {
         case .showLeaderboard:
             return .failed(message: Message.gameCenterUnavailable)
 
-        case .requestCatalogUnlock:
-            return .failed(message: Message.unlockUnavailable)
+        case let .requestCatalogUnlock(itemID):
+            return await performCommerce(.catalogUnlock(itemID))
 
-        case .requestCoinPack:
-            return .failed(message: Message.purchasesUnavailable)
+        case let .requestCoinPack(packID):
+            return await performCommerce(.coinPack(packID))
 
         case .requestRewardedAd:
             return .failed(message: Message.adsUnavailable)
         }
     }
 
+    private func performCommerce(
+        _ request: ProductionCommerceRequest
+    ) async -> AppExternalRequestResult {
+        guard let commerceRequestService else {
+            return .failed(message: Message.onlinePurchaseWarning)
+        }
+
+        let before = currentSnapshot.map { authoritativeSnapshot(from: $0) }
+        let result = await commerceRequestService.perform(request)
+        let refreshed = await refreshAuthoritativeStateFromRepository(
+            allowVerifiedSessionAdoption: true
+        )
+        switch result {
+        case .onlineRequired:
+            if let refreshed, refreshed.snapshot != before {
+                return externalResult(
+                    refreshed,
+                    message: Message.onlinePurchaseWarning
+                )
+            }
+            return .failed(message: Message.onlinePurchaseWarning)
+        case .rejected:
+            if let refreshed, refreshed.snapshot != before {
+                return externalResult(
+                    refreshed,
+                    message: Message.purchaseFailed
+                )
+            }
+            return .failed(message: Message.purchaseFailed)
+        case .silentlyCompleted:
+            if let refreshed, refreshed.snapshot != before {
+                return externalResult(refreshed, message: nil)
+            }
+            return .completed
+        case .succeeded:
+            // The commerce service owns durable mutation, but never owns App
+            // presentation state. Re-read the retained repository and project
+            // only that verified snapshot after success.
+            guard let refreshed else {
+                return .failed(message: Message.purchaseFailed)
+            }
+            return externalResult(refreshed, message: nil)
+        }
+    }
+
+    private func externalResult(
+        _ refreshed: ProductionRepositoryRefresh,
+        message: String?
+    ) -> AppExternalRequestResult {
+        if let authority = refreshed.sessionAdoption {
+            return .adoptedVerifiedPrivateCloud(
+                refreshed.snapshot,
+                authority: authority,
+                message: message
+            )
+        }
+        if let message {
+            return .appliedWithNotice(refreshed.snapshot, message: message)
+        }
+        return .applied(refreshed.snapshot)
+    }
+
     private func updateSelection(
         _ requested: PlayerSelection,
-        currentSnapshot: LocalPlayerProfileSnapshot
+        currentSnapshot: LocalPlayerProfileSnapshot,
+        repository: LocalPlayerProfileRepository
     ) async -> AppExternalRequestResult {
         let current = currentSnapshot.player.selection
         let teamChanged = requested.selectedTeamID != current.selectedTeamID
@@ -380,12 +730,16 @@ final class ProductionAppComposition {
         }
 
         do {
-            let settlement = try await repository.settle(
+            let route = try await repositoryRouter.currentRoute()
+            guard route.authorizes(currentSnapshot) else {
+                return .failed(message: Message.profileUnavailable)
+            }
+            let settlement = try await route.repository.settle(
                 run,
                 session: currentSnapshot.session,
                 recordedAt: dependencies.now()
             )
-            let snapshot = try await repository.snapshot()
+            let snapshot = try await route.repository.snapshot()
             let accepted = try accept(snapshot, publishUpdate: true)
             let authoritativeSnapshot = authoritativeSnapshot(from: accepted)
 
@@ -463,6 +817,28 @@ final class ProductionAppComposition {
         }
 
         self.currentSnapshot = candidate
+        if publishUpdate {
+            authoritativeStateChannel.publish(
+                authoritativeSnapshot(from: candidate)
+            )
+        }
+        return candidate
+    }
+
+    /// The sole in-process local-to-private-cloud session replacement. Its
+    /// caller has already required a verified-cloud repository route whose
+    /// exact session matches the durable claim readback.
+    private func adoptVerifiedSession(
+        _ candidate: LocalPlayerProfileSnapshot,
+        publishUpdate: Bool
+    ) throws -> LocalPlayerProfileSnapshot {
+        let nextSyncRevision = syncRevision.addingReportingOverflow(1)
+        guard !nextSyncRevision.overflow else {
+            throw ProductionAppCompositionError.syncRevisionOverflow
+        }
+        currentSnapshot = candidate
+        syncStatus = .current
+        syncRevision = nextSyncRevision.partialValue
         if publishUpdate {
             authoritativeStateChannel.publish(
                 authoritativeSnapshot(from: candidate)

@@ -963,6 +963,39 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
         self.now = now
     }
 
+    /// The sole Release construction boundary. It returns the coordinator and
+    /// the validator adapter bound to that exact actor, so replica validation
+    /// cannot accidentally replay economy history under a different session,
+    /// repository, transport, or schema composition.
+    static func makeProduction(
+        context: DurableEconomySessionContext,
+        sessionAuthority: any DurableEconomySessionAuthorizing,
+        repository: LocalPlayerProfileRepository,
+        cloud: any CloudSyncTransport,
+        configuration: DurableEconomyCloudConfiguration,
+        catalog: LaunchCatalog = .approved,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) -> (
+        coordinator: DurableEconomyCoordinator,
+        verifier: CloudProfileCompleteEconomyHistoryVerifier
+    ) {
+        let coordinator = DurableEconomyCoordinator(
+            context: context,
+            sessionAuthority: sessionAuthority,
+            repository: repository,
+            cloud: cloud,
+            configuration: configuration,
+            catalog: catalog,
+            now: now
+        )
+        return (
+            coordinator: coordinator,
+            verifier: CloudProfileCompleteEconomyHistoryVerifier(
+                coordinator: coordinator
+            )
+        )
+    }
+
 #if DEBUG
     init(
         testingContext context: DurableEconomySessionContext,
@@ -1364,6 +1397,340 @@ actor DurableEconomyCoordinator: StoreKit2DurableCreditDelivering,
             operationID: operationID,
             recordID: configuration.recordID
         )
+    }
+}
+
+/// Builds the complete economy portion of a first private-cloud publication
+/// from one already-validated canonical local document. This is deliberately
+/// a pure projection: it cannot mutate either local persistence or cloud state.
+/// Pending positive credits remain pending by omission from the authoritative
+/// marker set; their completed-run facts are published by the profile planner
+/// and the normal durable-credit path confirms them after association.
+struct CloudInitialEconomyProjectionV1: Sendable {
+    let head: DurableEconomyCoordinator.CloudAccountHeadV3
+    let ledgerMarkers: [
+        LedgerEntryID: DurableEconomyCoordinator.CloudLedgerMarkerV2
+    ]
+    let rewardOfferMarkers: [
+        RewardOfferID: DurableEconomyCoordinator.CloudRewardOfferMarkerV2
+    ]
+}
+
+enum CloudInitialEconomyProjectionError: Error, Equatable, Sendable {
+    case sourceBindingInvalid
+    case unsupportedPendingEntry(LedgerEntryID)
+    case ownershipHasNoDurableDebit
+    case impossibleEconomyHistory
+    case arithmeticOverflow
+}
+
+struct CloudInitialEconomyProjectorV1: Sendable {
+    private let catalog: LaunchCatalog
+
+    init(catalog: LaunchCatalog = .approved) {
+        self.catalog = catalog
+    }
+
+    func project(
+        document: LocalPlayerDocumentV1,
+        sourceSession: ProfileSessionToken,
+        cloudAccountID: CloudAccountID,
+        configuration: DurableEconomyCloudConfiguration
+    ) throws -> CloudInitialEconomyProjectionV1 {
+        guard document.accountIdentity == .local,
+              sourceSession.accountIdentity == .local,
+              sourceSession.profileID == document.player.profileID
+        else {
+            throw CloudInitialEconomyProjectionError.sourceBindingInvalid
+        }
+        let derived = CloudAccountDerivedBindings.derive(from: cloudAccountID)
+
+        for entryID in document.pendingLedgerEntryIDs {
+            guard let entry = document.player.ledger[entryID],
+                  entry.delta > 0,
+                  {
+                      switch entry.reason {
+                      case .gameplay, .signingBonus: true
+                      case .rewardedAd, .storeKit, .catalogUnlock: false
+                      }
+                  }()
+            else {
+                throw CloudInitialEconomyProjectionError
+                    .unsupportedPendingEntry(entryID)
+            }
+        }
+
+        let confirmed = document.player.ledger.filter {
+            !document.pendingLedgerEntryIDs.contains($0.key)
+        }
+        var remaining = confirmed.values.sorted(by: Self.eventPrecedes)
+        var markers: [
+            LedgerEntryID: DurableEconomyCoordinator.CloudLedgerMarkerV2
+        ] = [:]
+        var offers: [
+            RewardOfferID: DurableEconomyCoordinator.CloudRewardOfferMarkerV2
+        ] = [:]
+        var rewardedHead = DurableEconomyCoordinator.CloudRewardedAdHeadV1.initial
+        var accumulator = DurableEconomyCoordinator.LedgerAccumulator.empty
+        var unlockedItemIDs: [CatalogItemID] = []
+        var revision: UInt64 = 0
+
+        while !remaining.isEmpty {
+            var acceptedIndex: Int?
+            var acceptedResolution:
+                DurableEconomyCoordinator.GameplayRewardResolution?
+            var acceptedRewardedHead:
+                DurableEconomyCoordinator.CloudRewardedAdHeadV1?
+
+            for (index, entry) in remaining.enumerated() {
+                let nextBalance = accumulator.confirmedBalance
+                    .addingReportingOverflow(entry.delta)
+                guard !nextBalance.overflow, nextBalance.partialValue >= 0 else {
+                    continue
+                }
+                var candidateHead = rewardedHead
+                switch entry.reason {
+                case let .gameplay(runID, _):
+                    guard let observation = document.rewardedRunObservations?[runID],
+                          let resolution = try? candidateHead.resolveGameplay(
+                              observation: observation
+                          )
+                    else { continue }
+                    acceptedResolution = resolution
+
+                case let .rewardedAd(offerID, _):
+                    guard (try? candidateHead.redeem(offerID)) != nil else {
+                        continue
+                    }
+
+                case .signingBonus, .storeKit, .catalogUnlock:
+                    break
+                }
+                acceptedIndex = index
+                acceptedRewardedHead = candidateHead
+                break
+            }
+
+            guard let acceptedIndex, let nextRewardedHead = acceptedRewardedHead else {
+                throw CloudInitialEconomyProjectionError.impossibleEconomyHistory
+            }
+            let entry = remaining.remove(at: acceptedIndex)
+            let nextRevision = revision.addingReportingOverflow(1)
+            guard !nextRevision.overflow else {
+                throw CloudInitialEconomyProjectionError.arithmeticOverflow
+            }
+            revision = nextRevision.partialValue
+
+            let kind: DurableEconomyCoordinator.MutationKind
+            switch entry.reason {
+            case .gameplay, .signingBonus: kind = .pendingCredits
+            case .storeKit: kind = .storeKit
+            case .catalogUnlock: kind = .catalogUnlock
+            case .rewardedAd: kind = .rewardedAd
+            }
+            let operationID = Self.historyOperationID(
+                entryID: entry.id,
+                cloudAccountID: cloudAccountID
+            )
+            let binding = DurableEconomyCoordinator.MutationBinding(
+                cloudAccountID: cloudAccountID,
+                accountBinding: derived.durableAccountBinding,
+                profileAccountIdentity: derived.playerAccountIdentity,
+                profileSessionNonce: sourceSession.nonce,
+                sourceEconomyRevision: document.economyRevision,
+                operationID: operationID,
+                kind: kind
+            )
+            let position = DurableEconomyCoordinator.CloudEconomyEventPosition(
+                cloudHeadRevision: revision,
+                batchIndex: 0
+            )
+            let observation: RewardedRunObservation?
+            if case let .gameplay(runID, _) = entry.reason {
+                observation = document.rewardedRunObservations?[runID]
+            } else {
+                observation = nil
+            }
+            let marker = DurableEconomyCoordinator.CloudLedgerMarkerV2(
+                schemaVersion:
+                    DurableEconomyCoordinator.CloudLedgerMarkerV2.schemaVersion,
+                headRecordID: configuration.recordID,
+                record: DurableEconomyCoordinator.CloudLedgerRecord(
+                    entry: entry,
+                    binding: binding
+                ),
+                eventPosition: position,
+                gameplayRewardObservation: observation,
+                gameplayRewardResolution: acceptedResolution
+            )
+            markers[entry.id] = marker
+
+            if case let .rewardedAd(offerID, providerTransactionID) = entry.reason {
+                offers[offerID] = DurableEconomyCoordinator.CloudRewardOfferMarkerV2(
+                    schemaVersion: DurableEconomyCoordinator
+                        .CloudRewardOfferMarkerV2.schemaVersion,
+                    headRecordID: configuration.recordID,
+                    redemption: DurableEconomyCoordinator.RewardRedemption(
+                        offerID: offerID,
+                        providerTransactionID: providerTransactionID,
+                        ledgerEntryID: entry.id
+                    ),
+                    binding: binding,
+                    eventPosition: position
+                )
+            }
+            if case let .catalogUnlock(itemID) = entry.reason {
+                unlockedItemIDs.append(itemID)
+            }
+
+            try Self.add(entry, to: &accumulator)
+            rewardedHead = nextRewardedHead
+        }
+
+        unlockedItemIDs.sort { $0.rawValue.utf8.lexicographicallyPrecedes($1.rawValue.utf8) }
+        guard Set(unlockedItemIDs).count == unlockedItemIDs.count else {
+            throw CloudInitialEconomyProjectionError.impossibleEconomyHistory
+        }
+        var projectedInventory = InventoryRules.initialInventory(catalog: catalog)
+        do {
+            for itemID in unlockedItemIDs {
+                try InventoryRules.applyUnlock(
+                    itemID: itemID,
+                    to: &projectedInventory,
+                    catalog: catalog
+                )
+            }
+        } catch {
+            throw CloudInitialEconomyProjectionError.impossibleEconomyHistory
+        }
+        guard projectedInventory == document.player.inventory else {
+            throw CloudInitialEconomyProjectionError.ownershipHasNoDurableDebit
+        }
+
+        // Prove that omitting pending credits loses no rewarded-ad state. The
+        // hydrator applies pending gameplay credits in this same stable order.
+        var projectedAfterPending = rewardedHead
+        for entryID in document.pendingLedgerEntryIDs.sorted(by: {
+            $0.rawValue.utf8.lexicographicallyPrecedes($1.rawValue.utf8)
+        }) {
+            guard let entry = document.player.ledger[entryID] else {
+                throw CloudInitialEconomyProjectionError.impossibleEconomyHistory
+            }
+            if case let .gameplay(runID, _) = entry.reason {
+                guard let observation = document.rewardedRunObservations?[runID],
+                      (try? projectedAfterPending.resolveGameplay(
+                          observation: observation
+                      )) != nil
+                else {
+                    throw CloudInitialEconomyProjectionError
+                        .impossibleEconomyHistory
+                }
+            }
+        }
+        let localRewarded = document.player.rewardedAdState
+        guard projectedAfterPending.cycle == localRewarded.cycle,
+              projectedAfterPending.validRunsSinceReward
+                == localRewarded.validRunsSinceReward,
+              projectedAfterPending.eligibleOfferID
+                == localRewarded.eligibleOfferID
+        else {
+            throw CloudInitialEconomyProjectionError.impossibleEconomyHistory
+        }
+
+        return CloudInitialEconomyProjectionV1(
+            head: DurableEconomyCoordinator.CloudAccountHeadV3(
+                schemaVersion:
+                    DurableEconomyCoordinator.CloudAccountHeadV3.schemaVersion,
+                cloudAccountID: cloudAccountID,
+                accountBinding: derived.durableAccountBinding,
+                profileAccountIdentity: derived.playerAccountIdentity,
+                revision: revision,
+                ledgerAccumulator: accumulator,
+                unlockedItemIDs: unlockedItemIDs,
+                rewardedAd: rewardedHead
+            ),
+            ledgerMarkers: markers,
+            rewardOfferMarkers: offers
+        )
+    }
+
+    private static func eventPrecedes(
+        _ lhs: CoinLedgerEntry,
+        _ rhs: CoinLedgerEntry
+    ) -> Bool {
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        return lhs.id.rawValue.utf8.lexicographicallyPrecedes(rhs.id.rawValue.utf8)
+    }
+
+    private static func historyOperationID(
+        entryID: LedgerEntryID,
+        cloudAccountID: CloudAccountID
+    ) -> OperationID {
+        let digest = CloudProfileDigest.sha256(components: [
+            "pocket-vector-initial-economy-history-operation-v1",
+            cloudAccountID.rawValue,
+            entryID.rawValue,
+        ])
+        return OperationID(
+            "economy-bootstrap-v1-\(CloudProfileDigest.hex(digest))"
+        )
+    }
+
+    private static func add(
+        _ entry: CoinLedgerEntry,
+        to accumulator: inout DurableEconomyCoordinator.LedgerAccumulator
+    ) throws {
+        let count = accumulator.entryCount.addingReportingOverflow(1)
+        let balance = accumulator.confirmedBalance
+            .addingReportingOverflow(entry.delta)
+        guard !count.overflow, !balance.overflow, balance.partialValue >= 0 else {
+            throw CloudInitialEconomyProjectionError.arithmeticOverflow
+        }
+        accumulator.entryCount = count.partialValue
+        accumulator.confirmedBalance = balance.partialValue
+        accumulator.digest = Data(zip(
+            accumulator.digest,
+            ledgerDigest(entry)
+        ).map { $0 ^ $1 })
+    }
+
+    private static func ledgerDigest(_ entry: CoinLedgerEntry) -> Data {
+        var digest = SHA256()
+        append(DurableEconomyCloudSchema.ledgerDigestDomain, to: &digest)
+        append(entry.id.rawValue, to: &digest)
+        append(String(entry.delta), to: &digest)
+        append(
+            String(entry.createdAt.timeIntervalSinceReferenceDate.bitPattern),
+            to: &digest
+        )
+        switch entry.reason {
+        case let .gameplay(runID, economyVersion):
+            append("gameplay", to: &digest)
+            append(runID.description, to: &digest)
+            append(String(economyVersion), to: &digest)
+        case let .signingBonus(version):
+            append("signing-bonus", to: &digest)
+            append(String(version), to: &digest)
+        case let .rewardedAd(offerID, providerTransactionID):
+            append("rewarded-ad", to: &digest)
+            append(offerID.rawValue, to: &digest)
+            append(providerTransactionID.rawValue, to: &digest)
+        case let .storeKit(transactionID, packID):
+            append("storekit", to: &digest)
+            append(String(transactionID), to: &digest)
+            append(packID.rawValue, to: &digest)
+        case let .catalogUnlock(itemID):
+            append("catalog-unlock", to: &digest)
+            append(itemID.rawValue, to: &digest)
+        }
+        return Data(digest.finalize())
+    }
+
+    private static func append(_ value: String, to digest: inout SHA256) {
+        let data = Data(value.utf8)
+        var length = UInt64(data.count).bigEndian
+        withUnsafeBytes(of: &length) { digest.update(data: Data($0)) }
+        digest.update(data: data)
     }
 }
 

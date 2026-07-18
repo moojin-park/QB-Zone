@@ -3738,6 +3738,97 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(try Data(contentsOf: locations.backupURL), expected.exactBytes)
     }
 
+    func testProtectedCASDefinitivePrimaryWriteFailureRequiresExactReconciliation()
+        throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let cloudAccountID = CloudAccountID("protected-cas-account")
+        let binding = CloudAccountDerivedBindings.derive(from: cloudAccountID)
+        let fileSystem = FoundationProfileHydrationFileSystem()
+        let store = AtomicProfileFileStore(
+            directoryURL: directory,
+            fileSystem: fileSystem
+        )
+        let sourceDocument = PlayerProfileFactory.makeDefault(
+            profileID: binding.durableAccountBinding.profileID,
+            accountIdentity: binding.playerAccountIdentity,
+            deviceID: "protected-cas-device",
+            createdAt: baseDate
+        )
+        let source = try store.save(
+            sourceDocument,
+            at: baseDate,
+            catalog: .approved
+        )
+        try fileSystem.withExclusiveLock(at: store.transactionLocations.lockURL) {
+            try store.installLineageProtectionUnderExternalLock(
+                cloudAccountID: cloudAccountID,
+                artifact: source,
+                catalog: .approved
+            )
+        }
+
+        var candidateDocument = source.document
+        candidateDocument.player.settings.value.isMuted = true
+        candidateDocument.player.settings.modifiedAt =
+            baseDate.addingTimeInterval(1)
+        candidateDocument.player.settings.logicalCounter += 1
+        candidateDocument.player.revision += 1
+        let candidate = try PlayerProfileMigrator().canonicalArtifact(
+            for: candidateDocument,
+            savedAt: baseDate.addingTimeInterval(1)
+        )
+        let fault = FaultInjectingProfileStoreFileSystem()
+        fault.failNext(.beforeWrite(store.locations.primaryURL.lastPathComponent))
+        let faultedStore = AtomicProfileFileStore(
+            directoryURL: directory,
+            fileSystem: fault
+        )
+
+        let uncertain = try faultedStore.save(
+            candidateDocument,
+            at: baseDate.addingTimeInterval(1),
+            catalog: .approved,
+            replacing: source
+        )
+        guard case let .reconciliationRequired(intent) = uncertain else {
+            return XCTFail(
+                "A protected watermark makes every later primary-write failure uncertain"
+            )
+        }
+        XCTAssertEqual(intent.source, source)
+        XCTAssertEqual(intent.candidate, candidate)
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.primaryURL),
+            source.exactBytes
+        )
+
+        XCTAssertEqual(
+            try store.reconcile(intent, catalog: .approved),
+            .committed(candidate)
+        )
+        XCTAssertEqual(
+            try store.reconcile(intent, catalog: .approved),
+            .committed(candidate)
+        )
+        let loaded = try store.loadOrCreate(
+            defaultDocument: sourceDocument,
+            at: baseDate.addingTimeInterval(2),
+            catalog: .approved
+        )
+        XCTAssertEqual(loaded.artifact, candidate)
+        XCTAssertEqual(loaded.document.player.revision, source.document.player.revision + 1)
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.primaryURL),
+            candidate.exactBytes
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.backupURL),
+            candidate.exactBytes
+        )
+    }
+
     func testJournalAndQuarantineEvidenceBlockOrdinaryProfileCreation() throws {
         for marker in ["journal-primary", "journal-backup", "quarantine-evidence"] {
             let directory = makeTemporaryDirectory().appendingPathComponent(

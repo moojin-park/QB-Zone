@@ -133,10 +133,7 @@ final class StoreKit2TransactionAdapterTests: XCTestCase {
         let packID = EconomyConfiguration.coinPacks[0].id
         await fixture.platform.setPurchaseResult(.success(.unverified))
 
-        let result = try await fixture.adapter.purchase(
-            packID,
-            session: fixture.session
-        )
+        let result = try await purchaseOnline(packID, fixture: fixture)
 
         XCTAssertEqual(result, .processed(.rejected(.verificationFailed)))
         let deliveryCount = await fixture.delivery.requestCount()
@@ -156,10 +153,7 @@ final class StoreKit2TransactionAdapterTests: XCTestCase {
         )
         await fixture.platform.setPurchaseResult(.success(.verified(transaction)))
 
-        let result = try await fixture.adapter.purchase(
-            packID,
-            session: fixture.session
-        )
+        let result = try await purchaseOnline(packID, fixture: fixture)
 
         XCTAssertEqual(result, .processed(.rejected(.appAccountTokenMismatch)))
         let deliveryCount = await fixture.delivery.requestCount()
@@ -180,10 +174,7 @@ final class StoreKit2TransactionAdapterTests: XCTestCase {
         )
         await fixture.platform.setPurchaseResult(.success(.verified(transaction)))
 
-        let result = try await fixture.adapter.purchase(
-            packID,
-            session: fixture.session
-        )
+        let result = try await purchaseOnline(packID, fixture: fixture)
 
         XCTAssertEqual(
             result,
@@ -209,7 +200,7 @@ final class StoreKit2TransactionAdapterTests: XCTestCase {
             ]
         )
         let orderedEvents = await events.snapshot()
-        XCTAssertEqual(orderedEvents, ["deliver", "finish"])
+        XCTAssertEqual(orderedEvents, ["products", "purchase", "deliver", "finish"])
 
         await fixture.delivery.setReturnsInvalidAcknowledgement(true)
         let nextTransaction = try platformTransaction(
@@ -219,16 +210,163 @@ final class StoreKit2TransactionAdapterTests: XCTestCase {
             appAccountToken: fixture.session.binding.appAccountToken
         )
         await fixture.platform.setPurchaseResult(.success(.verified(nextTransaction)))
-        let invalidResult = try await fixture.adapter.purchase(
-            packID,
-            session: fixture.session
-        )
+        let invalidResult = try await purchaseOnline(packID, fixture: fixture)
         XCTAssertEqual(
             invalidResult,
             .processed(.rejected(.invalidDurableAcknowledgement))
         )
         let finishedIDs = await fixture.platform.finishedTransactionIDs()
         XCTAssertEqual(finishedIDs, [42])
+    }
+
+    func testDurableDeliveryClassifiesConnectivitySeparatelyFromIntegrityFailure() async throws {
+        let fixture = try makeFixture()
+        let packID = EconomyConfiguration.coinPacks[0].id
+        let connectivityTransaction = try platformTransaction(
+            id: 70,
+            packID: packID,
+            configuration: fixture.configuration,
+            appAccountToken: fixture.session.binding.appAccountToken
+        )
+        await fixture.delivery.setFailure(.connectivity)
+        await fixture.platform.setPurchaseResult(.success(.verified(connectivityTransaction)))
+
+        let connectivityResult = try await purchaseOnline(packID, fixture: fixture)
+        XCTAssertEqual(
+            connectivityResult,
+            .processed(
+                .deferred(
+                    transactionID: 70,
+                    reason: .durableDeliveryConnectivityUnavailable
+                )
+            )
+        )
+
+        let integrityTransaction = try platformTransaction(
+            id: 71,
+            packID: packID,
+            configuration: fixture.configuration,
+            appAccountToken: fixture.session.binding.appAccountToken
+        )
+        await fixture.delivery.setFailure(.integrity)
+        await fixture.platform.setPurchaseResult(.success(.verified(integrityTransaction)))
+
+        let integrityResult = try await purchaseOnline(packID, fixture: fixture)
+        let finishedTransactionIDs = await fixture.platform.finishedTransactionIDs()
+        XCTAssertEqual(
+            integrityResult,
+            .processed(
+                .deferred(
+                    transactionID: 71,
+                    reason: .durableDeliveryUnavailable
+                )
+            )
+        )
+        XCTAssertEqual(finishedTransactionIDs, [])
+    }
+
+    func testOnlinePurchaseAuthorizesAfterProductWorkImmediatelyBeforePlatformRequest() async throws {
+        let events = StoreKit2TestEventRecorder()
+        let fixture = try makeFixture(events: events)
+        let context = try DurableEconomySessionContext(
+            cloudAccountID: CloudAccountID("online-purchase-cloud"),
+            accountBinding: fixture.session.binding.account,
+            profileSession: ProfileSessionToken(
+                accountIdentity: PlayerAccountIdentity("online-purchase-player"),
+                nonce: fixture.session.nonce,
+                profileID: fixture.session.binding.account.profileID
+            ),
+            storeSession: fixture.session
+        )
+        let authorizer = StoreKit2TestOnlineAuthorizer(events: events)
+
+        let result = try await fixture.adapter.purchaseOnline(
+            EconomyConfiguration.coinPacks[0].id,
+            session: fixture.session,
+            expected: context,
+            authorizer: authorizer
+        )
+        let orderedEvents = await events.snapshot()
+
+        XCTAssertEqual(result, .userCancelled)
+        XCTAssertEqual(orderedEvents, ["products", "authorize", "purchase"])
+    }
+
+    func testCancellationDuringPlatformProductResolutionNeverOpensSheet() async throws {
+        let fixture = try makeFixture()
+        let context = try commerceContext(fixture: fixture)
+        let resolutionGate = StoreKit2TestGate()
+        await fixture.platform.setNextPurchaseResolutionGate(resolutionGate)
+        let authorizer = StoreKit2ControllableOnlineAuthorizer()
+        let packID = EconomyConfiguration.coinPacks[0].id
+
+        let request = Task {
+            try await fixture.adapter.purchaseOnline(
+                packID,
+                session: fixture.session,
+                expected: context,
+                authorizer: authorizer
+            )
+        }
+        for _ in 0 ..< 10_000 {
+            if await fixture.platform.purchaseResolutionWaitCount() == 1 { break }
+            await Task.yield()
+        }
+        let resolutionWaitCount = await fixture.platform.purchaseResolutionWaitCount()
+        XCTAssertEqual(resolutionWaitCount, 1)
+
+        request.cancel()
+        await resolutionGate.open()
+        do {
+            _ = try await request.value
+            XCTFail("Cancellation during product resolution must stop presentation")
+        } catch is CancellationError {
+            // Expected.
+        }
+        let purchaseRequests = await fixture.platform.purchaseRequestsSnapshot()
+        let authorizationRequests = await authorizer.requestCount()
+        XCTAssertEqual(purchaseRequests, [])
+        XCTAssertEqual(authorizationRequests, 0)
+    }
+
+    func testAccountLossDuringPlatformProductResolutionNeverOpensSheet() async throws {
+        let fixture = try makeFixture()
+        let context = try commerceContext(fixture: fixture)
+        let resolutionGate = StoreKit2TestGate()
+        await fixture.platform.setNextPurchaseResolutionGate(resolutionGate)
+        let authorizer = StoreKit2ControllableOnlineAuthorizer()
+        let packID = EconomyConfiguration.coinPacks[0].id
+
+        let request = Task {
+            try await fixture.adapter.purchaseOnline(
+                packID,
+                session: fixture.session,
+                expected: context,
+                authorizer: authorizer
+            )
+        }
+        for _ in 0 ..< 10_000 {
+            if await fixture.platform.purchaseResolutionWaitCount() == 1 { break }
+            await Task.yield()
+        }
+        let resolutionWaitCount = await fixture.platform.purchaseResolutionWaitCount()
+        XCTAssertEqual(resolutionWaitCount, 1)
+
+        await authorizer.failWithAccountLoss()
+        await resolutionGate.open()
+        do {
+            _ = try await request.value
+            XCTFail("A lost account must stop presentation after product resolution")
+        } catch {
+            XCTAssertEqual(
+                error as? DurableEconomyCoordinatorError,
+                .cloudAccountUnavailable
+            )
+        }
+        let purchaseRequests = await fixture.platform.purchaseRequestsSnapshot()
+        let authorizationRequests = await authorizer.requestCount()
+        XCTAssertEqual(purchaseRequests, [])
+        XCTAssertEqual(authorizationRequests, 1)
     }
 
     func testDuplicateUnfinishedTransactionDeliversAndFinishesOncePerProcess() async throws {
@@ -323,22 +461,16 @@ final class StoreKit2TransactionAdapterTests: XCTestCase {
         let packID = EconomyConfiguration.coinPacks[0].id
 
         await fixture.platform.setPurchaseResult(.userCancelled)
-        let cancelled = try await fixture.adapter.purchase(
-            packID,
-            session: fixture.session
-        )
+        let cancelled = try await purchaseOnline(packID, fixture: fixture)
         XCTAssertEqual(cancelled, .userCancelled)
 
         await fixture.platform.setPurchaseResult(.pending)
-        let pending = try await fixture.adapter.purchase(
-            packID,
-            session: fixture.session
-        )
+        let pending = try await purchaseOnline(packID, fixture: fixture)
         XCTAssertEqual(pending, .pending)
 
         await fixture.platform.setPurchaseFailure(.productUnavailable)
         do {
-            _ = try await fixture.adapter.purchase(packID, session: fixture.session)
+            _ = try await purchaseOnline(packID, fixture: fixture)
             XCTFail("Unavailable products must remain retryable and uncredited")
         } catch {
             XCTAssertEqual(
@@ -434,6 +566,34 @@ final class StoreKit2TransactionAdapterTests: XCTestCase {
         )
     }
 
+    private func purchaseOnline(
+        _ packID: CoinPackID,
+        fixture: StoreKit2TestFixture
+    ) async throws -> StoreKit2CoinPurchaseResult {
+        let context = try commerceContext(fixture: fixture)
+        return try await fixture.adapter.purchaseOnline(
+            packID,
+            session: fixture.session,
+            expected: context,
+            authorizer: StoreKit2AlwaysOnlineAuthorizer()
+        )
+    }
+
+    private func commerceContext(
+        fixture: StoreKit2TestFixture
+    ) throws -> DurableEconomySessionContext {
+        try DurableEconomySessionContext(
+            cloudAccountID: CloudAccountID("adapter-test-cloud"),
+            accountBinding: fixture.session.binding.account,
+            profileSession: ProfileSessionToken(
+                accountIdentity: PlayerAccountIdentity("adapter-test-player"),
+                nonce: fixture.session.nonce,
+                profileID: fixture.session.binding.account.profileID
+            ),
+            storeSession: fixture.session
+        )
+    }
+
     private func testProductIdentifiers() -> [CoinPackID: String] {
         Dictionary(
             uniqueKeysWithValues: EconomyConfiguration.coinPacks.map {
@@ -510,6 +670,44 @@ private actor StoreKit2TestEventRecorder {
     }
 }
 
+private actor StoreKit2TestOnlineAuthorizer: OnlineCommerceTransactionAuthorizing {
+    private let events: StoreKit2TestEventRecorder
+
+    init(events: StoreKit2TestEventRecorder) {
+        self.events = events
+    }
+
+    func revalidate(expected _: DurableEconomySessionContext) async throws {
+        await events.record("authorize")
+    }
+}
+
+private struct StoreKit2AlwaysOnlineAuthorizer:
+    OnlineCommerceTransactionAuthorizing {
+    func revalidate(expected _: DurableEconomySessionContext) async throws {}
+}
+
+private actor StoreKit2ControllableOnlineAuthorizer:
+    OnlineCommerceTransactionAuthorizing {
+    private var accountIsAvailable = true
+    private var requests = 0
+
+    func revalidate(expected _: DurableEconomySessionContext) async throws {
+        requests += 1
+        guard accountIsAvailable else {
+            throw DurableEconomyCoordinatorError.cloudAccountUnavailable
+        }
+    }
+
+    func failWithAccountLoss() {
+        accountIsAvailable = false
+    }
+
+    func requestCount() -> Int {
+        requests
+    }
+}
+
 private actor StoreKit2TestGate {
     private var isOpen = false
 
@@ -553,6 +751,8 @@ private actor DeterministicStoreKit2PlatformClient: StoreKit2PlatformClient {
     private var stoppedListeners = 0
     private var finishedIDs: [UInt64] = []
     private var purchaseRequests: [StoreKit2TestPurchaseRequest] = []
+    private var nextPurchaseResolutionGate: StoreKit2TestGate?
+    private var purchaseResolutionWaits = 0
     private var finishFailureEnabled = false
     private let events: StoreKit2TestEventRecorder?
 
@@ -568,14 +768,26 @@ private actor DeterministicStoreKit2PlatformClient: StoreKit2PlatformClient {
 
     func products(
         for identifiers: Set<String>
-    ) throws -> [StoreKit2PlatformProduct] {
-        identifiers.sorted().compactMap { productsByIdentifier[$0] }
+    ) async throws -> [StoreKit2PlatformProduct] {
+        await events?.record("products")
+        return identifiers.sorted().compactMap { productsByIdentifier[$0] }
     }
 
-    func purchase(
+    func purchaseAuthorized(
         productIdentifier: String,
-        appAccountToken: UUID
-    ) throws -> StoreKit2PlatformPurchaseResult {
+        appAccountToken: UUID,
+        finalAuthorization: @escaping @Sendable () async throws -> Void
+    ) async throws -> StoreKit2PlatformPurchaseResult {
+        let resolutionGate = nextPurchaseResolutionGate
+        nextPurchaseResolutionGate = nil
+        if let resolutionGate {
+            purchaseResolutionWaits += 1
+            await resolutionGate.wait()
+        }
+        try Task.checkCancellation()
+        try await finalAuthorization()
+        try Task.checkCancellation()
+        await events?.record("purchase")
         if let purchaseFailure {
             throw purchaseFailure
         }
@@ -639,6 +851,14 @@ private actor DeterministicStoreKit2PlatformClient: StoreKit2PlatformClient {
         purchaseFailure = failure
     }
 
+    func setNextPurchaseResolutionGate(_ gate: StoreKit2TestGate) {
+        nextPurchaseResolutionGate = gate
+    }
+
+    func purchaseResolutionWaitCount() -> Int {
+        purchaseResolutionWaits
+    }
+
     func setUnfinished(_ transactions: [StoreKit2PlatformVerification]) {
         unfinished = transactions
     }
@@ -693,11 +913,16 @@ private enum DeterministicStoreKit2DeliveryFailure: Error {
     case unavailable
 }
 
+private enum DeterministicStoreKit2DeliveryFailureMode: Sendable {
+    case connectivity
+    case integrity
+}
+
 private actor DeterministicStoreKit2DurableDelivery: StoreKit2DurableCreditDelivering {
     private var requests: [StoreKit2DurableDeliveryRequest] = []
     private var committedLedgerEntryIDs: Set<LedgerEntryID> = []
     private var returnsInvalidAcknowledgement = false
-    private var failureEnabled = false
+    private var failure: DeterministicStoreKit2DeliveryFailureMode?
     private let events: StoreKit2TestEventRecorder?
 
     init(events: StoreKit2TestEventRecorder? = nil) {
@@ -709,8 +934,13 @@ private actor DeterministicStoreKit2DurableDelivery: StoreKit2DurableCreditDeliv
     ) async throws -> StoreKit2DurableDeliveryAcknowledgement {
         await events?.record("deliver")
         requests.append(request)
-        if failureEnabled {
+        switch failure {
+        case .connectivity:
+            throw CloudKitCloudSyncError.networkUnavailable(retryAfterSeconds: nil)
+        case .integrity:
             throw DeterministicStoreKit2DeliveryFailure.unavailable
+        case nil:
+            break
         }
         let insertion = committedLedgerEntryIDs.insert(request.ledgerEntry.id)
         return StoreKit2DurableDeliveryAcknowledgement(
@@ -725,6 +955,10 @@ private actor DeterministicStoreKit2DurableDelivery: StoreKit2DurableCreditDeliv
 
     func setReturnsInvalidAcknowledgement(_ returnsInvalid: Bool) {
         returnsInvalidAcknowledgement = returnsInvalid
+    }
+
+    func setFailure(_ failure: DeterministicStoreKit2DeliveryFailureMode?) {
+        self.failure = failure
     }
 
     func requestCount() -> Int {

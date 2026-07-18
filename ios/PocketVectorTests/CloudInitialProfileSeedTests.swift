@@ -84,8 +84,9 @@ final class CloudInitialProfileSeedTests: XCTestCase {
             RunID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!),
         ]
         let document = try makePendingGameplayDocument(runIDs: runIDs)
+        let artifact = try makeArtifact(document)
         let seed = try CloudInitialProfileSeedBuilderV1().makeSeed(
-            from: makeArtifact(document)
+            from: artifact
         )
 
         XCTAssertEqual(seed.debugRunFacts.map(\.runID), runIDs.reversed())
@@ -114,8 +115,9 @@ final class CloudInitialProfileSeedTests: XCTestCase {
     func testConfirmedGameplayCreditsRequireOwnerPolicy() throws {
         var document = try makePendingGameplayDocument(runIDs: [RunID()])
         document.pendingLedgerEntryIDs = []
+        let artifact = try makeArtifact(document)
         let seed = try CloudInitialProfileSeedBuilderV1().makeSeed(
-            from: makeArtifact(document)
+            from: artifact
         )
 
         guard case let .requiresOwnerPolicy(reasons) = seed.debugEligibility else {
@@ -128,6 +130,423 @@ final class CloudInitialProfileSeedTests: XCTestCase {
             }),
             Set(document.player.ledger.keys)
         )
+    }
+
+    func testTwoDirectoryAssociationNormalizesOlderBackupAndReloadsTarget()
+        async throws
+    {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "association-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceDirectory = root.appendingPathComponent("local", isDirectory: true)
+        let targetDirectory = root.appendingPathComponent("cloud", isDirectory: true)
+        let cloudAccountID = CloudAccountID("cloud-account-a")
+        let derived = CloudAccountDerivedBindings.derive(from: cloudAccountID)
+
+        let sourceRepository = LocalPlayerProfileRepository(
+            directoryURL: sourceDirectory,
+            deviceID: "device-a",
+            accountIdentity: .local,
+            economyMutationPolicy: .allowLocalTesting
+        )
+        let loaded = try await sourceRepository.load(at: baseDate)
+        var settings = loaded.player.settings
+        settings.isMuted.toggle()
+        let advanced = try await sourceRepository.updateSettings(
+            settings,
+            session: loaded.session,
+            at: baseDate.addingTimeInterval(1)
+        )
+        let exactSource = try await sourceRepository.hydrationSource(
+            session: advanced.session
+        )
+        let sourceDecoded = try PlayerProfileMigrator().decodeArtifact(
+            exactSource.exactEnvelopeBytes
+        )
+        let sourceArtifact = try PlayerProfileMigrator().canonicalArtifact(
+            for: sourceDecoded.document,
+            savedAt: sourceDecoded.savedAt
+        )
+        let sourceLocations = ProfileStorageLocations(
+            directoryURL: sourceDirectory
+        )
+        XCTAssertNotEqual(
+            try Data(contentsOf: sourceLocations.backupURL),
+            sourceArtifact.exactBytes,
+            "A normal evolved profile starts with an older backup predecessor"
+        )
+
+        let capability = try await sourceRepository.beginInitialAssociation(
+            targetCloudAccountID: cloudAccountID,
+            targetDirectoryURL: targetDirectory,
+            transactionID: UUID(
+                uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            )!
+        )
+        var candidate = sourceArtifact.document
+        candidate.accountIdentity = derived.playerAccountIdentity
+        candidate.player.profileID = derived.durableAccountBinding.profileID
+        candidate.player.revision += 1
+        candidate.economyRevision += 1
+        let candidateArtifact = try PlayerProfileMigrator().canonicalArtifact(
+            for: candidate,
+            savedAt: baseDate.addingTimeInterval(2)
+        )
+        let checkpoint = try makeEmptyCheckpoint(
+            accountID: cloudAccountID
+        )
+        let journal = try ProfileInitialAssociationJournalV1.make(
+            createdAt: baseDate.addingTimeInterval(2),
+            capability: capability,
+            candidateEnvelope: candidateArtifact.exactBytes,
+            targetCheckpoint: checkpoint
+        )
+        let targetRepository = LocalPlayerProfileRepository(
+            directoryURL: targetDirectory,
+            deviceID: "device-a",
+            accountIdentity: derived.playerAccountIdentity,
+            economyMutationPolicy: .allowLocalTesting
+        )
+        let store = ProfileInitialAssociationStoreV1()
+
+        let result = try await store.associate(
+            journal: journal,
+            capability: capability,
+            sourceRepository: sourceRepository,
+            targetRepository: targetRepository,
+            now: baseDate.addingTimeInterval(3)
+        )
+
+        XCTAssertEqual(result.installedArtifact, candidateArtifact)
+        XCTAssertEqual(result.targetSnapshot.session.accountIdentity,
+                       derived.playerAccountIdentity)
+        XCTAssertEqual(result.targetSnapshot.session.profileID,
+                       derived.durableAccountBinding.profileID)
+        XCTAssertEqual(
+            try Data(contentsOf: sourceLocations.primaryURL),
+            sourceArtifact.exactBytes
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: sourceLocations.backupURL),
+            sourceArtifact.exactBytes
+        )
+        let remainingJournal = try await store.recoverableJournal(
+            sourceDirectoryURL: sourceDirectory,
+            targetDirectoryURL: targetDirectory
+        )
+        XCTAssertNil(remainingJournal)
+        let committedLookup = try await store.committedAssociation(
+            sourceDirectoryURL: sourceDirectory
+        )
+        let committed = try XCTUnwrap(committedLookup)
+        XCTAssertEqual(committed.cloudAccountID, cloudAccountID)
+        XCTAssertEqual(committed.sourceEnvelopeDigest, sourceArtifact.digest)
+        XCTAssertEqual(committed.targetEnvelopeDigest, candidateArtifact.digest)
+
+        var evolvedSettings = result.targetSnapshot.player.settings
+        evolvedSettings.reducedMotion.toggle()
+        let evolved = try await targetRepository.updateSettings(
+            evolvedSettings,
+            session: result.targetSnapshot.session,
+            at: baseDate.addingTimeInterval(4)
+        )
+        let evolvedSource = try await targetRepository.hydrationSource(
+            session: evolved.session
+        )
+        let evolvedEnvelope = evolvedSource.exactEnvelopeBytes
+        let relaunchedSource = LocalPlayerProfileRepository(
+            directoryURL: sourceDirectory,
+            deviceID: "device-a",
+            accountIdentity: .local,
+            economyMutationPolicy: .allowLocalTesting
+        )
+        _ = try await relaunchedSource.load(at: baseDate.addingTimeInterval(5))
+        let relaunchedTarget = LocalPlayerProfileRepository(
+            directoryURL: targetDirectory,
+            deviceID: "device-a",
+            accountIdentity: derived.playerAccountIdentity,
+            economyMutationPolicy: .allowLocalTesting
+        )
+        let targetLocations = ProfileStorageLocations(
+            directoryURL: targetDirectory
+        )
+        try Data("damaged-target-primary".utf8).write(
+            to: targetLocations.primaryURL
+        )
+        try Data("damaged-source-primary".utf8).write(
+            to: sourceLocations.primaryURL
+        )
+        _ = try await store.committedAssociation(
+            sourceDirectoryURL: sourceDirectory
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: sourceLocations.primaryURL),
+            sourceArtifact.exactBytes
+        )
+        let journalEncoder = JSONEncoder()
+        journalEncoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let recoveredEvidence = try journalEncoder.encode(journal)
+        for directory in [sourceDirectory, targetDirectory] {
+            let evidenceDirectory = directory.appendingPathComponent(
+                "ProfileInitialAssociationTransaction",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: evidenceDirectory,
+                withIntermediateDirectories: true
+            )
+            try recoveredEvidence.write(
+                to: evidenceDirectory.appendingPathComponent(
+                    "association-journal.json"
+                )
+            )
+            try recoveredEvidence.write(
+                to: evidenceDirectory.appendingPathComponent(
+                    "association-journal.backup.json"
+                )
+            )
+        }
+        let reopened = try await store.reopenCommittedAssociation(
+            committed,
+            expectedAccountID: cloudAccountID,
+            sourceRepository: relaunchedSource,
+            targetRepository: relaunchedTarget,
+            at: baseDate.addingTimeInterval(5)
+        )
+        XCTAssertEqual(reopened.targetSnapshot.player.settings,
+                       evolved.player.settings)
+        XCTAssertNotEqual(reopened.installedArtifact.digest,
+                          committed.targetEnvelopeDigest)
+        XCTAssertEqual(
+            try Data(contentsOf: targetLocations.primaryURL),
+            try Data(contentsOf: targetLocations.backupURL)
+        )
+
+        for url in [targetLocations.primaryURL, targetLocations.backupURL] {
+            try candidateArtifact.exactBytes.write(to: url)
+        }
+        _ = try await store.committedAssociation(
+            sourceDirectoryURL: sourceDirectory
+        )
+        let rollbackRecovery = try AtomicProfileFileStore(
+            directoryURL: targetDirectory
+        ).loadOrCreate(
+            defaultDocument: candidateArtifact.document,
+            at: baseDate.addingTimeInterval(5),
+            catalog: .approved
+        )
+        XCTAssertEqual(rollbackRecovery.artifact.exactBytes, evolvedEnvelope)
+        XCTAssertEqual(
+            try Data(contentsOf: targetLocations.primaryURL),
+            evolvedEnvelope
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: targetLocations.backupURL),
+            evolvedEnvelope
+        )
+
+        var rolledBack = candidateArtifact.document
+        rolledBack.player.revision = committed.seedPlayerRevision - 1
+        let rolledBackArtifact = try PlayerProfileMigrator().canonicalArtifact(
+            for: rolledBack,
+            savedAt: baseDate.addingTimeInterval(5)
+        )
+        for url in [targetLocations.primaryURL, targetLocations.backupURL] {
+            try rolledBackArtifact.exactBytes.write(to: url)
+        }
+        do {
+            _ = try await store.committedAssociation(
+                sourceDirectoryURL: sourceDirectory
+            )
+            XCTFail("A validator-clean target rollback must fail lineage")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileInitialAssociationStoreError,
+                .targetVerificationFailed
+            )
+        }
+
+        var replacement = candidateArtifact.document
+        replacement.player.createdAt = baseDate.addingTimeInterval(-123)
+        replacement.player.revision = committed.seedPlayerRevision
+        replacement.economyRevision = committed.seedEconomyRevision
+        let replacementArtifact = try PlayerProfileMigrator().canonicalArtifact(
+            for: replacement,
+            savedAt: baseDate.addingTimeInterval(5)
+        )
+        for url in [targetLocations.primaryURL, targetLocations.backupURL] {
+            try replacementArtifact.exactBytes.write(to: url)
+        }
+        do {
+            _ = try await store.committedAssociation(
+                sourceDirectoryURL: sourceDirectory
+            )
+            XCTFail("A fresh same-ID target must fail seed lineage")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileInitialAssociationStoreError,
+                .targetVerificationFailed
+            )
+        }
+        for url in [targetLocations.primaryURL, targetLocations.backupURL] {
+            try evolvedEnvelope.write(to: url)
+        }
+        let evidenceAfterRecovery = try await store.recoverableJournal(
+            sourceDirectoryURL: sourceDirectory,
+            targetDirectoryURL: targetDirectory
+        )
+        XCTAssertNil(evidenceAfterRecovery)
+
+        try Data("damaged-target-backup".utf8).write(
+            to: targetLocations.backupURL
+        )
+        let secondRelaunchedSource = LocalPlayerProfileRepository(
+            directoryURL: sourceDirectory,
+            deviceID: "device-a",
+            accountIdentity: .local,
+            economyMutationPolicy: .allowLocalTesting
+        )
+        _ = try await secondRelaunchedSource.load(
+            at: baseDate.addingTimeInterval(5)
+        )
+        let secondRelaunchedTarget = LocalPlayerProfileRepository(
+            directoryURL: targetDirectory,
+            deviceID: "device-a",
+            accountIdentity: derived.playerAccountIdentity,
+            economyMutationPolicy: .allowLocalTesting
+        )
+        _ = try await store.reopenCommittedAssociation(
+            committed,
+            expectedAccountID: cloudAccountID,
+            sourceRepository: secondRelaunchedSource,
+            targetRepository: secondRelaunchedTarget,
+            at: baseDate.addingTimeInterval(5)
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: targetLocations.primaryURL),
+            try Data(contentsOf: targetLocations.backupURL)
+        )
+        do {
+            _ = try await store.reopenCommittedAssociation(
+                committed,
+                expectedAccountID: CloudAccountID("cloud-account-b"),
+                sourceRepository: relaunchedSource,
+                targetRepository: relaunchedTarget
+            )
+            XCTFail("A committed local source cannot bind to another account")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileInitialAssociationStoreError,
+                .accountChanged
+            )
+        }
+
+        let lineageURL = targetDirectory
+            .appendingPathComponent("ProfileLineage", isDirectory: true)
+            .appendingPathComponent("latest-envelope.json")
+        let lineageBytes = try Data(contentsOf: lineageURL)
+        try Data("corrupt-lineage".utf8).write(to: lineageURL)
+        do {
+            _ = try await store.committedAssociation(
+                sourceDirectoryURL: sourceDirectory
+            )
+            XCTFail("A corrupt latest-lineage authority must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileInitialAssociationStoreError,
+                .targetVerificationFailed
+            )
+        }
+        try lineageBytes.write(to: lineageURL)
+
+        var changedArchive = sourceArtifact.document
+        changedArchive.player.settings.value.isMuted.toggle()
+        changedArchive.player.settings.logicalCounter += 1
+        changedArchive.player.revision += 1
+        let changedArchiveArtifact = try PlayerProfileMigrator()
+            .canonicalArtifact(
+                for: changedArchive,
+                savedAt: baseDate.addingTimeInterval(6)
+            )
+        try changedArchiveArtifact.exactBytes.write(
+            to: sourceLocations.primaryURL
+        )
+        try changedArchiveArtifact.exactBytes.write(
+            to: sourceLocations.backupURL
+        )
+        do {
+            _ = try await store.committedAssociation(
+                sourceDirectoryURL: sourceDirectory
+            )
+            XCTFail("A changed source archive must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileInitialAssociationStoreError,
+                .sourceCASMismatch
+            )
+        }
+        try sourceArtifact.exactBytes.write(to: sourceLocations.primaryURL)
+        try sourceArtifact.exactBytes.write(to: sourceLocations.backupURL)
+
+        let markerURL = sourceDirectory
+            .appendingPathComponent(
+                "ProfileCommittedAssociation",
+                isDirectory: true
+            )
+            .appendingPathComponent("association.json")
+        try Data("corrupt".utf8).write(to: markerURL)
+        do {
+            _ = try await store.committedAssociation(
+                sourceDirectoryURL: sourceDirectory
+            )
+            XCTFail("A corrupt committed marker must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? ProfileInitialAssociationStoreError,
+                .invalidJournal
+            )
+        }
+        do {
+            _ = try await sourceRepository.snapshot()
+            XCTFail("The local repository must be invalidated after adoption")
+        } catch {
+            XCTAssertEqual(error as? LocalPlayerRepositoryError, .notLoaded)
+        }
+    }
+
+    func testPublisherRejectsDifferentCurrentAccountWithoutWriting() async throws {
+        let expected = CloudAccountID("cloud-account-a")
+        let actual = CloudAccountID("cloud-account-b")
+        let transport = InMemoryCloudSyncTransport(accountState: .available(actual))
+        let planner = try makePublicationPlanner()
+        let artifact = try makeArtifact(makeDefaultDocument())
+        let session = ProfileSessionToken(
+            accountIdentity: .local,
+            nonce: UUID(),
+            profileID: artifact.document.player.profileID
+        )
+        let plan = try planner.makePlan(
+            sourceArtifact: artifact,
+            sourceSession: session,
+            cloudAccountID: expected
+        )
+
+        do {
+            _ = try await CloudInitialProfilePublisherV1(cloud: transport)
+                .publish(plan)
+            XCTFail("A different current account must fail before any write")
+        } catch {
+            XCTAssertEqual(
+                error as? CloudInitialProfilePublicationError,
+                .accountChanged
+            )
+        }
+        let expectedRecords = await transport.allRecords(for: expected)
+        let actualRecords = await transport.allRecords(for: actual)
+        XCTAssertEqual(expectedRecords, [])
+        XCTAssertEqual(actualRecords, [])
     }
 
     func testStoreKitAndRewardedAdHistoryRequireOwnerPolicy() throws {
@@ -153,8 +572,9 @@ final class CloudInitialProfileSeedTests: XCTestCase {
         )
         document.player.rewardedAdState = RewardedAdState(cycle: 1)
 
+        let artifact = try makeArtifact(document)
         let seed = try CloudInitialProfileSeedBuilderV1().makeSeed(
-            from: makeArtifact(document)
+            from: artifact
         )
         guard case let .requiresOwnerPolicy(reasons) = seed.debugEligibility else {
             return XCTFail("Expected owner policy")
@@ -163,6 +583,20 @@ final class CloudInitialProfileSeedTests: XCTestCase {
         XCTAssertTrue(reasons.contains(.rewardedAdHistory(rewardedID)))
         XCTAssertTrue(reasons.contains(.confirmedLedgerEntry(storeKitID)))
         XCTAssertTrue(reasons.contains(.confirmedLedgerEntry(rewardedID)))
+        XCTAssertThrowsError(try makePublicationPlanner().makePlan(
+            sourceArtifact: artifact,
+            sourceSession: ProfileSessionToken(
+                accountIdentity: .local,
+                nonce: UUID(),
+                profileID: artifact.document.player.profileID
+            ),
+            cloudAccountID: CloudAccountID("cloud-account-a")
+        )) { error in
+            XCTAssertEqual(
+                error as? CloudInitialProfilePublicationError,
+                .ownerPolicyRequired
+            )
+        }
     }
 
     func testUnlockedInventoryDebitAndPaidHistoryRequireOwnerPolicy() throws {
@@ -733,6 +1167,44 @@ final class CloudInitialProfileSeedTests: XCTestCase {
             accountIdentity: accountIdentity,
             deviceID: "device-a",
             createdAt: baseDate
+        )
+    }
+
+    private func makeEmptyCheckpoint(
+        accountID: CloudAccountID
+    ) throws -> CloudReplicaCheckpointV1 {
+        try CloudReplicaCheckpointV1(
+            accountID: accountID,
+            configurationScopeFingerprint:
+                CloudReplicaScopeFingerprint(
+                    rawValue: String(repeating: "a", count: 64)
+                ),
+            generation: 1,
+            finalCursor: CloudChangeCursor(Data([1])),
+            recordsByLogicalID: [:],
+            providerLocatorByLogicalID: [:],
+            logicalIDByProviderLocator: [:],
+            tombstonesByProviderLocator: [:],
+            replicaEpoch: UUID()
+        )
+    }
+
+    private func makePublicationPlanner() throws
+        -> CloudInitialProfilePublicationPlannerV1
+    {
+        CloudInitialProfilePublicationPlannerV1(
+            profileConfiguration: try CloudProfileSchemaConfiguration(
+                rootRecordType: "ProfileRoot",
+                settingsRecordType: "ProfileSettings",
+                selectionRecordType: "ProfileSelection",
+                runRecordType: "ProfileRun",
+                payloadFieldName: "payload"
+            ),
+            economyConfiguration: try DurableEconomyCloudConfiguration(
+                recordID: CloudRecordID("economy-head"),
+                recordType: "EconomyRecord",
+                payloadFieldName: "payload"
+            )
         )
     }
 

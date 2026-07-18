@@ -183,6 +183,12 @@ enum AppExternalRequest: Equatable, Sendable {
 
 enum AppExternalRequestResult: Equatable, Sendable {
     case applied(AuthoritativeAppStateSnapshot)
+    case appliedWithNotice(AuthoritativeAppStateSnapshot, message: String)
+    case adoptedVerifiedPrivateCloud(
+        AuthoritativeAppStateSnapshot,
+        authority: ProductionVerifiedSessionAdoption,
+        message: String?
+    )
     case completed
     case failed(message: String)
 }

@@ -121,9 +121,10 @@ struct StoreKit2OwnedUpdateListener<Element: Sendable>: Sendable {
 /// and Transaction instances.
 protocol StoreKit2PlatformClient: Sendable {
     func products(for identifiers: Set<String>) async throws -> [StoreKit2PlatformProduct]
-    func purchase(
+    func purchaseAuthorized(
         productIdentifier: String,
-        appAccountToken: UUID
+        appAccountToken: UUID,
+        finalAuthorization: @escaping @Sendable () async throws -> Void
     ) async throws -> StoreKit2PlatformPurchaseResult
     func unfinishedTransactions() async -> [StoreKit2PlatformVerification]
     func transactionUpdates() async -> StoreKit2OwnedUpdateListener<StoreKit2PlatformVerification>
@@ -144,9 +145,10 @@ actor LiveStoreKit2PlatformClient: StoreKit2PlatformClient {
         return products.map(Self.snapshot)
     }
 
-    func purchase(
+    func purchaseAuthorized(
         productIdentifier: String,
-        appAccountToken: UUID
+        appAccountToken: UUID,
+        finalAuthorization: @escaping @Sendable () async throws -> Void
     ) async throws -> StoreKit2PlatformPurchaseResult {
         let product: Product
         if let cached = productsByIdentifier[productIdentifier] {
@@ -160,6 +162,13 @@ actor LiveStoreKit2PlatformClient: StoreKit2PlatformClient {
             product = first
         }
 
+        // This is the last suspension boundary before StoreKit presentation.
+        // Resolve every product first, then revalidate the exact cloud/account
+        // generation inside the platform-client actor and honor cancellation
+        // immediately before asking StoreKit to open its sheet.
+        try Task.checkCancellation()
+        try await finalAuthorization()
+        try Task.checkCancellation()
         let result = try await product.purchase(
             options: [.appAccountToken(appAccountToken)]
         )
@@ -361,8 +370,46 @@ enum StoreKit2TransactionRejection: Equatable, Sendable {
 }
 
 enum StoreKit2TransactionDeferral: Equatable, Sendable {
+    /// The durable credit could not reach or revalidate the exact private-cloud
+    /// account. Presentation maps only this bounded case to the online warning.
+    case durableDeliveryConnectivityUnavailable
+    /// A non-connectivity durable-delivery failure. This remains distinct so
+    /// integrity, quota, and storage failures are never mislabeled as offline.
     case durableDeliveryUnavailable
     case finishUnavailable
+}
+
+private enum StoreKit2DurableDeliveryFailureClassifier {
+    static func isConnectivityUnavailable(_ error: any Error) -> Bool {
+        if let failure = error as? DurableEconomyCoordinatorError {
+            switch failure {
+            case .noCurrentSession, .staleSession, .profileSessionMismatch,
+                 .cloudAccountUnavailable, .cloudAccountMismatch,
+                 .cloudRebaseRequired, .economyRevisionChanged:
+                return true
+            default:
+                return false
+            }
+        }
+        if let failure = error as? CloudSyncTransportError {
+            switch failure {
+            case .accountUnavailable, .accountMismatch:
+                return true
+            case .conflict, .operationIDCollision:
+                return false
+            }
+        }
+        if let failure = error as? CloudKitCloudSyncError {
+            switch failure {
+            case .accountRestricted, .accountTemporarilyUnavailable,
+                 .networkUnavailable, .serviceUnavailable, .rateLimited:
+                return true
+            default:
+                return false
+            }
+        }
+        return (error as NSError).domain == NSURLErrorDomain
+    }
 }
 
 enum StoreKit2TransactionProcessingResult: Equatable, Sendable {
@@ -408,9 +455,28 @@ actor StoreKit2CoinTransactionAdapter {
         try await validatedProducts(for: configuration.orderedLaunchPackIDs)
     }
 
-    func purchase(
+    /// The online-commerce entry point performs product/configuration work
+    /// first, then revalidates the exact private-cloud generation immediately
+    /// before asking StoreKit to present a purchase sheet.
+    func purchaseOnline(
         _ packID: CoinPackID,
-        session: StoreActiveSession
+        session: StoreActiveSession,
+        expected context: DurableEconomySessionContext,
+        authorizer: any OnlineCommerceTransactionAuthorizing
+    ) async throws -> StoreKit2CoinPurchaseResult {
+        try await purchaseImpl(
+            packID,
+            session: session,
+            context: context,
+            authorizer: authorizer
+        )
+    }
+
+    private func purchaseImpl(
+        _ packID: CoinPackID,
+        session: StoreActiveSession,
+        context: DurableEconomySessionContext,
+        authorizer: any OnlineCommerceTransactionAuthorizing
     ) async throws -> StoreKit2CoinPurchaseResult {
         _ = try await validatedProducts(for: [packID])
 
@@ -423,11 +489,30 @@ actor StoreKit2CoinTransactionAdapter {
 
         let result: StoreKit2PlatformPurchaseResult
         do {
-            result = try await platformClient.purchase(
+            result = try await platformClient.purchaseAuthorized(
                 productIdentifier: productIdentifier,
-                appAccountToken: session.binding.appAccountToken
+                appAccountToken: session.binding.appAccountToken,
+                finalAuthorization: {
+                    guard session == context.storeSession else {
+                        throw DurableEconomyCoordinatorError.staleSession
+                    }
+                    try await authorizer.revalidate(expected: context)
+                    try Task.checkCancellation()
+                }
             )
         } catch {
+            // Authorization now runs inside the platform client so it can be
+            // adjacent to `Product.purchase`. Preserve its bounded account and
+            // cancellation failures for the outer commerce boundary instead of
+            // rewriting them as StoreKit availability failures.
+            if error is CancellationError
+                || error is DurableEconomyCoordinatorError
+                || error is CloudSyncTransportError
+                || error is CloudKitCloudSyncError
+                || error is LocalPlayerRepositoryError
+            {
+                throw error
+            }
             if case StoreKitError.userCancelled = error {
                 return .userCancelled
             }
@@ -614,7 +699,10 @@ actor StoreKit2CoinTransactionAdapter {
         } catch {
             return .deferred(
                 transactionID: transaction.transactionID,
-                reason: .durableDeliveryUnavailable
+                reason: StoreKit2DurableDeliveryFailureClassifier
+                    .isConnectivityUnavailable(error)
+                    ? .durableDeliveryConnectivityUnavailable
+                    : .durableDeliveryUnavailable
             )
         }
         guard acknowledgement.session == session,

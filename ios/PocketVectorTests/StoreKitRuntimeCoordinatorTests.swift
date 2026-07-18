@@ -237,6 +237,8 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
 
     func testDeferredLiveUpdateBlocksConcurrentPurchaseCompletionUntilRetry() async {
         let session = storeSession(10)
+        let context = try! commerceContext(session: session, index: 10)
+        let authorizer = OnlineCommerceTestAuthorizer()
         let purchaseGate = StoreKitRuntimeTestGate()
         let adapter = StoreKitRuntimeTestAdapter(products: localizedProducts(prefix: "Store"))
         await adapter.enqueuePurchase(.userCancelled, gate: purchaseGate)
@@ -248,7 +250,13 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
         await assertEventually {
             await coordinator.snapshot().phase == .available
         }
-        await assertEqual({ await coordinator.purchase(packID) }, .started)
+        let purchase = Task {
+            await coordinator.purchaseAndWait(
+                packID,
+                expected: context,
+                authorizer: authorizer
+            )
+        }
         await assertEventually { await adapter.activePurchaseCount() == 1 }
 
         await adapter.emit(
@@ -270,10 +278,20 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
         let blockedState = await coordinator.snapshot()
 
         await purchaseGate.open()
+        _ = await purchase.value
         await assertEventually { await adapter.activePurchaseCount() == 0 }
         for _ in 0 ..< 100 { await Task.yield() }
         await assertEqual({ await coordinator.snapshot() }, blockedState)
-        await assertEqual({ await coordinator.purchase(packID) }, .productUnavailable)
+        await assertEqual(
+            {
+                await coordinator.purchaseAndWait(
+                    packID,
+                    expected: context,
+                    authorizer: authorizer
+                )
+            },
+            .productUnavailable
+        )
 
         await assertEqual({ await coordinator.retry() }, .activated)
         await assertEventually {
@@ -305,6 +323,8 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
 
     func testPurchaseSerializationPendingCorrelationAndBoundedOutcomeMapping() async {
         let session = storeSession(7)
+        let context = try! commerceContext(session: session, index: 7)
+        let authorizer = OnlineCommerceTestAuthorizer()
         let purchaseGate = StoreKitRuntimeTestGate()
         let adapter = StoreKitRuntimeTestAdapter(products: localizedProducts(prefix: "Store"))
         await adapter.enqueuePurchase(.pending, gate: purchaseGate)
@@ -339,19 +359,41 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
             await coordinator.snapshot().phase == .available
         }
 
-        await assertEqual({ await coordinator.purchase(packID) }, .started)
+        let firstPurchase = Task {
+            await coordinator.purchaseAndWait(
+                packID,
+                expected: context,
+                authorizer: authorizer
+            )
+        }
         await assertEventually {
             await adapter.events().contains(.purchase(packID, session.nonce))
         }
         await assertEqual(
-            { await coordinator.purchase(EconomyConfiguration.coinPacks[1].id) },
+            {
+                await coordinator.purchaseAndWait(
+                    EconomyConfiguration.coinPacks[1].id,
+                    expected: context,
+                    authorizer: authorizer
+                )
+            },
             .purchaseAlreadyInFlight
         )
         await purchaseGate.open()
+        await assertEqual({ await firstPurchase.value }, .pending)
         await assertEventually {
             await coordinator.snapshot().phase == .pending(packID)
         }
-        await assertEqual({ await coordinator.purchase(packID) }, .purchasePending)
+        await assertEqual(
+            {
+                await coordinator.purchaseAndWait(
+                    packID,
+                    expected: context,
+                    authorizer: authorizer
+                )
+            },
+            .purchasePending
+        )
 
         await adapter.emit(
             .deliveredAndFinished(
@@ -370,7 +412,16 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
                     outcome: .delivered(.alreadyCommitted)
                 )
         }
-        await assertEqual({ await coordinator.purchase(packID) }, .purchasePending)
+        await assertEqual(
+            {
+                await coordinator.purchaseAndWait(
+                    packID,
+                    expected: context,
+                    authorizer: authorizer
+                )
+            },
+            .purchasePending
+        )
 
         await adapter.emit(
             .deliveredAndFinished(
@@ -390,12 +441,30 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
                 )
         }
 
-        await assertEqual({ await coordinator.purchase(packID) }, .started)
+        await assertEqual(
+            {
+                await coordinator.purchaseAndWait(
+                    packID,
+                    expected: context,
+                    authorizer: authorizer
+                )
+            },
+            .userCancelled
+        )
         await assertEventually {
             await coordinator.snapshot().latestOutcome == .purchaseCancelled(packID)
         }
 
-        await assertEqual({ await coordinator.purchase(packID) }, .started)
+        await assertEqual(
+            {
+                await coordinator.purchaseAndWait(
+                    packID,
+                    expected: context,
+                    authorizer: authorizer
+                )
+            },
+            .processed(.rejected(.revokedTransaction))
+        )
         await assertEventually {
             await coordinator.snapshot().latestOutcome == .processed(
                 source: .purchase(packID),
@@ -403,7 +472,18 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
             )
         }
 
-        await assertEqual({ await coordinator.purchase(packID) }, .started)
+        await assertEqual(
+            {
+                await coordinator.purchaseAndWait(
+                    packID,
+                    expected: context,
+                    authorizer: authorizer
+                )
+            },
+            .processed(
+                .deferred(.durableDeliveryUnavailable)
+            )
+        )
         await assertEventually {
             let state = await coordinator.snapshot()
             return state.phase == .unavailable(
@@ -418,7 +498,16 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
         await assertEventually {
             await coordinator.snapshot().phase == .available
         }
-        await assertEqual({ await coordinator.purchase(packID) }, .started)
+        await assertEqual(
+            {
+                await coordinator.purchaseAndWait(
+                    packID,
+                    expected: context,
+                    authorizer: authorizer
+                )
+            },
+            .processed(.delivered(.committed))
+        )
         await assertEventually {
             await coordinator.snapshot().latestOutcome == .processed(
                 source: .purchase(packID),
@@ -430,6 +519,8 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
 
     func testDeactivateWaitsForPurchaseCleanupAndSuppressesStaleCompletion() async {
         let session = storeSession(8)
+        let context = try! commerceContext(session: session, index: 8)
+        let authorizer = OnlineCommerceTestAuthorizer()
         let purchaseGate = StoreKitRuntimeTestGate()
         let adapter = StoreKitRuntimeTestAdapter(products: localizedProducts(prefix: "Store"))
         await adapter.enqueuePurchase(.userCancelled, gate: purchaseGate)
@@ -441,7 +532,13 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
         await assertEventually {
             await coordinator.snapshot().phase == .available
         }
-        await assertEqual({ await coordinator.purchase(packID) }, .started)
+        let purchase = Task {
+            await coordinator.purchaseAndWait(
+                packID,
+                expected: context,
+                authorizer: authorizer
+            )
+        }
         await assertEventually { await adapter.activePurchaseCount() == 1 }
 
         let deactivation = Task {
@@ -455,6 +552,7 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
 
         await purchaseGate.open()
         let deactivated = await deactivation.value
+        await assertEqual({ await purchase.value }, .cancelled)
         XCTAssertTrue(deactivated)
         await assertEqual({ await adapter.activePurchaseCount() }, 0)
         await assertEqual({ await coordinator.snapshot() }, .inactive)
@@ -529,6 +627,474 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
         XCTAssertEqual(initialState, .inactive)
     }
 
+    func testAwaitedOnlinePurchaseRejectsDuplicateWithoutOpeningSecondSheet() async throws {
+        let session = storeSession(20)
+        let context = try commerceContext(session: session, index: 20)
+        let purchaseGate = StoreKitRuntimeTestGate()
+        let adapter = StoreKitRuntimeTestAdapter(products: localizedProducts(prefix: "Store"))
+        await adapter.enqueuePurchase(.userCancelled, gate: purchaseGate)
+        let source = StoreKitRuntimeTestSessionSource(session: session)
+        let authorizer = OnlineCommerceTestAuthorizer()
+        let coordinator = StoreKitRuntimeCoordinator(adapter: adapter, sessionSource: source)
+        let packID = EconomyConfiguration.coinPacks[0].id
+
+        await assertEqual({ await coordinator.activate() }, .activated)
+        await assertEventually { await coordinator.snapshot().phase == .available }
+
+        let first = Task {
+            await coordinator.purchaseAndWait(
+                packID,
+                expected: context,
+                authorizer: authorizer
+            )
+        }
+        await assertEventually { await adapter.activePurchaseCount() == 1 }
+        let duplicate = await coordinator.purchaseAndWait(
+            packID,
+            expected: context,
+            authorizer: authorizer
+        )
+        XCTAssertEqual(duplicate, .purchaseAlreadyInFlight)
+        let purchaseCount = await adapter.events().filter {
+            if case .purchase = $0 { return true }
+            return false
+        }.count
+        XCTAssertEqual(purchaseCount, 1)
+
+        await purchaseGate.open()
+        let firstResult = await first.value
+        XCTAssertEqual(firstResult, .userCancelled)
+        await coordinator.shutdown()
+    }
+
+    func testCancelledAwaitedAuthorizationNeverOpensStoreKitSheet() async throws {
+        let session = storeSession(21)
+        let context = try commerceContext(session: session, index: 21)
+        let adapter = StoreKitRuntimeTestAdapter(products: localizedProducts(prefix: "Store"))
+        let source = StoreKitRuntimeTestSessionSource(session: session)
+        let authorizationGate = OnlineCommerceCancellationGate()
+        let authorizer = OnlineCommerceTestAuthorizer(gate: authorizationGate)
+        let coordinator = StoreKitRuntimeCoordinator(adapter: adapter, sessionSource: source)
+        let packID = EconomyConfiguration.coinPacks[0].id
+
+        await assertEqual({ await coordinator.activate() }, .activated)
+        await assertEventually { await coordinator.snapshot().phase == .available }
+        let request = Task {
+            await coordinator.purchaseAndWait(
+                packID,
+                expected: context,
+                authorizer: authorizer
+            )
+        }
+        await assertEventually { await authorizer.requestCount() == 1 }
+        request.cancel()
+
+        let requestResult = await request.value
+        let purchaseCount = await adapter.events().filter {
+            if case .purchase = $0 { return true }
+            return false
+        }.count
+        XCTAssertEqual(requestResult, .cancelled)
+        XCTAssertEqual(purchaseCount, 0)
+        await coordinator.shutdown()
+    }
+
+    func testOfflineCommerceAttemptLeavesCompleteProfileSnapshotUnchanged() async throws {
+        let fixture = try commerceFixture(index: 22)
+        let recorder = OnlineCommerceTestRecorder()
+        let authorizer = OnlineCommerceTestAuthorizer(
+            failures: [.network],
+            recorder: recorder
+        )
+        let economy = OnlineCommerceTestEconomy(recorder: recorder)
+        let refresher = OnlineCommerceTestRefresher(
+            snapshot: fixture.snapshot,
+            recorder: recorder
+        )
+        let store = OnlineCommerceTestStore(recorder: recorder)
+        let coordinator = OnlineCommerceCoordinator(
+            context: fixture.context,
+            authorizer: authorizer,
+            economy: economy,
+            refresher: refresher,
+            store: store
+        )
+        let before = await refresher.currentSnapshot()
+
+        let result = await coordinator.requestCoinPack(
+            EconomyConfiguration.coinPacks[0].id
+        )
+
+        XCTAssertEqual(result, .failed(.onlineRequired))
+        let after = await refresher.currentSnapshot()
+        let events = await recorder.events()
+        let confirmationCount = await economy.confirmCount()
+        let sheetCount = await store.sheetCount()
+        XCTAssertEqual(after, before)
+        XCTAssertEqual(events, [.authorize])
+        XCTAssertEqual(confirmationCount, 0)
+        XCTAssertEqual(sheetCount, 0)
+    }
+
+    func testOnlineCoinPackConfirmsPendingThenRefreshesBeforeFinalAuthorization() async throws {
+        let fixture = try commerceFixture(index: 23)
+        let recorder = OnlineCommerceTestRecorder()
+        let authorizer = OnlineCommerceTestAuthorizer(recorder: recorder)
+        let economy = OnlineCommerceTestEconomy(recorder: recorder)
+        let refresher = OnlineCommerceTestRefresher(
+            snapshot: fixture.snapshot,
+            recorder: recorder
+        )
+        let store = OnlineCommerceTestStore(recorder: recorder)
+        let coordinator = OnlineCommerceCoordinator(
+            context: fixture.context,
+            authorizer: authorizer,
+            economy: economy,
+            refresher: refresher,
+            store: store
+        )
+
+        let result = await coordinator.requestCoinPack(
+            EconomyConfiguration.coinPacks[0].id
+        )
+
+        XCTAssertEqual(result, .completed(.userCancelled))
+        let events = await recorder.events()
+        XCTAssertEqual(
+            events,
+            [.authorize, .confirmPending, .refresh, .authorize, .storeSheet]
+        )
+    }
+
+    func testConnectivityLossAtFinalCoinPackAuthorizationOpensNoSheet() async throws {
+        let fixture = try commerceFixture(index: 24)
+        let recorder = OnlineCommerceTestRecorder()
+        let authorizer = OnlineCommerceTestAuthorizer(
+            failures: [nil, .service],
+            recorder: recorder
+        )
+        let economy = OnlineCommerceTestEconomy(recorder: recorder)
+        let refresher = OnlineCommerceTestRefresher(
+            snapshot: fixture.snapshot,
+            recorder: recorder
+        )
+        let store = OnlineCommerceTestStore(recorder: recorder)
+        let coordinator = OnlineCommerceCoordinator(
+            context: fixture.context,
+            authorizer: authorizer,
+            economy: economy,
+            refresher: refresher,
+            store: store
+        )
+        let before = await refresher.currentSnapshot()
+
+        let result = await coordinator.requestCoinPack(
+            EconomyConfiguration.coinPacks[0].id
+        )
+
+        XCTAssertEqual(result, .failed(.onlineRequired))
+        let after = await refresher.currentSnapshot()
+        let sheetCount = await store.sheetCount()
+        let events = await recorder.events()
+        XCTAssertEqual(after, before)
+        XCTAssertEqual(sheetCount, 0)
+        XCTAssertEqual(events, [.authorize, .confirmPending, .refresh, .authorize])
+    }
+
+    func testDuplicateCoinPackTapIsFailFastAndOpensOneSheet() async throws {
+        let fixture = try commerceFixture(index: 25)
+        let recorder = OnlineCommerceTestRecorder()
+        let authorizer = OnlineCommerceTestAuthorizer(recorder: recorder)
+        let economy = OnlineCommerceTestEconomy(recorder: recorder)
+        let refresher = OnlineCommerceTestRefresher(
+            snapshot: fixture.snapshot,
+            recorder: recorder
+        )
+        let storeGate = StoreKitRuntimeTestGate()
+        let store = OnlineCommerceTestStore(recorder: recorder, gate: storeGate)
+        let coordinator = OnlineCommerceCoordinator(
+            context: fixture.context,
+            authorizer: authorizer,
+            economy: economy,
+            refresher: refresher,
+            store: store
+        )
+        let packID = EconomyConfiguration.coinPacks[0].id
+
+        let first = Task { await coordinator.requestCoinPack(packID) }
+        await assertEventually { await store.sheetCount() == 1 }
+        let duplicate = await coordinator.requestCoinPack(packID)
+        let sheetCount = await store.sheetCount()
+        XCTAssertEqual(duplicate, .failed(.requestAlreadyInFlight))
+        XCTAssertEqual(sheetCount, 1)
+        await storeGate.open()
+        let firstResult = await first.value
+        XCTAssertEqual(firstResult, .completed(.userCancelled))
+    }
+
+    func testOfflineCatalogUnlockLeavesCompleteProfileSnapshotUnchanged()
+        async throws
+    {
+        let fixture = try commerceFixture(index: 28)
+        let recorder = OnlineCommerceTestRecorder()
+        let authorizer = OnlineCommerceTestAuthorizer(
+            failures: [.network],
+            recorder: recorder
+        )
+        let economy = OnlineCommerceTestEconomy(recorder: recorder)
+        let refresher = OnlineCommerceTestRefresher(
+            snapshot: fixture.snapshot,
+            recorder: recorder
+        )
+        let coordinator = OnlineCommerceCoordinator(
+            context: fixture.context,
+            authorizer: authorizer,
+            economy: economy,
+            refresher: refresher,
+            store: OnlineCommerceTestStore(recorder: recorder)
+        )
+        let before = await refresher.currentSnapshot()
+        let itemID = try XCTUnwrap(
+            LaunchCatalog.approved.unlockableItems.first?.id
+        )
+
+        let result = await coordinator.purchaseCatalogItem(
+            itemID,
+            requestOperationID: OperationID("offline-catalog-unlock")
+        )
+
+        XCTAssertEqual(result, .failed(.onlineRequired))
+        let after = await refresher.currentSnapshot()
+        let events = await recorder.events()
+        let confirmationCount = await economy.confirmCount()
+        let unlockCount = await economy.unlockCount()
+        XCTAssertEqual(after, before)
+        XCTAssertEqual(events, [.authorize])
+        XCTAssertEqual(confirmationCount, 0)
+        XCTAssertEqual(unlockCount, 0)
+    }
+
+    func testOnlineCatalogUnlockConfirmsRefreshesReauthorizesThenUnlocks()
+        async throws
+    {
+        let fixture = try commerceFixture(index: 29)
+        let recorder = OnlineCommerceTestRecorder()
+        let itemID = try XCTUnwrap(
+            LaunchCatalog.approved.unlockableItems.first?.id
+        )
+        let expected = catalogUnlockResult(itemID: itemID, index: 29)
+        let economy = OnlineCommerceTestEconomy(
+            recorder: recorder,
+            unlockResult: expected
+        )
+        let coordinator = OnlineCommerceCoordinator(
+            context: fixture.context,
+            authorizer: OnlineCommerceTestAuthorizer(recorder: recorder),
+            economy: economy,
+            refresher: OnlineCommerceTestRefresher(
+                snapshot: fixture.snapshot,
+                recorder: recorder
+            ),
+            store: OnlineCommerceTestStore(recorder: recorder)
+        )
+
+        let result = await coordinator.purchaseCatalogItem(
+            itemID,
+            requestOperationID: OperationID("online-catalog-unlock")
+        )
+
+        XCTAssertEqual(result, .purchased(expected))
+        let events = await recorder.events()
+        let unlockCount = await economy.unlockCount()
+        XCTAssertEqual(
+            events,
+            [.authorize, .confirmPending, .refresh, .authorize, .unlock]
+        )
+        XCTAssertEqual(unlockCount, 1)
+    }
+
+    func testConnectivityLossAtFinalCatalogAuthorizationPerformsNoUnlock()
+        async throws
+    {
+        let fixture = try commerceFixture(index: 30)
+        let recorder = OnlineCommerceTestRecorder()
+        let itemID = try XCTUnwrap(
+            LaunchCatalog.approved.unlockableItems.first?.id
+        )
+        let economy = OnlineCommerceTestEconomy(
+            recorder: recorder,
+            unlockResult: catalogUnlockResult(itemID: itemID, index: 30)
+        )
+        let refresher = OnlineCommerceTestRefresher(
+            snapshot: fixture.snapshot,
+            recorder: recorder
+        )
+        let coordinator = OnlineCommerceCoordinator(
+            context: fixture.context,
+            authorizer: OnlineCommerceTestAuthorizer(
+                failures: [nil, .service],
+                recorder: recorder
+            ),
+            economy: economy,
+            refresher: refresher,
+            store: OnlineCommerceTestStore(recorder: recorder)
+        )
+        let before = await refresher.currentSnapshot()
+
+        let result = await coordinator.purchaseCatalogItem(
+            itemID,
+            requestOperationID: OperationID("lost-catalog-authorization")
+        )
+
+        XCTAssertEqual(result, .failed(.onlineRequired))
+        let after = await refresher.currentSnapshot()
+        let unlockCount = await economy.unlockCount()
+        let events = await recorder.events()
+        XCTAssertEqual(after, before)
+        XCTAssertEqual(unlockCount, 0)
+        XCTAssertEqual(
+            events,
+            [.authorize, .confirmPending, .refresh, .authorize]
+        )
+    }
+
+    func testDuplicateCatalogUnlockIsFailFastAndEachRetryHasOneAdmission()
+        async throws
+    {
+        let fixture = try commerceFixture(index: 31)
+        let recorder = OnlineCommerceTestRecorder()
+        let itemID = try XCTUnwrap(
+            LaunchCatalog.approved.unlockableItems.first?.id
+        )
+        let expected = catalogUnlockResult(itemID: itemID, index: 31)
+        let unlockGate = StoreKitRuntimeTestGate()
+        let economy = OnlineCommerceTestEconomy(
+            recorder: recorder,
+            unlockResult: expected,
+            unlockGate: unlockGate
+        )
+        let coordinator = OnlineCommerceCoordinator(
+            context: fixture.context,
+            authorizer: OnlineCommerceTestAuthorizer(recorder: recorder),
+            economy: economy,
+            refresher: OnlineCommerceTestRefresher(
+                snapshot: fixture.snapshot,
+                recorder: recorder
+            ),
+            store: OnlineCommerceTestStore(recorder: recorder)
+        )
+
+        let first = Task {
+            await coordinator.purchaseCatalogItem(
+                itemID,
+                requestOperationID: OperationID("catalog-first")
+            )
+        }
+        await assertEventually { await economy.unlockCount() == 1 }
+
+        let duplicate = await coordinator.purchaseCatalogItem(
+            itemID,
+            requestOperationID: OperationID("catalog-duplicate")
+        )
+        let unlockCountAfterDuplicate = await economy.unlockCount()
+        XCTAssertEqual(duplicate, .failed(.requestAlreadyInFlight))
+        XCTAssertEqual(unlockCountAfterDuplicate, 1)
+
+        await unlockGate.open()
+        let firstResult = await first.value
+        XCTAssertEqual(firstResult, .purchased(expected))
+
+        let retry = await coordinator.purchaseCatalogItem(
+            itemID,
+            requestOperationID: OperationID("catalog-retry")
+        )
+        let finalUnlockCount = await economy.unlockCount()
+        XCTAssertEqual(retry, .purchased(expected))
+        XCTAssertEqual(
+            finalUnlockCount,
+            2,
+            "Only the first tap and one explicit retry may reach durable unlock"
+        )
+    }
+
+    func testOnlyConnectivityDurableDeferralMapsToOnlineWarning() async throws {
+        let fixture = try commerceFixture(index: 26)
+        let connectivityRecorder = OnlineCommerceTestRecorder()
+        let connectivityCoordinator = OnlineCommerceCoordinator(
+            context: fixture.context,
+            authorizer: OnlineCommerceTestAuthorizer(recorder: connectivityRecorder),
+            economy: OnlineCommerceTestEconomy(recorder: connectivityRecorder),
+            refresher: OnlineCommerceTestRefresher(
+                snapshot: fixture.snapshot,
+                recorder: connectivityRecorder
+            ),
+            store: OnlineCommerceTestStore(
+                recorder: connectivityRecorder,
+                completion: .processed(
+                    .deferred(.durableDeliveryConnectivityUnavailable)
+                )
+            )
+        )
+        let connectivityResult = await connectivityCoordinator.requestCoinPack(
+            EconomyConfiguration.coinPacks[0].id
+        )
+        XCTAssertEqual(connectivityResult, .failed(.onlineRequired))
+
+        let integrityRecorder = OnlineCommerceTestRecorder()
+        let integrityCoordinator = OnlineCommerceCoordinator(
+            context: fixture.context,
+            authorizer: OnlineCommerceTestAuthorizer(recorder: integrityRecorder),
+            economy: OnlineCommerceTestEconomy(recorder: integrityRecorder),
+            refresher: OnlineCommerceTestRefresher(
+                snapshot: fixture.snapshot,
+                recorder: integrityRecorder
+            ),
+            store: OnlineCommerceTestStore(
+                recorder: integrityRecorder,
+                completion: .processed(.deferred(.durableDeliveryUnavailable))
+            )
+        )
+        let integrityResult = await integrityCoordinator.requestCoinPack(
+            EconomyConfiguration.coinPacks[0].id
+        )
+        XCTAssertEqual(
+            integrityResult,
+            .failed(
+                .store(
+                    .transactionDeferred(.durableDeliveryUnavailable)
+                )
+            )
+        )
+    }
+
+    func testPrivateCloudAuthorizerProbesNetworkAndRejectsAccountLossAfterProbe() async throws {
+        let fixture = try commerceFixture(index: 27)
+        let authority = DurableEconomySessionAuthority(context: fixture.context)
+        let cloud = OnlineCommerceTestCloud(
+            accountStates: [
+                .available(fixture.context.cloudAccountID),
+                .signedOut,
+            ]
+        )
+        let authorizer = PrivateCloudCommerceTransactionAuthorizer(
+            sessionAuthority: authority,
+            cloud: cloud,
+            networkProbeRecordID: CloudRecordID("commerce-network-probe")
+        )
+
+        do {
+            try await authorizer.revalidate(expected: fixture.context)
+            XCTFail("Account loss after the network probe must fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? DurableEconomyCoordinatorError,
+                .cloudAccountUnavailable
+            )
+        }
+        let events = await cloud.events()
+        XCTAssertEqual(events, [.accountState, .records, .accountState])
+    }
+
     private func localizedProducts(prefix: String) -> [StoreProduct] {
         EconomyConfiguration.coinPacks.enumerated().map { index, pack in
             StoreProduct(
@@ -550,6 +1116,63 @@ final class StoreKitRuntimeCoordinatorTests: XCTestCase {
                 appAccountToken: uuid(index * 10 + 2)
             ),
             nonce: uuid(index * 10 + 3)
+        )
+    }
+
+    private func commerceContext(
+        session: StoreActiveSession,
+        index: Int
+    ) throws -> DurableEconomySessionContext {
+        try DurableEconomySessionContext(
+            cloudAccountID: CloudAccountID("commerce-cloud-\(index)"),
+            accountBinding: session.binding.account,
+            profileSession: ProfileSessionToken(
+                accountIdentity: PlayerAccountIdentity("commerce-player-\(index)"),
+                nonce: session.nonce,
+                profileID: session.binding.account.profileID
+            ),
+            storeSession: session
+        )
+    }
+
+    private func commerceFixture(
+        index: Int
+    ) throws -> (context: DurableEconomySessionContext, snapshot: LocalPlayerProfileSnapshot) {
+        let session = storeSession(index)
+        let context = try commerceContext(session: session, index: index)
+        let document = PlayerProfileFactory.makeDefault(
+            profileID: context.profileSession.profileID,
+            accountIdentity: context.profileSession.accountIdentity,
+            deviceID: "commerce-device-\(index)",
+            createdAt: Date(timeIntervalSince1970: TimeInterval(index))
+        )
+        let snapshot = try PlayerProfileProjection.snapshot(
+            for: document,
+            session: context.profileSession,
+            syncStatus: .current
+        )
+        return (context, snapshot)
+    }
+
+    private func catalogUnlockResult(
+        itemID: CatalogItemID,
+        index: Int
+    ) -> DurableCatalogUnlockResult {
+        DurableCatalogUnlockResult(
+            outcome: CatalogUnlockOutcome(
+                itemID: itemID,
+                price: 500,
+                wasAlreadyUnlocked: false,
+                confirmedBalanceAfter: 1_000
+            ),
+            cloudReceipt: DurableEconomyCloudCommitReceipt(
+                accountID: CloudAccountID("catalog-cloud-\(index)"),
+                operationID: OperationID("catalog-operation-\(index)"),
+                recordID: CloudRecordID("catalog-record-\(index)"),
+                observedChangeTag: CloudChangeTag("catalog-tag-\(index)"),
+                cloudEconomyRevision: UInt64(index),
+                status: .committed
+            )
         )
     }
 
@@ -607,6 +1230,221 @@ private actor StoreKitRuntimeTestGate {
     func open() {
         isOpen = true
     }
+}
+
+private enum OnlineCommerceTestEvent: Equatable, Sendable {
+    case authorize
+    case confirmPending
+    case refresh
+    case unlock
+    case storeSheet
+}
+
+private enum OnlineCommerceTestAuthorizationFailure: Sendable {
+    case network
+    case service
+}
+
+private enum OnlineCommerceTestCloudEvent: Equatable, Sendable {
+    case accountState
+    case records
+}
+
+private actor OnlineCommerceTestCloud: CloudSyncTransport {
+    private var accountStates: [CloudAccountState]
+    private var recordedEvents: [OnlineCommerceTestCloudEvent] = []
+
+    init(accountStates: [CloudAccountState]) {
+        self.accountStates = accountStates
+    }
+
+    func accountState() -> CloudAccountState {
+        recordedEvents.append(.accountState)
+        return accountStates.isEmpty ? .unknown : accountStates.removeFirst()
+    }
+
+    func records(
+        accountID _: CloudAccountID,
+        ids _: [CloudRecordID]
+    ) throws -> [CloudRecord] {
+        recordedEvents.append(.records)
+        return []
+    }
+
+    func commitAtomically(
+        _ request: CloudAtomicWriteRequest
+    ) throws -> CloudAtomicWriteReceipt {
+        throw CloudKitCloudSyncError.invalidRequest
+    }
+
+    func events() -> [OnlineCommerceTestCloudEvent] { recordedEvents }
+}
+
+private actor OnlineCommerceTestRecorder {
+    private var recorded: [OnlineCommerceTestEvent] = []
+
+    func record(_ event: OnlineCommerceTestEvent) {
+        recorded.append(event)
+    }
+
+    func events() -> [OnlineCommerceTestEvent] {
+        recorded
+    }
+}
+
+private actor OnlineCommerceCancellationGate {
+    private var entered = false
+    private var open = false
+
+    func wait() async throws {
+        entered = true
+        while !open {
+            try Task.checkCancellation()
+            await Task.yield()
+        }
+    }
+
+    func hasEntered() -> Bool { entered }
+    func release() { open = true }
+}
+
+private actor OnlineCommerceTestAuthorizer: OnlineCommerceTransactionAuthorizing {
+    private var failures: [OnlineCommerceTestAuthorizationFailure?]
+    private let gate: OnlineCommerceCancellationGate?
+    private let recorder: OnlineCommerceTestRecorder?
+    private var requests = 0
+
+    init(
+        failures: [OnlineCommerceTestAuthorizationFailure?] = [],
+        gate: OnlineCommerceCancellationGate? = nil,
+        recorder: OnlineCommerceTestRecorder? = nil
+    ) {
+        self.failures = failures
+        self.gate = gate
+        self.recorder = recorder
+    }
+
+    func revalidate(
+        expected _: DurableEconomySessionContext
+    ) async throws {
+        requests += 1
+        await recorder?.record(.authorize)
+        try await gate?.wait()
+        try Task.checkCancellation()
+        let failure = failures.isEmpty ? nil : failures.removeFirst()
+        switch failure {
+        case .network:
+            throw CloudKitCloudSyncError.networkUnavailable(retryAfterSeconds: nil)
+        case .service:
+            throw CloudKitCloudSyncError.serviceUnavailable(retryAfterSeconds: nil)
+        case nil:
+            return
+        }
+    }
+
+    func requestCount() -> Int { requests }
+}
+
+private actor OnlineCommerceTestEconomy: OnlineCommerceDurableEconomyTransacting {
+    private let recorder: OnlineCommerceTestRecorder
+    private let unlockResult: DurableCatalogUnlockResult?
+    private let unlockGate: StoreKitRuntimeTestGate?
+    private var confirmations = 0
+    private var unlocks = 0
+
+    init(
+        recorder: OnlineCommerceTestRecorder,
+        unlockResult: DurableCatalogUnlockResult? = nil,
+        unlockGate: StoreKitRuntimeTestGate? = nil
+    ) {
+        self.recorder = recorder
+        self.unlockResult = unlockResult
+        self.unlockGate = unlockGate
+    }
+
+    func confirmAllPendingCredits() async throws -> DurablePendingCreditResult? {
+        confirmations += 1
+        await recorder.record(.confirmPending)
+        return nil
+    }
+
+    func unlock(
+        itemID _: CatalogItemID,
+        requestOperationID _: OperationID,
+        session _: ProfileSessionToken
+    ) async throws -> DurableCatalogUnlockResult {
+        unlocks += 1
+        await recorder.record(.unlock)
+        await unlockGate?.wait()
+        guard let unlockResult else {
+            throw DurableEconomyCoordinatorError.invalidCatalogUnlockRequest
+        }
+        return unlockResult
+    }
+
+    func confirmCount() -> Int { confirmations }
+    func unlockCount() -> Int { unlocks }
+}
+
+private actor OnlineCommerceTestRefresher: OnlineCommerceAuthoritativeRefreshing {
+    private var snapshot: LocalPlayerProfileSnapshot
+    private let recorder: OnlineCommerceTestRecorder
+
+    init(
+        snapshot: LocalPlayerProfileSnapshot,
+        recorder: OnlineCommerceTestRecorder
+    ) {
+        self.snapshot = snapshot
+        self.recorder = recorder
+    }
+
+    func refreshAuthoritativeProfile(
+        expected _: DurableEconomySessionContext
+    ) async throws -> LocalPlayerProfileSnapshot {
+        await recorder.record(.refresh)
+        return snapshot
+    }
+
+    func currentSnapshot() -> LocalPlayerProfileSnapshot { snapshot }
+}
+
+private actor OnlineCommerceTestStore: OnlineCommerceStorePurchasing {
+    private let recorder: OnlineCommerceTestRecorder
+    private let gate: StoreKitRuntimeTestGate?
+    private let completion: StoreKitRuntimePurchaseCompletion
+    private var sheets = 0
+
+    init(
+        recorder: OnlineCommerceTestRecorder,
+        gate: StoreKitRuntimeTestGate? = nil,
+        completion: StoreKitRuntimePurchaseCompletion = .userCancelled
+    ) {
+        self.recorder = recorder
+        self.gate = gate
+        self.completion = completion
+    }
+
+    func purchaseAndWait(
+        _ packID: CoinPackID,
+        expected context: DurableEconomySessionContext,
+        authorizer: any OnlineCommerceTransactionAuthorizing
+    ) async -> StoreKitRuntimePurchaseCompletion {
+        do {
+            try await authorizer.revalidate(expected: context)
+            try Task.checkCancellation()
+        } catch is CancellationError {
+            return .cancelled
+        } catch {
+            return .failed(StoreKitRuntimeFailure(error: error))
+        }
+        _ = packID
+        sheets += 1
+        await recorder.record(.storeSheet)
+        await gate?.wait()
+        return completion
+    }
+
+    func sheetCount() -> Int { sheets }
 }
 
 private actor StoreKitRuntimeTestFlag {
@@ -698,10 +1536,14 @@ private actor StoreKitRuntimeTestAdapter: StoreKit2CoinTransactionAdapting {
         return plan.products
     }
 
-    func purchase(
+    func purchaseOnline(
         _ packID: CoinPackID,
-        session: StoreActiveSession
+        session: StoreActiveSession,
+        expected context: DurableEconomySessionContext,
+        authorizer: any OnlineCommerceTransactionAuthorizing
     ) async throws -> StoreKit2CoinPurchaseResult {
+        try await authorizer.revalidate(expected: context)
+        try Task.checkCancellation()
         recordedEvents.append(.purchase(packID, session.nonce))
         activePurchases += 1
         defer { activePurchases -= 1 }

@@ -572,14 +572,17 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
         XCTAssertFalse(
             coordinator.state.inventory.ownedTeamIDs.contains(LaunchTeamID.lumaCoastPrisms)
         )
-        XCTAssertTrue(coordinator.noticeMessage?.contains("No coins were spent") == true)
+        XCTAssertEqual(
+            coordinator.noticeMessage,
+            ProductionAccountRuntimeRouter.onlinePurchaseWarning
+        )
 
         coordinator.dismissNotice()
         await coordinator.requestCoinPack(EconomyConfiguration.coinPacks[0].id)
         XCTAssertEqual(coordinator.state, before)
         XCTAssertEqual(
             coordinator.noticeMessage,
-            "Purchases are not enabled in this build."
+            ProductionAccountRuntimeRouter.onlinePurchaseWarning
         )
 
         coordinator.dismissNotice()
@@ -602,6 +605,236 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
         )
         await relaunched.bootstrap()
         XCTAssertEqual(relaunched.state, before)
+    }
+
+    @MainActor
+    func testOfflineCommerceAttemptsLeaveCompleteRepositorySnapshotUnchanged() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let account = PlayerAccountIdentity("offline-commerce-profile")
+        let deviceID = "offline-commerce-device"
+        let sessionNonce = fixedUUID(910)
+        let profileID = fixedUUID(911)
+        let clock = TestClock(Date(timeIntervalSince1970: 91_000))
+        let repository = LocalPlayerProfileRepository(
+            directoryURL: ProductionAppComposition.profileDirectoryURL(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: account
+            ),
+            deviceID: deviceID,
+            accountIdentity: account,
+            sessionNonce: sessionNonce,
+            economyMutationPolicy: .requireDurablePrivateCloud
+        )
+        let commerce = CompositionCommerceCapture(
+            result: .onlineRequired
+        )
+        let composition = ProductionAppComposition(
+            dependencies: ProductionAppDependencies(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: account,
+                deviceID: deviceID,
+                sessionNonce: sessionNonce,
+                newProfileID: profileID,
+                now: { clock.date },
+                makeRunID: { self.fixedRunID(910) },
+                makeSeed: { 910 }
+            ),
+            repository: repository,
+            commerceRequestService: commerce
+        )
+        let coordinator = AppCoordinator(environment: composition.environment)
+        await coordinator.bootstrap()
+        let before = try await repository.snapshot()
+        let lockedItem = try XCTUnwrap(
+            coordinator.catalog.unlockableItems.first
+        )
+        let packID = EconomyConfiguration.coinPacks[0].id
+
+        await coordinator.requestUnlock(lockedItem.id)
+        XCTAssertEqual(
+            coordinator.noticeMessage,
+            ProductionAccountRuntimeRouter.onlinePurchaseWarning
+        )
+        coordinator.dismissNotice()
+        await coordinator.requestCoinPack(packID)
+
+        let after = try await repository.snapshot()
+        let requests = await commerce.requests()
+        XCTAssertEqual(after, before)
+        XCTAssertEqual(
+            coordinator.noticeMessage,
+            ProductionAccountRuntimeRouter.onlinePurchaseWarning
+        )
+        XCTAssertEqual(
+            requests,
+            [.catalogUnlock(lockedItem.id), .coinPack(packID)]
+        )
+    }
+
+    @MainActor
+    func testSuccessfulCommerceRefreshesAuthoritativeStateFromRepository() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let account = PlayerAccountIdentity("successful-commerce-local-source")
+        let deviceID = "successful-commerce-device"
+        let sessionNonce = fixedUUID(920)
+        let profileID = fixedUUID(921)
+        let clock = TestClock(Date(timeIntervalSince1970: 92_000))
+        let sourceRepository = LocalPlayerProfileRepository(
+            directoryURL: ProductionAppComposition.profileDirectoryURL(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: account
+            ),
+            deviceID: deviceID,
+            accountIdentity: account,
+            sessionNonce: sessionNonce,
+            economyMutationPolicy: .requireDurablePrivateCloud
+        )
+        let repositoryRouter = ProductionProfileRepositoryRouter(
+            route: ProductionProfileRepositoryRoute(
+                repository: sourceRepository,
+                authority: .local(
+                    accountIdentity: account,
+                    sessionNonce: sessionNonce
+                )
+            )
+        )
+        let cloudAccountID = CloudAccountID("successful-commerce-cloud-account")
+        let bindings = CloudAccountDerivedBindings.derive(from: cloudAccountID)
+        let targetRepository = LocalPlayerProfileRepository(
+            directoryURL: ProductionAppComposition.profileDirectoryURL(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: bindings.playerAccountIdentity
+            ),
+            deviceID: deviceID,
+            accountIdentity: bindings.playerAccountIdentity,
+            sessionNonce: fixedUUID(922),
+            economyMutationPolicy: .requireDurablePrivateCloud
+        )
+        let targetSnapshot = try await targetRepository.load(
+            at: clock.date,
+            newProfileID: bindings.durableAccountBinding.profileID
+        )
+        let claim = try await ProductionVerifiedAccountClaim(
+            cloudAccountID: cloudAccountID,
+            derivedBindings: bindings,
+            installedRepository: targetRepository
+        )
+        let wrongRepository = LocalPlayerProfileRepository(
+            directoryURL: root.appendingPathComponent(
+                "wrong-cloud-repository",
+                isDirectory: true
+            ),
+            deviceID: deviceID,
+            accountIdentity: bindings.playerAccountIdentity,
+            sessionNonce: targetSnapshot.session.nonce,
+            economyMutationPolicy: .requireDurablePrivateCloud
+        )
+        do {
+            try await repositoryRouter.adoptVerifiedPrivateCloud(
+                repository: wrongRepository,
+                claim: claim
+            )
+            XCTFail("A reconstructed repository must not satisfy the claim")
+        } catch {
+            // Expected: only the exact installed repository instance is valid.
+        }
+        let routeAfterRejectedAdoption = try await repositoryRouter.currentRoute()
+        XCTAssertTrue(routeAfterRejectedAdoption.repository === sourceRepository)
+        let commerce = CompositionRepositoryMutatingCommerce(
+            sourceRepository: sourceRepository,
+            targetRepository: targetRepository,
+            repositoryRouter: repositoryRouter,
+            verifiedClaim: claim,
+            mutationDate: clock.date.addingTimeInterval(1)
+        )
+        let composition = ProductionAppComposition(
+            dependencies: ProductionAppDependencies(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: account,
+                deviceID: deviceID,
+                sessionNonce: sessionNonce,
+                newProfileID: profileID,
+                now: { clock.date },
+                makeRunID: { self.fixedRunID(920) },
+                makeSeed: { 920 }
+            ),
+            repository: sourceRepository,
+            repositoryRouter: repositoryRouter,
+            commerceRequestService: commerce
+        )
+        let coordinator = AppCoordinator(environment: composition.environment)
+        await coordinator.bootstrap()
+        let before = try XCTUnwrap(coordinator.authoritativeSnapshot)
+        XCTAssertFalse(before.state.settings.isMuted)
+
+        let packID = EconomyConfiguration.coinPacks[0].id
+        await coordinator.requestCoinPack(packID)
+
+        let after = try XCTUnwrap(coordinator.authoritativeSnapshot)
+        let storedAfterCommerce = try await targetRepository.snapshot()
+        XCTAssertNil(coordinator.noticeMessage)
+        XCTAssertTrue(after.state.settings.isMuted)
+        XCTAssertTrue(storedAfterCommerce.player.settings.isMuted)
+        XCTAssertNotEqual(after.session, before.session)
+        XCTAssertEqual(after.session, targetSnapshot.session)
+        let requests = await commerce.requests()
+        XCTAssertEqual(requests, [.coinPack(packID)])
+
+        clock.advance(by: 2)
+        await coordinator.setMusicVolume(0.27)
+
+        let storedAfterSettings = try await targetRepository.snapshot()
+        XCTAssertEqual(storedAfterSettings.player.settings.musicVolume, 0.27)
+        XCTAssertEqual(coordinator.state.settings.musicVolume, 0.27)
+        do {
+            _ = try await sourceRepository.snapshot()
+            XCTFail("The invalidated local source must never become active again")
+        } catch {
+            // Expected: commerce adoption invalidated the preserved source.
+        }
+    }
+
+    @MainActor
+    func testCommerceFailureClassificationUsesBoundedExistingAlertPresentation() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let clock = TestClock(Date(timeIntervalSince1970: 93_000))
+        let commerce = CompositionCommerceCapture(result: .rejected)
+        let coordinator = AppCoordinator(
+            environment: ProductionAppComposition(
+                dependencies: ProductionAppDependencies(
+                    applicationSupportDirectoryURL: root,
+                    accountIdentity: .local,
+                    deviceID: "commerce-classification-device",
+                    sessionNonce: fixedUUID(930),
+                    newProfileID: fixedUUID(931),
+                    now: { clock.date },
+                    makeRunID: { self.fixedRunID(930) },
+                    makeSeed: { 930 }
+                ),
+                commerceRequestService: commerce
+            ).environment
+        )
+        await coordinator.bootstrap()
+        let before = coordinator.authoritativeSnapshot
+        let packID = EconomyConfiguration.coinPacks[0].id
+
+        await coordinator.requestCoinPack(packID)
+
+        XCTAssertEqual(
+            coordinator.noticeMessage,
+            "The purchase could not be completed. No changes were made."
+        )
+        XCTAssertEqual(coordinator.authoritativeSnapshot, before)
+
+        coordinator.dismissNotice()
+        await commerce.setResult(.silentlyCompleted)
+        await coordinator.requestCoinPack(packID)
+
+        XCTAssertNil(coordinator.noticeMessage)
+        XCTAssertEqual(coordinator.authoritativeSnapshot, before)
     }
 
     @MainActor
@@ -836,6 +1069,82 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
 
     private enum TestFailure: Error {
         case expectedGameplay
+    }
+}
+
+private actor CompositionCommerceCapture: ProductionCommerceRequestServicing {
+    private var result: ProductionCommerceRequestResult
+    private var recordedRequests: [ProductionCommerceRequest] = []
+
+    init(result: ProductionCommerceRequestResult) {
+        self.result = result
+    }
+
+    func perform(
+        _ request: ProductionCommerceRequest
+    ) -> ProductionCommerceRequestResult {
+        recordedRequests.append(request)
+        return result
+    }
+
+    func requests() -> [ProductionCommerceRequest] {
+        recordedRequests
+    }
+
+    func setResult(_ result: ProductionCommerceRequestResult) {
+        self.result = result
+    }
+}
+
+private actor CompositionRepositoryMutatingCommerce:
+    ProductionCommerceRequestServicing {
+    private let sourceRepository: LocalPlayerProfileRepository
+    private let targetRepository: LocalPlayerProfileRepository
+    private let repositoryRouter: ProductionProfileRepositoryRouter
+    private let verifiedClaim: ProductionVerifiedAccountClaim
+    private let mutationDate: Date
+    private var recordedRequests: [ProductionCommerceRequest] = []
+
+    init(
+        sourceRepository: LocalPlayerProfileRepository,
+        targetRepository: LocalPlayerProfileRepository,
+        repositoryRouter: ProductionProfileRepositoryRouter,
+        verifiedClaim: ProductionVerifiedAccountClaim,
+        mutationDate: Date
+    ) {
+        self.sourceRepository = sourceRepository
+        self.targetRepository = targetRepository
+        self.repositoryRouter = repositoryRouter
+        self.verifiedClaim = verifiedClaim
+        self.mutationDate = mutationDate
+    }
+
+    func perform(
+        _ request: ProductionCommerceRequest
+    ) async -> ProductionCommerceRequestResult {
+        recordedRequests.append(request)
+        do {
+            await sourceRepository.invalidateForAccountSwitch()
+            try await repositoryRouter.adoptVerifiedPrivateCloud(
+                repository: targetRepository,
+                claim: verifiedClaim
+            )
+            let snapshot = try await targetRepository.snapshot()
+            var settings = snapshot.player.settings
+            settings.isMuted = true
+            _ = try await targetRepository.updateSettings(
+                settings,
+                session: snapshot.session,
+                at: mutationDate
+            )
+            return .succeeded
+        } catch {
+            return .rejected
+        }
+    }
+
+    func requests() -> [ProductionCommerceRequest] {
+        recordedRequests
     }
 }
 

@@ -6,9 +6,11 @@ import Foundation
 /// every account and private-cloud prerequisite is available.
 protocol StoreKit2CoinTransactionAdapting: Sendable {
     func products() async throws -> [StoreProduct]
-    func purchase(
+    func purchaseOnline(
         _ packID: CoinPackID,
-        session: StoreActiveSession
+        session: StoreActiveSession,
+        expected context: DurableEconomySessionContext,
+        authorizer: any OnlineCommerceTransactionAuthorizing
     ) async throws -> StoreKit2CoinPurchaseResult
     func recoverUnfinishedTransactions(
         session: StoreActiveSession
@@ -39,6 +41,37 @@ enum StoreKitRuntimeFailure: Error, Equatable, Sendable {
     case transactionDeferred(StoreKit2TransactionDeferral)
 
     init(error: any Error) {
+        if let failure = error as? DurableEconomyCoordinatorError {
+            switch failure {
+            case .noCurrentSession, .staleSession, .profileSessionMismatch,
+                 .cloudAccountUnavailable, .cloudAccountMismatch,
+                 .cloudRebaseRequired, .economyRevisionChanged:
+                self = .noActiveSession
+            default:
+                self = .storeUnavailable
+            }
+            return
+        }
+        if let failure = error as? CloudSyncTransportError {
+            switch failure {
+            case .accountUnavailable, .accountMismatch:
+                self = .noActiveSession
+            case .conflict, .operationIDCollision:
+                self = .storeUnavailable
+            }
+            return
+        }
+        if let failure = error as? CloudKitCloudSyncError {
+            switch failure {
+            case .accountRestricted, .accountTemporarilyUnavailable:
+                self = .noActiveSession
+            case .networkUnavailable, .serviceUnavailable, .rateLimited:
+                self = .networkUnavailable
+            default:
+                self = .storeUnavailable
+            }
+            return
+        }
         guard let failure = error as? StoreKit2AdapterFailure else {
             self = .storeUnavailable
             return
@@ -134,12 +167,278 @@ enum StoreKitRuntimeActivationResult: Equatable, Sendable {
     case superseded
 }
 
-enum StoreKitRuntimePurchaseCommandResult: Equatable, Sendable {
-    case started
+/// Identifier-free completion for the foreground request that opened the
+/// StoreKit sheet. Unlike presentation observation, this value is correlated
+/// with exactly one admitted tap and can therefore be awaited by the commerce
+/// transaction boundary.
+enum StoreKitRuntimePurchaseCompletion: Equatable, Sendable {
+    case processed(StoreKitRuntimeProcessingOutcome)
+    case pending
+    case userCancelled
+    case failed(StoreKitRuntimeFailure)
+    case cancelled
     case inactive
     case productUnavailable
     case purchaseAlreadyInFlight
     case purchasePending
+}
+
+/// Revalidates the exact private-cloud/profile/store generation. Production
+/// purchase requests pass this authority into the awaited StoreKit entry point
+/// so the last check occurs inside the task immediately before the SDK call.
+protocol OnlineCommerceTransactionAuthorizing: Sendable {
+    func revalidate(
+        expected context: DurableEconomySessionContext
+    ) async throws
+}
+
+struct PrivateCloudCommerceTransactionAuthorizer:
+    OnlineCommerceTransactionAuthorizing,
+    Sendable
+{
+    let sessionAuthority: any DurableEconomySessionAuthorizing
+    let cloud: any CloudSyncTransport
+    /// A known private-zone record (normally the economy head). Reading it is a
+    /// harmless network round trip; absence is valid for a newly claimed
+    /// account, while transport/account loss fails closed.
+    let networkProbeRecordID: CloudRecordID
+
+    func revalidate(
+        expected context: DurableEconomySessionContext
+    ) async throws {
+        try Task.checkCancellation()
+        guard let current = await sessionAuthority.currentContext() else {
+            throw DurableEconomyCoordinatorError.noCurrentSession
+        }
+        guard current == context else {
+            throw DurableEconomyCoordinatorError.staleSession
+        }
+        switch await cloud.accountState() {
+        case let .available(accountID) where accountID == context.cloudAccountID:
+            break
+        case .available:
+            throw DurableEconomyCoordinatorError.cloudAccountMismatch
+        case .unknown, .signedOut, .restricted:
+            throw DurableEconomyCoordinatorError.cloudAccountUnavailable
+        }
+        _ = try await cloud.records(
+            accountID: context.cloudAccountID,
+            ids: [networkProbeRecordID]
+        )
+        try Task.checkCancellation()
+        switch await cloud.accountState() {
+        case let .available(accountID) where accountID == context.cloudAccountID:
+            return
+        case .available:
+            throw DurableEconomyCoordinatorError.cloudAccountMismatch
+        case .unknown, .signedOut, .restricted:
+            throw DurableEconomyCoordinatorError.cloudAccountUnavailable
+        }
+    }
+}
+
+protocol OnlineCommerceDurableEconomyTransacting: Sendable {
+    func confirmAllPendingCredits() async throws -> DurablePendingCreditResult?
+    func unlock(
+        itemID: CatalogItemID,
+        requestOperationID: OperationID,
+        session: ProfileSessionToken
+    ) async throws -> DurableCatalogUnlockResult
+}
+
+extension DurableEconomyCoordinator: OnlineCommerceDurableEconomyTransacting {}
+
+/// Performs the complete cloud-replica refresh/rebase and returns the snapshot
+/// read back from the installed account-scoped repository. This is deliberately
+/// stronger than republishing a cached sync status.
+protocol OnlineCommerceAuthoritativeRefreshing: Sendable {
+    func refreshAuthoritativeProfile(
+        expected context: DurableEconomySessionContext
+    ) async throws -> LocalPlayerProfileSnapshot
+}
+
+protocol OnlineCommerceStorePurchasing: Sendable {
+    func purchaseAndWait(
+        _ packID: CoinPackID,
+        expected context: DurableEconomySessionContext,
+        authorizer: any OnlineCommerceTransactionAuthorizing
+    ) async -> StoreKitRuntimePurchaseCompletion
+}
+
+enum OnlineCommerceFailure: Error, Equatable, Sendable {
+    /// Presentation maps this single bounded case to the existing online-only
+    /// purchase warning. No provider text or account identifier escapes.
+    case onlineRequired
+    case requestAlreadyInFlight
+    case cancelled
+    case store(StoreKitRuntimeFailure)
+    case catalogRejected
+    case integrityFailure
+
+    static func classify(_ error: any Error) -> Self {
+        if error is CancellationError { return .cancelled }
+        if let failure = error as? DurableEconomyCoordinatorError {
+            switch failure {
+            case .noCurrentSession, .staleSession, .profileSessionMismatch,
+                 .cloudAccountUnavailable, .cloudAccountMismatch,
+                 .cloudRebaseRequired, .economyRevisionChanged:
+                return .onlineRequired
+            case .invalidCatalogUnlockRequest:
+                return .catalogRejected
+            default:
+                return .integrityFailure
+            }
+        }
+        if let failure = error as? CloudSyncTransportError {
+            switch failure {
+            case .accountUnavailable, .accountMismatch:
+                return .onlineRequired
+            case .conflict, .operationIDCollision:
+                return .integrityFailure
+            }
+        }
+        if let failure = error as? CloudKitCloudSyncError {
+            switch failure {
+            case .accountRestricted, .accountTemporarilyUnavailable,
+                 .networkUnavailable, .serviceUnavailable, .rateLimited:
+                return .onlineRequired
+            default:
+                return .integrityFailure
+            }
+        }
+        if let failure = error as? LocalPlayerRepositoryError {
+            switch failure {
+            case .inventory:
+                return .catalogRejected
+            default:
+                return .integrityFailure
+            }
+        }
+        return .integrityFailure
+    }
+}
+
+enum OnlineCommerceCatalogResult: Equatable, Sendable {
+    case purchased(DurableCatalogUnlockResult)
+    case failed(OnlineCommerceFailure)
+}
+
+enum OnlineCommerceCoinPackResult: Equatable, Sendable {
+    case completed(StoreKitRuntimePurchaseCompletion)
+    case failed(OnlineCommerceFailure)
+}
+
+/// One fail-closed transaction boundary for both coin debits and StoreKit
+/// requests. Admission is fail-fast rather than queued, so duplicate taps and
+/// cancelled waiters can never execute later. Every admitted request confirms
+/// pending gameplay credits, refreshes the authoritative replica, and then
+/// performs one final exact-generation check before mutation/presentation.
+actor OnlineCommerceCoordinator {
+    private let context: DurableEconomySessionContext
+    private let authorizer: any OnlineCommerceTransactionAuthorizing
+    private let economy: any OnlineCommerceDurableEconomyTransacting
+    private let refresher: any OnlineCommerceAuthoritativeRefreshing
+    private let store: any OnlineCommerceStorePurchasing
+    private var requestIsInFlight = false
+
+    init(
+        context: DurableEconomySessionContext,
+        authorizer: any OnlineCommerceTransactionAuthorizing,
+        economy: any OnlineCommerceDurableEconomyTransacting,
+        refresher: any OnlineCommerceAuthoritativeRefreshing,
+        store: any OnlineCommerceStorePurchasing
+    ) {
+        self.context = context
+        self.authorizer = authorizer
+        self.economy = economy
+        self.refresher = refresher
+        self.store = store
+    }
+
+    func purchaseCatalogItem(
+        _ itemID: CatalogItemID,
+        requestOperationID: OperationID
+    ) async -> OnlineCommerceCatalogResult {
+        guard !Task.isCancelled else { return .failed(.cancelled) }
+        guard !requestIsInFlight else { return .failed(.requestAlreadyInFlight) }
+        requestIsInFlight = true
+        defer { requestIsInFlight = false }
+
+        do {
+            try await prepareCurrentTransaction()
+            try Task.checkCancellation()
+            try await authorizer.revalidate(expected: context)
+            try Task.checkCancellation()
+            return .purchased(
+                try await economy.unlock(
+                    itemID: itemID,
+                    requestOperationID: requestOperationID,
+                    session: context.profileSession
+                )
+            )
+        } catch {
+            return .failed(OnlineCommerceFailure.classify(error))
+        }
+    }
+
+    func requestCoinPack(
+        _ packID: CoinPackID
+    ) async -> OnlineCommerceCoinPackResult {
+        guard !Task.isCancelled else { return .failed(.cancelled) }
+        guard !requestIsInFlight else { return .failed(.requestAlreadyInFlight) }
+        requestIsInFlight = true
+        defer { requestIsInFlight = false }
+
+        do {
+            try await prepareCurrentTransaction()
+            try Task.checkCancellation()
+            let completion = await store.purchaseAndWait(
+                packID,
+                expected: context,
+                authorizer: authorizer
+            )
+            return mapStoreCompletion(completion)
+        } catch {
+            return .failed(OnlineCommerceFailure.classify(error))
+        }
+    }
+
+    private func prepareCurrentTransaction() async throws {
+        try await authorizer.revalidate(expected: context)
+        try Task.checkCancellation()
+        _ = try await economy.confirmAllPendingCredits()
+        try Task.checkCancellation()
+        let refreshed = try await refresher.refreshAuthoritativeProfile(
+            expected: context
+        )
+        try Task.checkCancellation()
+        guard refreshed.session == context.profileSession else {
+            throw DurableEconomyCoordinatorError.staleSession
+        }
+    }
+
+    private func mapStoreCompletion(
+        _ completion: StoreKitRuntimePurchaseCompletion
+    ) -> OnlineCommerceCoinPackResult {
+        switch completion {
+        case .inactive:
+            return .failed(.onlineRequired)
+        case .cancelled:
+            return .failed(.cancelled)
+        case .purchaseAlreadyInFlight:
+            return .failed(.requestAlreadyInFlight)
+        case .failed(.noActiveSession), .failed(.networkUnavailable),
+             .failed(.transactionDeferred(.durableDeliveryConnectivityUnavailable)),
+             .processed(.deferred(.durableDeliveryConnectivityUnavailable)):
+            return .failed(.onlineRequired)
+        case let .processed(.deferred(reason)):
+            return .failed(.store(.transactionDeferred(reason)))
+        case let .failed(failure):
+            return .failed(.store(failure))
+        default:
+            return .completed(completion)
+        }
+    }
 }
 
 /// Retains every StoreKit task for exactly one account/session generation.
@@ -157,7 +456,7 @@ actor StoreKitRuntimeCoordinator {
         var startupTask: Task<Void, Never>?
         var updatesListener: StoreKit2OwnedUpdateListener<StoreKit2TransactionProcessingResult>?
         var updatesTask: Task<Void, Never>?
-        var purchaseTask: Task<Void, Never>?
+        var purchaseTask: Task<StoreKitRuntimePurchaseCompletion, Never>?
         var retryRequiredFailure: StoreKitRuntimeFailure?
     }
 
@@ -288,10 +587,18 @@ actor StoreKitRuntimeCoordinator {
         await retireActiveGeneration(nextPhase: .inactive)
     }
 
-    /// Starts one globally serialized purchase. Completion is reflected in the
-    /// presentation snapshot; repeated taps cannot start another StoreKit sheet.
-    func purchase(_ packID: CoinPackID) -> StoreKitRuntimePurchaseCommandResult {
+    /// Fail-fast, correlated purchase admission for online commerce. No caller
+    /// is queued: a duplicate tap receives `purchaseAlreadyInFlight`, so it can
+    /// never become a second StoreKit sheet after the first request completes.
+    /// Cancellation before the final authorization also cannot reach StoreKit.
+    func purchaseAndWait(
+        _ packID: CoinPackID,
+        expected context: DurableEconomySessionContext,
+        authorizer: any OnlineCommerceTransactionAuthorizing
+    ) async -> StoreKitRuntimePurchaseCompletion {
+        guard !Task.isCancelled else { return .cancelled }
         guard var generation = activeGeneration else { return .inactive }
+        guard generation.session == context.storeSession else { return .inactive }
         guard generation.retryRequiredFailure == nil else {
             return .productUnavailable
         }
@@ -316,26 +623,85 @@ actor StoreKitRuntimeCoordinator {
         let generationIdentity = generation.identity
         let session = generation.session
         let adapter = self.adapter
+        let sessionSource = self.sessionSource
         let task = Task { [weak self] in
             let result: Result<StoreKit2CoinPurchaseResult, StoreKitRuntimeFailure>
             do {
-                result = .success(try await adapter.purchase(packID, session: session))
+                try Task.checkCancellation()
+                guard await sessionSource.currentStoreSession() == session else {
+                    throw DurableEconomyCoordinatorError.staleSession
+                }
+                try Task.checkCancellation()
+                result = .success(
+                    try await adapter.purchaseOnline(
+                        packID,
+                        session: session,
+                        expected: context,
+                        authorizer: authorizer
+                    )
+                )
             } catch is CancellationError {
-                return
+                return StoreKitRuntimePurchaseCompletion.cancelled
             } catch {
                 result = .failure(StoreKitRuntimeFailure(error: error))
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                return StoreKitRuntimePurchaseCompletion.cancelled
+            }
             await self?.purchaseDidComplete(
                 result,
                 packID: packID,
                 generationIdentity: generationIdentity,
                 session: session
             )
+            switch result {
+            case let .success(.processed(processingResult)):
+                return .processed(StoreKitRuntimeProcessingOutcome(processingResult))
+            case .success(.pending):
+                return .pending
+            case .success(.userCancelled):
+                return .userCancelled
+            case let .failure(failure):
+                return .failed(failure)
+            }
         }
         generation.purchaseTask = task
         activeGeneration = generation
-        return .started
+        let completion = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+
+        // A cancellation/error before `purchaseDidComplete` must clear the
+        // admitted slot and restore presentation only for this exact generation.
+        if completion == .cancelled {
+            purchaseWasCancelledBeforeCompletion(
+                packID: packID,
+                generationIdentity: generationIdentity,
+                session: session
+            )
+        }
+        return completion
+    }
+
+    private func purchaseWasCancelledBeforeCompletion(
+        packID: CoinPackID,
+        generationIdentity: GenerationIdentity,
+        session: StoreActiveSession
+    ) {
+        guard var generation = activeGeneration,
+              generation.identity === generationIdentity,
+              generation.session == session else { return }
+        generation.purchaseTask = nil
+        activeGeneration = generation
+        guard generation.retryRequiredFailure == nil,
+              case .purchasing(packID) = presentationState.phase else { return }
+        setPresentation(
+            phase: .available,
+            products: presentationState.products,
+            latestOutcome: presentationState.latestOutcome
+        )
     }
 
     private func beginLifecycleRequest() -> LifecycleRequestIdentity {
@@ -704,20 +1070,21 @@ actor StoreKitRuntimeCoordinator {
         nextPhase: StoreKitRuntimePresentationPhase
     ) async {
         let listener = activeGeneration?.updatesListener
-        let tasks = [
-            activeGeneration?.startupTask,
-            activeGeneration?.updatesTask,
-            activeGeneration?.purchaseTask,
-        ].compactMap { $0 }
+        let startupTask = activeGeneration?.startupTask
+        let updatesTask = activeGeneration?.updatesTask
+        let purchaseTask = activeGeneration?.purchaseTask
 
         // Invalidate the session before cancellation so a callback that wins a
         // race cannot publish into a replacement generation.
         activeGeneration = nil
         setPresentation(phase: nextPhase, products: [], latestOutcome: nil)
-        tasks.forEach { $0.cancel() }
+        startupTask?.cancel()
+        updatesTask?.cancel()
+        purchaseTask?.cancel()
 
         let priorReapTask = reapOperation?.task
-        guard !tasks.isEmpty || listener != nil || priorReapTask != nil else { return }
+        guard startupTask != nil || updatesTask != nil || purchaseTask != nil
+                || listener != nil || priorReapTask != nil else { return }
         let reapIdentity = ReapIdentity()
         let task = Task {
             if let priorReapTask {
@@ -726,9 +1093,9 @@ actor StoreKitRuntimeCoordinator {
             if let listener {
                 await listener.cancelAndWait()
             }
-            for task in tasks {
-                await task.value
-            }
+            await startupTask?.value
+            await updatesTask?.value
+            _ = await purchaseTask?.value
         }
         reapOperation = ReapOperation(identity: reapIdentity, task: task)
         await task.value
@@ -756,3 +1123,5 @@ actor StoreKitRuntimeCoordinator {
         presentationContinuations.removeValue(forKey: subscriberID)
     }
 }
+
+extension StoreKitRuntimeCoordinator: OnlineCommerceStorePurchasing {}

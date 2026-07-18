@@ -361,6 +361,101 @@ struct CloudProfileHydrator: Sendable {
             candidateEnvelope: candidateArtifact
         )
     }
+
+    func hydrateInitialAssociation(
+        source: CloudProfileHydrationSourceV1,
+        replica: ValidatedCloudProfileReplicaV1,
+        context: CloudProfileHydrationContextV1
+    ) throws -> CloudProfileHydrationPlanV1 {
+        let decoded: DecodedProfileEnvelopeArtifactV1
+        do {
+            decoded = try PlayerProfileMigrator().decodeArtifact(
+                source.exactEnvelopeBytes
+            )
+        } catch {
+            throw CloudProfileHydrationError.malformedSourceEnvelope
+        }
+        guard decoded.sourceSchemaVersion == PlayerProfileEnvelopeV4.schemaVersion,
+              decoded.document.accountIdentity == .local,
+              source.activeSession.accountIdentity == .local,
+              source.activeSession.profileID == decoded.document.player.profileID
+        else {
+            throw CloudProfileHydrationError.sourceAccountMigrationRequired(
+                expected: .local,
+                actual: decoded.document.accountIdentity
+            )
+        }
+        let exact = try PlayerProfileMigrator().canonicalArtifact(
+            for: decoded.document,
+            savedAt: decoded.savedAt
+        )
+        guard exact.exactBytes == source.exactEnvelopeBytes else {
+            throw CloudProfileHydrationError.noncanonicalSourceEnvelope
+        }
+
+        var rebound = decoded.document
+        rebound.accountIdentity = context.derivedBindings.playerAccountIdentity
+        rebound.player.profileID = context.derivedBindings
+            .durableAccountBinding.profileID
+        let reboundArtifact = try PlayerProfileMigrator().canonicalArtifact(
+            for: rebound,
+            savedAt: decoded.savedAt
+        )
+        let reboundSession = ProfileSessionToken(
+            accountIdentity: rebound.accountIdentity,
+            nonce: source.activeSession.nonce,
+            profileID: rebound.player.profileID
+        )
+        let ordinary = try hydrate(
+            source: CloudProfileHydrationSourceV1(
+                exactEnvelopeBytes: reboundArtifact.exactBytes,
+                activeSession: reboundSession
+            ),
+            replica: replica,
+            context: context
+        )
+
+        let playerIncrement = decoded.document.player.revision
+            .addingReportingOverflow(1)
+        let economyIncrement = decoded.document.economyRevision
+            .addingReportingOverflow(1)
+        guard !playerIncrement.overflow, !economyIncrement.overflow else {
+            throw CloudProfileHydrationError.revisionOverflow(.player)
+        }
+        var candidate = ordinary.candidateDocument
+        candidate.player.revision = playerIncrement.partialValue
+        candidate.economyRevision = economyIncrement.partialValue
+        do {
+            try PlayerProfileValidator.validate(candidate, catalog: catalog)
+        } catch {
+            throw CloudProfileHydrationError.invalidCandidateProfile
+        }
+        let candidateArtifact = try PlayerProfileMigrator().canonicalArtifact(
+            for: candidate,
+            savedAt: context.candidateSavedAt
+        )
+        return CloudProfileHydrationPlanV1(
+            candidateDocument: candidate,
+            candidateMergeMetadata: ordinary.candidateMergeMetadata,
+            revisionPlan: CloudProfileHydrationRevisionPlanV1(
+                sourcePlayerRevision: decoded.document.player.revision,
+                candidatePlayerRevision: candidate.player.revision,
+                sourceEconomyRevision: decoded.document.economyRevision,
+                candidateEconomyRevision: candidate.economyRevision,
+                playerMaterialChanged: true,
+                economyMaterialChanged: true
+            ),
+            sourceEnvelope: CloudProfileHydrationEnvelopeArtifactV1(
+                canonicalBytes: source.exactEnvelopeBytes,
+                sha256Digest: Data(SHA256.hash(data: source.exactEnvelopeBytes))
+            ),
+            candidateEnvelope: CloudProfileHydrationEnvelopeArtifactV1(
+                canonicalBytes: candidateArtifact.exactBytes,
+                sha256Digest: Data(SHA256.hash(data: candidateArtifact.exactBytes))
+            )
+        )
+    }
+
 }
 
 private extension CloudProfileHydrator {

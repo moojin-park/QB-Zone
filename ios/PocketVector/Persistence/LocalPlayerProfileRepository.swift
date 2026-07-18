@@ -5,6 +5,7 @@ import Foundation
 /// not remove durable recovery evidence or release an active mutation barrier.
 enum LocalProfileHydrationBarrierError: Error, Equatable, Sendable {
     case hydrationInProgress(transactionID: UUID)
+    case initialAssociationInProgress(transactionID: UUID)
     case transactionStoreMismatch
     case hydrationSourceMismatch
     case capabilityMismatch
@@ -138,6 +139,7 @@ struct LocalGameCenterPreparedSubmissionV1: Equatable, Sendable {
 /// repository instance appear to own an earlier hydration admission.
 fileprivate final class LocalProfileHydrationRepositoryIdentity: Sendable {}
 fileprivate final class LocalProfileHydrationCapabilityIdentity: Sendable {}
+fileprivate final class LocalProfileInitialAssociationIdentity: Sendable {}
 
 /// Opaque, non-persisted proof that one repository actor froze one exact
 /// source for one exact journal. It is intentionally copyable: dropping every
@@ -224,6 +226,20 @@ struct LocalProfileHydrationAdmissionV1: Equatable, Sendable {
     }
 }
 
+struct LocalProfileInitialAssociationCapabilityV1: Equatable, Sendable {
+    let transactionID: UUID
+    let sourceDirectoryURL: URL
+    let sourceArtifact: CanonicalProfileEnvelopeArtifactV1
+    let sourceSession: ProfileSessionToken
+    let targetCloudAccountID: CloudAccountID
+    let targetDirectoryURL: URL
+    fileprivate let identity: LocalProfileInitialAssociationIdentity
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.identity === rhs.identity
+    }
+}
+
 actor LocalPlayerProfileRepository {
     private let fileStore: AtomicProfileFileStore
     private let catalog: LaunchCatalog
@@ -238,6 +254,8 @@ actor LocalPlayerProfileRepository {
     private let gameCenterSubmissionRepositoryIdentity =
         LocalGameCenterSubmissionRepositoryIdentity()
     private var activeHydrationBarrier: ActiveHydrationBarrier?
+    private var activeInitialAssociation:
+        LocalProfileInitialAssociationCapabilityV1?
     private let sessionNonce: UUID
     private var sessionIsActive = false
     private(set) var lastLoadReport: ProfileLoadReport?
@@ -312,6 +330,89 @@ actor LocalPlayerProfileRepository {
 
     func snapshot() throws -> LocalPlayerProfileSnapshot {
         try makeSnapshot(for: requireActiveDocument())
+    }
+
+    func profileDirectoryURL() -> URL {
+        fileStore.locations.directoryURL.standardizedFileURL
+    }
+
+    func beginInitialAssociation(
+        targetCloudAccountID: CloudAccountID,
+        targetDirectoryURL: URL,
+        transactionID: UUID = UUID()
+    ) throws -> LocalProfileInitialAssociationCapabilityV1 {
+        let current = try requireActiveDocument()
+        try rejectMutationDuringHydration()
+        guard accountIdentity == .local,
+              current.accountIdentity == .local,
+              activeInitialAssociation == nil,
+              pendingReplacementIntent == nil,
+              let persistedArtifact else {
+            throw LocalPlayerRepositoryError.profileWriteOutcomeUnknown
+        }
+        let derived = CloudAccountDerivedBindings.derive(
+            from: targetCloudAccountID
+        )
+        guard derived.playerAccountIdentity != .local,
+              fileStore.locations.directoryURL.standardizedFileURL
+                != targetDirectoryURL.standardizedFileURL else {
+            throw LocalPlayerRepositoryError.accountIdentityMismatch(
+                expected: .local,
+                actual: derived.playerAccountIdentity
+            )
+        }
+        let capability = LocalProfileInitialAssociationCapabilityV1(
+            transactionID: transactionID,
+            sourceDirectoryURL:
+                fileStore.locations.directoryURL.standardizedFileURL,
+            sourceArtifact: persistedArtifact,
+            sourceSession: ProfileSessionToken(
+                accountIdentity: accountIdentity,
+                nonce: sessionNonce,
+                profileID: current.player.profileID
+            ),
+            targetCloudAccountID: targetCloudAccountID,
+            targetDirectoryURL: targetDirectoryURL.standardizedFileURL,
+            identity: LocalProfileInitialAssociationIdentity()
+        )
+        activeInitialAssociation = capability
+        return capability
+    }
+
+    func resumeInitialAssociation(
+        targetCloudAccountID: CloudAccountID,
+        targetDirectoryURL: URL
+    ) throws -> LocalProfileInitialAssociationCapabilityV1 {
+        let current = try requireActiveDocument()
+        guard let activeInitialAssociation,
+              activeInitialAssociation.targetCloudAccountID
+                == targetCloudAccountID,
+              activeInitialAssociation.targetDirectoryURL
+                == targetDirectoryURL.standardizedFileURL,
+              persistedArtifact == activeInitialAssociation.sourceArtifact,
+              current == activeInitialAssociation.sourceArtifact.document else {
+            throw LocalPlayerRepositoryError.hydrationAdoptionSourceMismatch
+        }
+        return activeInitialAssociation
+    }
+
+    func completeInitialAssociation(
+        _ capability: LocalProfileInitialAssociationCapabilityV1,
+        verifiedTarget: ProfileInitialAssociationVerifiedTargetV1
+    ) throws {
+        guard let activeInitialAssociation,
+              activeInitialAssociation == capability,
+              persistedArtifact == capability.sourceArtifact,
+              document == capability.sourceArtifact.document else {
+            throw LocalPlayerRepositoryError.hydrationAdoptionSourceMismatch
+        }
+        guard verifiedTarget.authorizes(capability) else {
+            throw LocalPlayerRepositoryError.hydrationAdoptionSourceMismatch
+        }
+        sessionIsActive = false
+        document = nil
+        persistedArtifact = nil
+        self.activeInitialAssociation = nil
     }
 
     /// Freezes one exact persisted source before the durable journal is
@@ -1306,6 +1407,12 @@ actor LocalPlayerProfileRepository {
     }
 
     private func rejectMutationDuringHydration() throws {
+        if activeInitialAssociation != nil {
+            throw LocalProfileHydrationBarrierError
+                .initialAssociationInProgress(
+                    transactionID: activeInitialAssociation!.transactionID
+                )
+        }
         guard let activeHydrationBarrier else { return }
         throw LocalProfileHydrationBarrierError.hydrationInProgress(
             transactionID: activeHydrationBarrier.journal.transactionID

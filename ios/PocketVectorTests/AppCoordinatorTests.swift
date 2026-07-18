@@ -253,6 +253,41 @@ final class AppCoordinatorTests: XCTestCase {
     }
 
     @MainActor
+    func testOrdinaryCommerceAppliedResultCannotReplaceProfileSession() async {
+        let initialState = AppCoordinatorState.launchDefault()
+        var changedState = initialState
+        changedState.confirmedCoins = 99_999
+        let mismatched = AuthoritativeAppStateSnapshot(
+            session: ProfileSessionToken(
+                accountIdentity: PlayerAccountIdentity("unverified-account"),
+                nonce: UUID(),
+                profileID: UUID()
+            ),
+            playerRevision: 1,
+            economyRevision: 1,
+            state: changedState
+        )
+        let coordinator = AppCoordinator(
+            state: initialState,
+            environment: environment { request in
+                guard case .requestCoinPack = request else { return .completed }
+                return .applied(mismatched)
+            }
+        )
+        await coordinator.bootstrap()
+        let before = coordinator.authoritativeSnapshot
+
+        await coordinator.requestCoinPack(EconomyConfiguration.coinPacks[0].id)
+
+        XCTAssertEqual(coordinator.authoritativeSnapshot, before)
+        XCTAssertEqual(coordinator.state, initialState)
+        XCTAssertEqual(
+            coordinator.noticeMessage,
+            "The profile service returned an invalid account state."
+        )
+    }
+
+    @MainActor
     func testBootstrapFailureIsRecoverableAndDoesNotExposePlaceholderState() async {
         var attempts = 0
         var loadedState = AppCoordinatorState.launchDefault()
