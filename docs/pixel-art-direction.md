@@ -53,6 +53,10 @@ vector/material choice and remains attached to the player across teams.
   the in-scene field treatment already communicates team identity.
 - Compact pause panels must remain inside the safe area without covering the
   essential score or control readouts.
+- Center `PAUSED` in the panel with `STATS` directly beneath it; omit ornamental
+  header taglines that compete with the run information.
+- Exit confirmation must provide explicit `KEEP PLAYING` and `END RUN` actions
+  on every device class, with the paused controls inaccessible behind it.
 - Preserve visible texture-readiness and failure states; never hide a stalled
   preload behind an unresponsive scene.
 - Reduced motion must remove ornamental motion without changing simulation.

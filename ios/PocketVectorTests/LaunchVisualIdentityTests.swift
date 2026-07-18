@@ -652,6 +652,22 @@ final class LaunchVisualIdentityTests: XCTestCase {
         XCTAssertTrue(requestState.confirmedExitRequestPending)
     }
 
+    func testPausedGameplayExitConfirmationCancelLeavesRequestsUntouched() {
+        var confirmation = GameplayExitConfirmationState()
+        let requestState = GameplayPauseRequestState()
+
+        XCTAssertFalse(confirmation.present(whilePaused: false))
+        XCTAssertTrue(confirmation.present(whilePaused: true))
+        XCTAssertFalse(confirmation.present(whilePaused: true))
+        XCTAssertTrue(confirmation.isPresented)
+
+        confirmation.cancel()
+
+        XCTAssertFalse(confirmation.isPresented)
+        XCTAssertEqual(requestState.resumeRequestID, 0)
+        XCTAssertEqual(requestState.confirmedExitRequestID, 0)
+    }
+
     func testPausedGameplayStatsUseSuccessfulCompletions() throws {
         let statistics = RunStatistics(
             attempts: 9,
@@ -692,6 +708,27 @@ final class LaunchVisualIdentityTests: XCTestCase {
             XCTAssertLessThanOrEqual(
                 layout.panelHeight + (layout.outerMargin * 2),
                 scenario.size.height
+            )
+        }
+    }
+
+    func testPausedGameplayExitConfirmationFitsRepresentativeLandscapeSafeAreas() {
+        let sizes = [
+            CGSize(width: 579, height: 354),
+            CGSize(width: 852, height: 409),
+            CGSize(width: 1_194, height: 834),
+        ]
+
+        for size in sizes {
+            let layout = GameplayExitConfirmationLayout(availableSize: size)
+            XCTAssertGreaterThanOrEqual(layout.buttonHeight, 44)
+            XCTAssertLessThanOrEqual(
+                layout.panelWidth + (layout.outerMargin * 2),
+                size.width
+            )
+            XCTAssertLessThanOrEqual(
+                layout.panelHeight + (layout.outerMargin * 2),
+                size.height
             )
         }
     }

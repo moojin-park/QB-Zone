@@ -12,7 +12,7 @@ struct LegacyGameplayAdapterView: View {
     let onCompletedRun: (CompletedRun) -> Void
     let onRetrySettlement: () -> Void
 
-    @State private var showsExitConfirmation = false
+    @State private var exitConfirmation = GameplayExitConfirmationState()
     @State private var gameplaySnapshot: GameplaySceneSnapshot?
     @State private var pauseRequests = GameplayPauseRequestState()
 
@@ -32,7 +32,7 @@ struct LegacyGameplayAdapterView: View {
                     pauseRequests.receive(snapshot)
                     gameplaySnapshot = snapshot
                     if !snapshot.isPaused {
-                        showsExitConfirmation = false
+                        exitConfirmation.dismiss()
                     }
                 }
             )
@@ -45,8 +45,23 @@ struct LegacyGameplayAdapterView: View {
                     resumeIsPending: pauseRequests.resumeRequestPending,
                     exitIsPending: pauseRequests.confirmedExitRequestPending || isSettling,
                     onResume: requestResume,
-                    onExit: { showsExitConfirmation = true }
+                    onExit: {
+                        _ = exitConfirmation.present(whilePaused: true)
+                    }
                 )
+                .allowsHitTesting(!exitConfirmation.isPresented)
+                .accessibilityHidden(exitConfirmation.isPresented)
+
+                if exitConfirmation.isPresented {
+                    ExitRunConfirmationOverlay(
+                        accent: pauseAccent,
+                        accentForeground: pauseAccentForeground,
+                        actionsAreDisabled: isSettling
+                            || pauseRequests.confirmedExitRequestPending,
+                        onKeepPlaying: { exitConfirmation.cancel() },
+                        onEndRun: confirmExit
+                    )
+                }
             }
 
             if isSettling || settlementErrorMessage != nil {
@@ -55,21 +70,6 @@ struct LegacyGameplayAdapterView: View {
         }
         .background(PocketVectorTheme.void)
         .ignoresSafeArea()
-        .confirmationDialog(
-            "End this run?",
-            isPresented: $showsExitConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("End Run", role: .destructive) {
-                guard !isSettling,
-                      pauseRequests.requestConfirmedExit(
-                        whilePaused: gameplaySnapshot?.isPaused == true
-                      ) else { return }
-            }
-            Button("Keep Playing", role: .cancel) {}
-        } message: {
-            Text("This run will be recorded as abandoned and will not earn coins.")
-        }
     }
 
     private var pauseAccent: Color {
@@ -90,6 +90,15 @@ struct LegacyGameplayAdapterView: View {
         _ = pauseRequests.requestResume(
             whilePaused: gameplaySnapshot?.isPaused == true
         )
+    }
+
+    private func confirmExit() {
+        guard !isSettling,
+              pauseRequests.requestConfirmedExit(
+                whilePaused: gameplaySnapshot?.isPaused == true
+              ) else { return }
+
+        exitConfirmation.dismiss()
     }
 
     private var settlementOverlay: some View {
@@ -172,6 +181,25 @@ struct GameplayPauseRequestState: Equatable {
     }
 }
 
+struct GameplayExitConfirmationState: Equatable {
+    private(set) var isPresented = false
+
+    @discardableResult
+    mutating func present(whilePaused: Bool) -> Bool {
+        guard whilePaused, !isPresented else { return false }
+        isPresented = true
+        return true
+    }
+
+    mutating func cancel() {
+        isPresented = false
+    }
+
+    mutating func dismiss() {
+        isPresented = false
+    }
+}
+
 struct GameplayPauseLayout: Equatable {
     let isCompact: Bool
     let panelWidth: CGFloat
@@ -209,6 +237,37 @@ struct GameplayPauseLayout: Equatable {
             + gridHeight
             + buttonHeight
             + (sectionSpacing * 3)
+    }
+}
+
+struct GameplayExitConfirmationLayout: Equatable {
+    let isCompact: Bool
+    let panelWidth: CGFloat
+    let panelHeight: CGFloat
+    let panelPadding: CGFloat
+    let sectionSpacing: CGFloat
+    let headerHeight: CGFloat
+    let messageHeight: CGFloat
+    let buttonHeight: CGFloat
+    let outerMargin: CGFloat
+
+    init(availableSize: CGSize) {
+        isCompact = availableSize.width < 700 || availableSize.height < 390
+        outerMargin = isCompact ? 10 : 24
+        panelPadding = isCompact ? 14 : 20
+        sectionSpacing = isCompact ? 8 : 12
+        headerHeight = isCompact ? 36 : 44
+        messageHeight = isCompact ? 32 : 44
+        buttonHeight = isCompact ? 48 : 54
+        panelWidth = min(
+            isCompact ? 520 : 560,
+            max(0, availableSize.width - (outerMargin * 2))
+        )
+        panelHeight = (panelPadding * 2)
+            + headerHeight
+            + messageHeight
+            + buttonHeight
+            + (sectionSpacing * 2)
     }
 }
 
@@ -305,6 +364,176 @@ private struct PausedGameplayOverlay: View {
             }
         }
         .ignoresSafeArea()
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct ExitRunConfirmationOverlay: View {
+    let accent: Color
+    let accentForeground: Color
+    let actionsAreDisabled: Bool
+    let onKeepPlaying: () -> Void
+    let onEndRun: () -> Void
+
+    var body: some View {
+        GeometryReader { geometry in
+            let safeWidth = max(
+                0,
+                geometry.size.width
+                    - geometry.safeAreaInsets.leading
+                    - geometry.safeAreaInsets.trailing
+            )
+            let safeHeight = max(
+                0,
+                geometry.size.height
+                    - geometry.safeAreaInsets.top
+                    - geometry.safeAreaInsets.bottom
+            )
+            let availableSize = CGSize(width: safeWidth, height: safeHeight)
+            let layout = GameplayExitConfirmationLayout(availableSize: availableSize)
+
+            ZStack {
+                Color.black.opacity(0.68)
+                    .contentShape(Rectangle())
+                    .accessibilityHidden(true)
+
+                ExitRunConfirmationPanel(
+                    layout: layout,
+                    accent: accent,
+                    accentForeground: accentForeground,
+                    actionsAreDisabled: actionsAreDisabled,
+                    onKeepPlaying: onKeepPlaying,
+                    onEndRun: onEndRun
+                )
+                .position(
+                    x: geometry.safeAreaInsets.leading + (safeWidth / 2),
+                    y: geometry.safeAreaInsets.top + (safeHeight / 2)
+                )
+            }
+        }
+        .ignoresSafeArea()
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct ExitRunConfirmationPanel: View {
+    let layout: GameplayExitConfirmationLayout
+    let accent: Color
+    let accentForeground: Color
+    let actionsAreDisabled: Bool
+    let onKeepPlaying: () -> Void
+    let onEndRun: () -> Void
+
+    var body: some View {
+        VStack(spacing: layout.sectionSpacing) {
+            HStack(spacing: layout.isCompact ? 9 : 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(
+                        size: layout.isCompact ? 20 : 25,
+                        weight: .black
+                    ))
+                    .foregroundStyle(GameplayPauseButtonStyle.exitCoral)
+                    .accessibilityHidden(true)
+
+                Text("END THIS RUN?")
+                    .font(.system(
+                        size: layout.isCompact ? 24 : 30,
+                        weight: .black,
+                        design: .rounded
+                    ))
+                    .tracking(layout.isCompact ? 0.8 : 1.2)
+                    .foregroundStyle(PocketVectorTheme.textPrimary)
+                    .shadow(color: .black, radius: 0, x: 2, y: 3)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, minHeight: layout.headerHeight)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("End this run?")
+            .accessibilityAddTraits(.isHeader)
+
+            Text("This run will be recorded as abandoned and will not earn coins.")
+                .font(.system(
+                    size: layout.isCompact ? 12 : 14,
+                    weight: .semibold,
+                    design: .rounded
+                ))
+                .foregroundStyle(PocketVectorTheme.textSecondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, minHeight: layout.messageHeight)
+
+            HStack(spacing: layout.isCompact ? 8 : 12) {
+                Button(action: onKeepPlaying) {
+                    Label("KEEP PLAYING", systemImage: "arrow.uturn.backward")
+                        .frame(maxWidth: .infinity, minHeight: layout.buttonHeight)
+                }
+                .buttonStyle(
+                    GameplayPauseButtonStyle(
+                        kind: .primary,
+                        tint: accent,
+                        foreground: accentForeground
+                    )
+                )
+                .disabled(actionsAreDisabled)
+                .accessibilityHint("Closes this confirmation and returns to the pause menu")
+
+                Button(action: onEndRun) {
+                    Label("END RUN", systemImage: "rectangle.portrait.and.arrow.right")
+                        .frame(maxWidth: .infinity, minHeight: layout.buttonHeight)
+                }
+                .buttonStyle(
+                    GameplayPauseButtonStyle(
+                        kind: .destructive,
+                        tint: GameplayPauseButtonStyle.exitCoral,
+                        foreground: .white
+                    )
+                )
+                .disabled(actionsAreDisabled)
+                .accessibilityHint("Confirms this run should end without earning coins")
+            }
+        }
+        .padding(layout.panelPadding)
+        .frame(width: layout.panelWidth, height: layout.panelHeight)
+        .background {
+            BroadcastPlateShape(cut: layout.isCompact ? 9 : 13)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.04, green: 0.08, blue: 0.13),
+                            Color(red: 0.08, green: 0.13, blue: 0.19),
+                            Color(red: 0.025, green: 0.05, blue: 0.09),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .shadow(color: .black.opacity(0.95), radius: 0, x: 0, y: 8)
+        }
+        .overlay {
+            BroadcastPlateShape(cut: layout.isCompact ? 9 : 13)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.88),
+                            Color(red: 0.30, green: 0.38, blue: 0.47),
+                            Color(red: 0.12, green: 0.17, blue: 0.23),
+                            Color.white.opacity(0.58),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: layout.isCompact ? 3 : 4
+                )
+        }
+        .overlay {
+            BroadcastPlateShape(cut: layout.isCompact ? 7 : 10)
+                .inset(by: layout.isCompact ? 6 : 8)
+                .strokeBorder(GameplayPauseButtonStyle.exitCoral.opacity(0.82), lineWidth: 1.5)
+        }
+        .overlay {
+            GameplayPauseRivets(inset: layout.isCompact ? 7 : 10)
+        }
         .accessibilityElement(children: .contain)
     }
 }
@@ -428,6 +657,8 @@ private struct PausedGameplayPanel: View {
 
     private var header: some View {
         HStack(spacing: layout.isCompact ? 9 : 13) {
+            Spacer(minLength: 0)
+
             ZStack {
                 BroadcastPlateShape(cut: layout.isCompact ? 4 : 6)
                     .fill(Color.black.opacity(0.74))
@@ -447,7 +678,7 @@ private struct PausedGameplayPanel: View {
             )
             .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .center, spacing: 0) {
                 Text("PAUSED")
                     .font(.system(
                         size: layout.isCompact ? 28 : 36,
@@ -459,7 +690,7 @@ private struct PausedGameplayPanel: View {
                     .shadow(color: .black, radius: 0, x: 2, y: 3)
                     .lineLimit(1)
 
-                Text("LIVE RUN STATUS")
+                Text("STATS")
                     .font(.system(
                         size: layout.isCompact ? 8 : 10,
                         weight: .black,
@@ -472,20 +703,16 @@ private struct PausedGameplayPanel: View {
             .accessibilityLabel("Game paused")
             .accessibilityAddTraits(.isHeader)
 
-            Spacer(minLength: 4)
-
-            Text("SIDELINE CONTROL")
-                .font(.system(
-                    size: layout.isCompact ? 7 : 9,
-                    weight: .bold,
-                    design: .monospaced
-                ))
-                .tracking(0.8)
-                .foregroundStyle(accent.opacity(0.92))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            Color.clear
+                .frame(
+                    width: layout.isCompact ? 36 : 44,
+                    height: layout.isCompact ? 34 : 42
+                )
                 .accessibilityHidden(true)
+
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 }
 
