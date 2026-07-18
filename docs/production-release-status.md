@@ -47,6 +47,15 @@ was not repeated after the QA Mac auto-locked. Art follow-up remains to remove
 note in `menu-design-qa.md`; fresh PM captures are clean and no source-art or QA
 evidence is present in the archive.
 
+The approved Championship Marquee app icon submitted at `abd34bd` is integrated
+at `bd2b51c` (`Art: ship Championship app icon`). The committed 1254-pixel
+opaque source deterministically reproduces the shipping 1024-pixel opaque PNG
+with the documented SHA-256. Asset-catalog JSON, a fresh complete simulator
+suite, compact-iPhone, regular-iPhone, and iPad launcher-scale inspection, and
+an unsigned generic-iOS Release archive passed. The archived app contains the
+compiled 120-pixel iPhone and 152-pixel iPad icons, the privacy manifest, and
+the exact GameAssets package without source-art or documentation content.
+
 The dormant StoreKit runtime foundation is versioned at `ce69388` (`Add dormant
 StoreKit runtime coordination`), player-scoped Game Center persistence and
 delivery at `9d749bc` (`Add player-scoped Game Center delivery`), the dormant
@@ -259,6 +268,10 @@ or runtime ownership boundaries.
 | 2026-07-18 | `2efed0a` | Exact integrated full simulator suite | 806 total: 805 passed, 0 failed, 1 conditional case-alias skip on a case-sensitive filesystem; result bundle `/tmp/PocketVector-OnlineCommerce-Gate.gZ3xoY/Logs/Test/Test-PocketVector-2026.07.18_03-59-38--0700.xcresult` |
 | 2026-07-18 | `2efed0a` | Online-commerce independent audit | Final adversarial review found one protected-profile crash-outcome P1; it was fixed before commit with fault-injection coverage, and the final reviewed implementation has no open P0–P3 findings |
 | 2026-07-18 | `2efed0a` | Unsigned generic-iOS Release archive | Passed at `/tmp/PocketVector-OnlineCommerce-Final-20260718.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit compiler condition, privacy manifest, and native asset manifest present |
+| 2026-07-18 | `bd2b51c` | Championship app-icon integrity and build gate | All asset-catalog JSON passed; documented ImageMagick regeneration exactly matched shipping SHA-256 `b21e93de...`; fresh Debug build and asset compilation passed |
+| 2026-07-18 | `bd2b51c` | Exact integrated full simulator suite | 806 total: 805 passed, 0 failed, 1 conditional case-alias skip on a case-sensitive filesystem; clean-boot rerun result bundle `/tmp/PocketVector-Art-abd34bd.9Du355/Logs/Test/Test-PocketVector-2026.07.18_13-21-53--0700.xcresult` |
+| 2026-07-18 | `bd2b51c` | Compact iPhone, regular iPhone, and iPad launcher QA | App icon remained readable and unclipped at actual launcher sizes in `/tmp/PocketVector-AppIcon-abd34bd-compact.png`, `/tmp/PocketVector-AppIcon-abd34bd-regular.png`, and `/tmp/PocketVector-AppIcon-abd34bd-ipad.png` |
+| 2026-07-18 | `bd2b51c` | Unsigned generic-iOS Release archive | Passed at `/tmp/PocketVector-Art-abd34bd-Release.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit condition, compiled iPhone/iPad icons, privacy manifest, and exact 59-file GameAssets package present; no source-art or documentation bundled |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -383,13 +396,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the exact audited online-commerce integration; full release audit remains |
+| Known P0/P1 defects                  |      0 | 0 open in the exact audited online-commerce and Championship app-icon integrations; full release audit remains |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud history, initial publication, hydration, online-only catalog debit/ownership, and StoreKit durable delivery pass internal tests; external sandbox/device gates remain |
-| Clean-checkout archive               |   Pass | Unsigned archive for exact implementation commit `2efed0a` passed; final codesigned entitlement/export proof remains |
+| Clean-checkout archive               |   Pass | Unsigned archive for exact integrated commit `bd2b51c` passed; final codesigned entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
