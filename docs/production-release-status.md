@@ -1,6 +1,6 @@
 # Pocket Vector production release status
 
-Status date: 2026-07-17
+Status date: 2026-07-18
 
 This is the living delivery board for the first iOS release. Product scope and
 rules remain authoritative in
@@ -141,16 +141,16 @@ builds to Production through one build setting shared by the compiler condition
 and entitlement expansion. The environment is included in the transport and
 replica-scope fingerprint and cannot be supplied by Info.plist configuration.
 
-Cloud capabilities still fail closed in the retained Release composition
-because the durable one-time local-to-cloud account claim, outbound initial
-profile publication, explicit local/cloud merge policy, and account-scoped
-runtime coordinator are not yet implemented. The seed, typed first-zone
-genesis, and hydration mutation barrier remain dormant until that composition
-exists. Player-scoped Game Center delivery, StoreKit 2 runtime coordination,
-and rewarded-ad verification and recovery are likewise implemented but
-unavailable in the live app. The earlier unsigned archive proves the Release
-compiler selected Production, but it does not prove the final codesigned
-entitlement payload; that remains a release-candidate gate.
+The durable one-time local-to-cloud claim, outbound initial publication,
+committed-association recovery, authoritative checkpoint refresh, account-
+scoped runtime, private-cloud economy, and online-only StoreKit composition are
+now implemented. The runtime enables private-cloud sync and purchases only for
+complete validated CloudKit and StoreKit configuration; the repository's
+current placeholder/missing release values therefore remain fail closed until
+the owner supplies permanent identifiers and App Store records. Player-scoped
+Game Center delivery and rewarded-ad verification/recovery remain unavailable
+in the live app. An unsigned archive proves Release compilation but not the
+final codesigned entitlement payload; that remains a release-candidate gate.
 
 ## Delivery board
 
@@ -165,7 +165,7 @@ entitlement payload; that remains a release-candidate gate.
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Eight-team presentation system                  | Complete            | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, HUD palettes, raster recoloring, and preload readiness ship     |
-| Live Apple and advertising services             | In progress         | Listed foundations pass; approved Cloud merge/claim implementation, outbound bootstrap, retained service composition, permanent IDs, products, records, authenticated production transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
+| Live Apple and advertising services             | In progress         | Cloud claim/hydration and online-only StoreKit composition are implemented and fail closed without complete configuration; permanent IDs, products, records, production schema, Game Center retention, authenticated ad transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
 | TestFlight release candidate                    | Queued              | Device, accessibility, sandbox, sync, replay, crash, and economy gates pass                                                           |
 | App Store submission                            | Queued              | Signed archive, privacy report, metadata, review notes, screenshots, and owner approval complete                                      |
@@ -255,6 +255,10 @@ or runtime ownership boundaries.
 | 2026-07-17 | `9b450ba` | Exact integrated full simulator suite | 771 total: 770 passed, 0 failed, 1 existing conditional case-alias skip; result bundle `/tmp/pocketvector-art-full-99909f5-v1.xcresult` |
 | 2026-07-17 | `9b450ba` | Compact/regular iPhone and iPad menu QA | Fresh captures passed at `/tmp/pocketvector-menu-compact-99909f5-v1.png`, `/tmp/pocketvector-menu-regular-99909f5-v1.png`, and `/tmp/pocketvector-menu-ipad-99909f5-v1.png`; compact Settings → Privacy and Support → Back navigation and accessibility labels/hints passed |
 | 2026-07-17 | `9b450ba` | Unsigned generic-iOS Release archive | Passed at `/tmp/pocketvector-art-archive-99909f5-v1/PocketVector.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, all seven new Menu imagesets, exact 58 GameAssets plus manifest, and no source-art, QA, or documentation content bundled |
+| 2026-07-18 | `2efed0a` | Online-only commerce focused integration gate | 146 passed, 0 failed, 0 skipped before the final crash-outcome regression; the added protected-CAS fault test and affected association/economy regressions also passed |
+| 2026-07-18 | `2efed0a` | Exact integrated full simulator suite | 806 total: 805 passed, 0 failed, 1 conditional case-alias skip on a case-sensitive filesystem; result bundle `/tmp/PocketVector-OnlineCommerce-Gate.gZ3xoY/Logs/Test/Test-PocketVector-2026.07.18_03-59-38--0700.xcresult` |
+| 2026-07-18 | `2efed0a` | Online-commerce independent audit | Final adversarial review found one protected-profile crash-outcome P1; it was fixed before commit with fault-injection coverage, and the final reviewed implementation has no open P0–P3 findings |
+| 2026-07-18 | `2efed0a` | Unsigned generic-iOS Release archive | Passed at `/tmp/PocketVector-OnlineCommerce-Final-20260718.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit compiler condition, privacy manifest, and native asset manifest present |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -293,13 +297,12 @@ Release behavior. A wave is not complete merely because its files exist.
    delivery acknowledgement becomes persisted authority. The barrier remains
    through ambiguous delivery and clears only after sealed exact durable
    completion or an authenticated terminal rejection.
-7. **Owner policy approved; live Cloud integration pending:** implement the
-   approved automatic first-association claim, same-account offline
-   reconciliation, account-switch isolation, and outbound initial-profile
-   publication.
-   Compose them with typed genesis and hydration in the account-scoped runtime
-   coordinator, preserving all generation, checkpoint, journal, and final
-   durability rechecks.
+7. **Complete internal composition; external Cloud configuration pending:** the
+   automatic first-association claim, same-account offline reopening, account-
+   switch isolation, outbound initial publication, checkpoint refresh, and
+   crash-safe hydration are composed in the account-scoped runtime while
+   preserving generation, checkpoint, journal, lineage, and final durability
+   rechecks.
 8. **Complete Game Center foundation; live integration pending:** V4 persistence,
    exact player buckets, unbound quarantine, and capability-bound single-flight
    delivery are implemented. Add the trusted Release factory, retained
@@ -307,11 +310,13 @@ Release behavior. A wave is not complete merely because its files exist.
    records, a proof-bearing settlement attribution path, and the approved
    durable exactly-once claim of unbound maxima to the first authenticated
    player. A later player may never claim the same values.
-9. **Complete StoreKit foundation; live integration pending:** localized product
+9. **Complete internal StoreKit composition; external products pending:** localized product
    validation, verified updates, unfinished recovery, durable finish gating,
    account-generation retirement, and serialized purchases are implemented.
-   Add live account-session sourcing, private-cloud economy composition,
-   retained lifecycle and presentation state, and permanent consumable IDs.
+   Live account-session sourcing, private-cloud economy composition, retained
+   lifecycle, transaction-boundary revalidation, and bounded presentation state
+   are implemented. Permanent consumable identifiers and App Store product
+   records remain external release work.
 10. **Complete rewarded-ad verification foundation; live integration pending:**
    exact challenge/status correlation, process-only verified claims, and
    crash-recoverable challenge journaling are implemented. Add authenticated
@@ -320,13 +325,10 @@ Release behavior. A wave is not complete merely because its files exist.
    authoritative presentation state. A client callback alone never grants
    coins.
 
-The core account-independent Cloud, Game Center, StoreKit, and rewarded-ad
-verification/recovery boundaries are proven. The owner has approved the
-local/cloud reconciliation and Game Center attribution policies. The release
-critical path is now their durable implementation, followed by outbound cloud
-publication and retained account-scoped composition. Game Center, StoreKit,
-and rewarded-ad foundations remain dormant until their listed live integration
-and external-service gates are complete.
+The Cloud claim/hydration and online-only StoreKit paths are now internally
+composed. The remaining service critical path is permanent CloudKit and App
+Store configuration plus signed-device validation, retained Game Center
+delivery, and rewarded-ad production transport/SDK/consent integration.
 
 ## Owner decisions and external dependencies
 
@@ -381,13 +383,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the exact audited StoreKit, Game Center, rewarded-ad verification/recovery, and canonical V4 seed scopes; full release audit remains |
+| Known P0/P1 defects                  |      0 | 0 open in the exact audited online-commerce integration; full release audit remains |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
-| Exactly-once economic mutations      |   100% | Local/cloud-history, typed publication/genesis, hydration, StoreKit delivery, server-verified rewarded-ad delivery/recovery, and account-neutral seed foundations pass; approved policy implementation and live composition remain |
-| Clean-checkout archive               |   Pass | Unsigned archive for the exact clean `9b450ba` integrated content passed; a detached post-evidence-commit rerun and final signed entitlement/export proof remain |
+| Exactly-once economic mutations      |   100% | Local/cloud history, initial publication, hydration, online-only catalog debit/ownership, and StoreKit durable delivery pass internal tests; external sandbox/device gates remain |
+| Clean-checkout archive               |   Pass | Unsigned archive for exact implementation commit `2efed0a` passed; final codesigned entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner

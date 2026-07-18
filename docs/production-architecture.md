@@ -2,11 +2,11 @@
 
 Status: implementation contract for version 1
 
-Last updated: 2026-07-17
+Last updated: 2026-07-18
 
-Implementation baseline: `d6c2b4a`, including the canonical V4 cloud-profile
-seed and the dormant StoreKit, player-scoped Game Center, and rewarded-ad
-verification and recovery foundations.
+Implementation baseline: `2efed0a`, the online-only commerce integration,
+including the canonical V4 cloud-profile seed and the StoreKit, player-scoped
+Game Center, and rewarded-ad foundations.
 
 This document translates the approved release charter into ownership and data
 boundaries. It is deliberately narrower than a feature specification: it says
@@ -22,10 +22,12 @@ ProductionAppRuntime (one retained process graph)
             -> LocalPlayerProfileRepository actor
                  -> atomic local profile store
                  -> durable local profile and economy operations
-            -> dormant transactional CloudKit genesis, hydration,
-               reconstruction, and incremental-publication seams
-            -> future local-to-cloud claim, outbound bootstrap,
-               and account-scoped coordinator
+            -> ProductionAccountRuntimeRouter
+                 -> durable local-to-cloud claim and committed association
+                 -> account-bound CloudKit checkpoint preparation/hydration
+                 -> DurableEconomyCoordinator
+                 -> StoreKitRuntimeCoordinator
+                 -> OnlineCommerceCoordinator
        -> GameplaySessionController
             -> one GameScene for one RunConfiguration
             <- one CompletedRun callback
@@ -34,13 +36,9 @@ ProductionAppRuntime (one retained process graph)
   -> UIKit GameKit presentation handoff (retained seam; not connected)
 ```
 
-The following foundations are implemented but remain outside the retained live
-runtime graph:
+The following foundations remain outside the retained live runtime graph:
 
 ```text
-StoreKitRuntimeCoordinator
-  -> account/session-generation lifecycle, unfinished recovery,
-     transaction updates, product state, and serialized purchase
 GameCenterDeliveryCoordinator
   -> exact player-bucket preparation, single-flight submission,
      same-player revalidation, and capability-bound acknowledgement
@@ -52,8 +50,11 @@ RewardedAdRecoveryCoordinator
      exact durable-delivery cleanup, and permanent quarantine barrier
 ```
 
-`ProductionAppRuntime` still advertises only Apple diagnostics. It constructs
-and retains none of these four service coordinators.
+`ProductionAppRuntime` advertises purchases and private-cloud sync only when
+the complete validated CloudKit and StoreKit configuration can construct the
+concrete account runtime graph. Missing or invalid configuration keeps both
+capabilities unavailable without blocking local gameplay. Game Center and
+rewarded-ad coordinators are not yet retained.
 
 - SwiftUI owns launch, navigation, menus, settings, locker, store, results, and
   service presentation.
@@ -196,9 +197,17 @@ clamps at five valid runs, does not bank additional offers, survives a decline,
 and resets only in the same durable operation that grants the verified 100
 coins.
 
-These are implemented durability invariants, not live commerce. The StoreKit
-adapter and runtime coordinator are not composed, so coin-pack requests remain
-unavailable. Rewarded-ad eligibility is durable local state, but the ad SDK,
+These durability invariants are composed into the configured production
+runtime. Every catalog spend and coin-pack request performs a fresh provider
+account and network probe, confirms pending gameplay credits, refreshes and
+installs the validated authoritative replica, and revalidates again immediately
+before the atomic debit or StoreKit sheet. Offline, signed-out, restricted,
+stale-account, and connection-loss results use the existing online-only alert;
+they do not debit, grant ownership, enqueue a purchase, or open StoreKit.
+Production identifiers and App Store product records remain injected release
+configuration, so the current repository configuration continues to fail
+closed until those values are supplied. Rewarded-ad eligibility is durable
+local state, but the ad SDK,
 consent runtime, authenticated production verification transport and
 server-side-verification backend, provider-transaction deduplication, recovery
 coordinator, and retained delivery orchestration are not composed.
@@ -235,7 +244,7 @@ exposed.
 | Equip an already owned team, jersey, or football | Available                                                                      |
 | Completed-run record and gameplay reward         | Stored locally; reward remains pending                                         |
 | Spend coins or unlock a new item                 | Requires current iCloud economy state                                          |
-| Buy a coin pack                                  | Not enabled; future delivery also requires current private-iCloud economy authority                                    |
+| Buy a coin pack                                  | Requires current private-iCloud authority; no StoreKit sheet opens offline                                              |
 | Watch and receive a rewarded advertisement       | Not enabled; dormant recovery is implemented, while live delivery requires consent, SDK readiness, authenticated server verification, retained orchestration, and current private-iCloud economy authority |
 | Game Center authentication                       | Not connected; future authentication remains optional and never blocks gameplay                                      |
 | Leaderboard and achievements                     | Exact player-bound maxima may later submit; release policy also authorizes one durable claim of unbound maxima to the first authenticated player |
@@ -395,7 +404,7 @@ candidate digest can never install. The local repository uses deterministic
 account-derived identities for cloud profiles; switching iCloud accounts opens
 a separate profile and never silently merges identities.
 
-The exact repository-adoption seam is implemented but dormant. Adoption first
+The exact repository-adoption seam is active in configured account composition. Adoption first
 matches the active capability, exact journal and session, sealed target-cleanup
 confirmation, and unchanged persisted source. The file store then requires no
 journal or quarantine barrier and both profile copies to equal the exact
@@ -403,7 +412,7 @@ candidate. Only after account and profile validation does the actor swap its
 document and canonical persisted artifact; the session is not rotated and UI
 state is not published. Every failed validation retains the barrier.
 
-The process-local account-generation authority is also implemented but dormant.
+The process-local account-generation authority is active in configured account composition.
 It binds one opaque, nonpersistable token to the exact cloud account, all
 account-derived service ownership, schema scope, and replica epoch. Exact
 duplicate activation preserves the token; every account, scope, epoch,
@@ -419,7 +428,7 @@ it. The admitted body preserves its exact success or error outcome, including
 cancellation that arrives after admission. Network work is forbidden inside
 that gate.
 
-The scoped checkpoint-freshness seam is implemented but dormant. A
+The scoped checkpoint-freshness seam is active in configured account composition. A
 mutation-capable checkpoint store must be composed with the canonical
 account-generation authority; an unbound store or a permit from a foreign
 authority fails closed before checkpoint path derivation or I/O. The store
@@ -432,7 +441,7 @@ a later accepted checkpoint rejects a stale journal before profile mutation.
 The enforced lock order is checkpoint account lock followed by profile-file
 lock.
 
-Typed first-zone genesis publication is implemented but dormant. Genesis begins
+Typed first-zone genesis publication is active for an eligible first association. Genesis begins
 with an account-generation-bound metadata preflight and a durable reservation
 written before network access. Reservation state advances from
 `reservedBeforeNetwork` to `networkMayHaveBeenInvoked`; a process registry keyed
@@ -451,7 +460,7 @@ Generation-one checkpoint save requires the exact account generation, account,
 scope, epoch, reservation, attempt sequence, and live save lease, then consumes
 the reservation under the authority lock.
 
-Typed checkpoint fetching and publication are implemented but dormant. The
+Typed checkpoint fetching and publication are active for configured account refresh. The
 ordinary incremental and cache-loss reconstruction wrappers derive the exact
 replica scope from the complete validated production cloud-write configuration
 and hard-code `requireExisting`, so callers cannot pair an asserted scope with
@@ -480,13 +489,13 @@ revalidates the exact durable predecessor and any pending candidate under the
 account lock. Raw checkpoint save is private in Release and exposed only as a
 Debug test seam.
 
-Live composition now requires a durable one-time local-profile account-claim
-transaction, outbound initial profile publication, and the account-scoped
-runtime coordinator. The coordinator must use the sealed first-zone genesis and
-repository hydration barrier exactly as implemented; neither boundary may be
-widened or bypassed as a shortcut. Existing hydration deliberately rejects
-changing a local profile's account-derived identity, and ordinary Release
-fetchers deliberately cannot create a zone.
+Live composition performs a durable one-time local-profile account-claim
+transaction, outbound initial profile publication, and account-scoped runtime
+activation. It uses the sealed first-zone genesis and repository hydration
+barrier without widening either authority. A redundant committed-association
+marker reopens the exact account-derived target before local bootstrap; source
+and target copies are repaired only from validator-clean lineage, while
+different-account, rollback, replacement, and ambiguous evidence fail closed.
 
 A fetch or publication context is minted under bounded generation admission,
 network work occurs after leaving that gate, and each durable save later
@@ -515,13 +524,14 @@ unbound work for an authenticated player.
   process capability. Unbound work is never submitted. Release exposes no
   delivery-coordinator construction path until a trusted in-file GameKit
   factory and retained composition are added.
-- StoreKit foundation, dormant: the runtime owns exactly one account/session
+- StoreKit online-commerce composition: the runtime owns exactly one account/session
   generation, installs transaction updates before unfinished recovery, loads
   the exact four configured consumables, serializes purchase presentation,
   suppresses stale callbacks, and awaits producer shutdown during account
-  replacement. Transactions finish only after durable delivery. Live
-  account-session sourcing, private-cloud economy composition, lifecycle
-  retention, product identifiers, and UI state wiring remain.
+  replacement. Transactions finish only after durable delivery. The retained
+  runtime supplies account-session sourcing, private-cloud economy authority,
+  lifecycle management, and bounded UI outcomes. Permanent product identifiers
+  and App Store records remain external release configuration.
 - Rewarded-ad verification foundation, dormant: a versioned challenge binds the
   exact attempt, verification handle, and provider custom data. Only an exactly
   correlated server result mints a non-Codable process claim, which must match
@@ -540,8 +550,8 @@ unbound work for an authenticated player.
   privacy-safe `OSLog` categories and Apple MetricKit delivery. Version 1 uses
   Apple-only crash diagnostics and does not add a third-party crash SDK.
 
-Integration state is service-specific. Live GameKit and StoreKit SDK adapters
-exist but are not retained by production composition; the Game Center
+Integration state is service-specific. The StoreKit SDK adapter is retained by
+the configured production account graph, while GameKit delivery is not. The Game Center
 success-capable fake and delivery-coordinator constructor are Debug-only.
 Rewarded-ad verification has a transport protocol and Debug injection seam but
 no authenticated production transport; its recovery coordinator is also not

@@ -57,10 +57,14 @@ suite requires that manifest to match the physical bundled files exactly.
 ## Production status
 
 The gameplay core, production shell, eight-team catalog, persistence model,
-Apple service adapters, tutorial, shipping visuals, and diagnostics foundation
-are implemented. Live CloudKit hydration, production service composition,
-permanent Apple identifiers, commerce, rewarded-ad verification, device QA,
-TestFlight gates, and App Store records remain release work.
+tutorial, shipping visuals, diagnostics, private-cloud profile association, and
+online-only commerce composition are implemented. The configured runtime now
+fails closed unless both CloudKit and StoreKit configuration are complete;
+catalog spends and coin-pack requests revalidate the private account and
+network immediately before their transaction boundary. Permanent Apple
+identifiers, App Store products and records, production CloudKit deployment,
+rewarded-ad live integration, device QA, and TestFlight gates remain release
+work.
 
 See `docs/production-release-status.md` for the active delivery board and
 `docs/production-release-charter.md` for the approved version-one scope.
