@@ -220,9 +220,42 @@ identical hashes when neither source nor tool behavior changed.
 
 ## App icon and audio
 
-The editable app-icon source is
-`ios/AssetSources/AppIcon/pocket-vector-app-icon.svg`; the shipping 1024-point
-PNG lives in the app icon asset catalog.
+The approved Championship Marquee app-icon master is:
+
+```text
+ios/AssetSources/AppIcon/pocket-vector-app-icon-championship-v1.png
+SHA-256 55ef8e5b1137bc333a7ee01072dcc444b688cbc8be9eadc121a59c88bdc9832c
+```
+
+It was created with built-in ImageGen from the approved Pocket Stadium
+submittal. The brief preserved the glacier-white `P`, ember-orange `V`, dark
+stadium scoreboard, premium double-stepped steel frame, centered brown
+football, symmetrical floodlights, and opaque full-bleed square. The canonical
+generated output is:
+
+```text
+/Users/andypark/.codex/generated_images/019f7182-19d5-7d40-8e97-6ebea8ba5808/exec-70aa945e-732f-4ab6-bdd0-886b762f9947.png
+```
+
+The shipping 1024-point PNG is
+`ios/PocketVector/Resources/Assets.xcassets/AppIcon.appiconset/PocketVector-AppIcon-1024.png`
+with SHA-256
+`b21e93de7ff2198f043ab23ff9092ed4fcaf0b29ec9bec46b0bf505f5a5f89bb`.
+Generate it deterministically from the source master with:
+
+```bash
+magick ios/AssetSources/AppIcon/pocket-vector-app-icon-championship-v1.png \
+  -filter LanczosSharp \
+  -resize 1024x1024! \
+  -colorspace sRGB \
+  -alpha off \
+  -strip \
+  ios/PocketVector/Resources/Assets.xcassets/AppIcon.appiconset/PocketVector-AppIcon-1024.png
+```
+
+The previous abstract vector source remains at
+`ios/AssetSources/AppIcon/pocket-vector-app-icon.svg` for provenance only; it
+is no longer the shipping source.
 
 Audio files under `GameAssets/audio/` are checked-in shipping masters. There is
 no active audio generator in this repository. Replace them only with approved,
