@@ -20,7 +20,7 @@ struct MainMenuView: View {
 
                 conceptScene(in: artRect, metrics: metrics)
 
-                utilityCorner(insets: windowSafeAreaInsets)
+                coinCorner(insets: windowSafeAreaInsets)
 
                 Color.clear
                     .frame(width: 1, height: 1)
@@ -68,6 +68,9 @@ struct MainMenuView: View {
                 color: highMesaEmber
             )
             .frame(frame: mapped(metrics.personalBest, metrics: metrics, into: artRect))
+
+            utilityRow
+                .position(mapped(metrics.utilityRowCenter, metrics: metrics, into: artRect))
 
             hotspot(
                 label: "Play",
@@ -118,13 +121,8 @@ struct MainMenuView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private func utilityCorner(insets: EdgeInsets) -> some View {
+    private var utilityRow: some View {
         HStack(spacing: 4) {
-            CoinBalanceHUD(
-                confirmed: coordinator.state.confirmedCoins,
-                pending: coordinator.state.pendingCoins
-            )
-
             MenuUtilityIcon(
                 imageName: "MenuAchievementIcon",
                 label: "Achievements",
@@ -146,9 +144,16 @@ struct MainMenuView: View {
                 action: coordinator.showSettings
             )
         }
+    }
+
+    private func coinCorner(insets: EdgeInsets) -> some View {
+        CoinBalanceHUD(
+            confirmed: coordinator.state.confirmedCoins,
+            pending: coordinator.state.pendingCoins
+        )
         .padding(.top, max(8, insets.top + 6))
-        .padding(.trailing, max(8, insets.trailing + 6))
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .padding(.leading, max(8, insets.leading + 6))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var highMesaEmber: Color {
@@ -182,6 +187,17 @@ struct MainMenuView: View {
         )
     }
 
+    private func mapped(
+        _ source: CGPoint,
+        metrics: MenuSceneMetrics,
+        into destination: CGRect
+    ) -> CGPoint {
+        CGPoint(
+            x: destination.minX + source.x / metrics.referenceSize.width * destination.width,
+            y: destination.minY + source.y / metrics.referenceSize.height * destination.height
+        )
+    }
+
     private func aspectFit(_ source: CGSize, inside destination: CGRect) -> CGRect {
         let scale = min(
             destination.width / source.width,
@@ -201,6 +217,7 @@ private struct MenuSceneMetrics {
     let assetName: String
     let referenceSize: CGSize
     let personalBest: CGRect
+    let utilityRowCenter: CGPoint
     let playHotspot: CGRect
     let lockerHotspot: CGRect
     let leaderboardHotspot: CGRect
@@ -212,7 +229,8 @@ private struct MenuSceneMetrics {
     static let phone = Self(
         assetName: "MenuHighMesaScenePhone",
         referenceSize: CGSize(width: 1_847, height: 851),
-        personalBest: CGRect(x: 829, y: 683, width: 190, height: 110),
+        personalBest: CGRect(x: 811.5, y: 592, width: 224, height: 130),
+        utilityRowCenter: CGPoint(x: 923.5, y: 756),
         playHotspot: CGRect(x: 518, y: 366, width: 806, height: 262),
         lockerHotspot: CGRect(x: 281, y: 669, width: 389, height: 139),
         leaderboardHotspot: CGRect(x: 1_148, y: 669, width: 416, height: 140)
@@ -221,7 +239,8 @@ private struct MenuSceneMetrics {
     static let pad = Self(
         assetName: "MenuHighMesaScenePad",
         referenceSize: CGSize(width: 1_448, height: 1_086),
-        personalBest: CGRect(x: 647, y: 746, width: 154, height: 89),
+        personalBest: CGRect(x: 633, y: 710, width: 182, height: 105),
+        utilityRowCenter: CGPoint(x: 724, y: 852),
         playHotspot: CGRect(x: 406, y: 496, width: 634, height: 202),
         lockerHotspot: CGRect(x: 216, y: 736, width: 312, height: 108),
         leaderboardHotspot: CGRect(x: 902, y: 736, width: 326, height: 108)
@@ -294,7 +313,22 @@ private struct CoinBalanceHUD: View {
                     .minimumScaleFactor(0.65)
             }
         }
-        .shadow(color: .black, radius: 0, x: 2, y: 2)
+        .padding(.horizontal, 8)
+        .frame(minHeight: 44)
+        .background {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color(red: 0.005, green: 0.018, blue: 0.038).opacity(0.94))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(Color.black, lineWidth: 3)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 2)
+                .stroke(Color(red: 240 / 255.0, green: 106 / 255.0, blue: 59 / 255.0), lineWidth: 1)
+                .padding(3)
+        }
+        .shadow(color: .black.opacity(0.88), radius: 0, x: 2, y: 2)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Coin balance")
         .accessibilityValue(
@@ -320,7 +354,7 @@ private struct MenuUtilityIcon: View {
                 .interpolation(.none)
                 .antialiased(false)
                 .scaledToFit()
-                .frame(width: 36, height: 36)
+                .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
         }
         .buttonStyle(UtilityTileButtonStyle(reduceMotion: reduceMotion || reducedMotion))

@@ -90,8 +90,8 @@ and iPad plates are the static High Mesa Helions renders:
 ```text
 ios/AssetSources/Menu/menu-high-mesa-helions-phone-v1.png
 SHA-256 1a8f6d2c6f81157b291d92b3f84261b6b391496e8bff8525351598ba446358d3
-ios/AssetSources/Menu/menu-high-mesa-helions-pad-v1.png
-SHA-256 42ef0a17c24cd741004ec8a2b3ef15d84a8d0c5acb960c9acc1cca1c307aff80
+ios/AssetSources/Menu/menu-high-mesa-helions-pad-v2.png
+SHA-256 0c6d013086641ce5f6a1659fe5c33e2d806bf5012ed74110bd4004a6658557c0
 ios/PocketVector/Resources/Assets.xcassets/MenuHighMesaScenePhone.imageset/
 ios/PocketVector/Resources/Assets.xcassets/MenuHighMesaScenePad.imageset/
 ```
@@ -127,11 +127,29 @@ pixel-preserving vertical outpaint. It preserves the approved hierarchy and
 subjects while regenerating crowd, field, character, and spacing details for
 the wider vertical composition.
 
+The retained `menu-high-mesa-helions-pad-v1.png` source is the provenance plate
+for the iPad skyline. Version 2 removes only the two bare center pole assemblies
+near x=638 and x=808. Built-in ImageGen reconstructed the occluded sky, rail,
+truss, crowd, and marquee-top pixels; that reconstruction was then restricted
+to the two tight removal regions so every pixel outside those regions remains
+from v1. All three flagged poles and the far-right bare upright remain. The
+canonical inpainting output used as the local donor is:
+
+```text
+/Users/andypark/.codex/generated_images/019f7182-19d5-7d40-8e97-6ebea8ba5808/exec-f311bca9-4b92-4059-8453-544067129d52.png
+```
+
 `MainMenuView` selects only the phone or iPad static plate based on viewport
 shape. It performs no Core Image rendering, semantic masking, palette change,
 dynamic banner composition, or selected-team asset selection. Gameplay team
 selection remains available and persisted, but it does not change the menu's
 visual appearance.
+
+The live Personal Best plate is approximately 18 percent larger than its prior
+menu placement. Achievements, Store, and Settings use separate 44-point hit
+targets with 28-point rendered icons in a centered row immediately below it.
+The coin and live balance are anchored independently to the top-leading safe
+area in a compact black panel with an ember keyline.
 
 ## Main-menu interface assets
 

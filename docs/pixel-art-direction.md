@@ -60,10 +60,11 @@ vector/material choice and remains attached to the player across teams.
 The main menu is a full-stadium arcade marquee, not a stack of generic app
 cards. Its hierarchy is: the stadium-mounted `POCKET VECTOR` marquee and
 tagline, large central Play control, flanking QB and coach, then the two bottom
-destinations. Achievements, Store, and Settings stay in a compact corner rail.
-Privacy and Support live inside Settings. Personal Best is a small live-value
-scoreboard centered between the two bottom destinations rather than a
-destination card.
+destinations. Personal Best is a compact live-value scoreboard centered between
+the two bottom destinations, with Achievements, Store, and Settings in one small
+icon row directly below it. Privacy and Support live inside Settings. The
+scoreboard and utility row remain subordinate to Play rather than reading as a
+third destination card.
 
 The menu has one fixed High Mesa Helions art direction regardless of the
 selected gameplay offense. The fully rendered phone and iPad plates author the
@@ -81,7 +82,11 @@ required for iPad; do not letterbox the phone plate over a blurred enlargement.
 - The quarterback and Team & Locker jersey icon both wear number `10`.
 - Do not place a separate oversized team badge beside the title.
 - Coin balance is icon-first and compact: use the coin mark plus value, never a
-  large balance card or the word “Coin.”
+  large balance card or the word “Coin.” Anchor it to the top-leading safe area
+  in a compact, opaque black stadium panel with a crisp ember keyline so the
+  balance remains legible against floodlights.
+- On the 4:3 iPad plate, preserve the three flagged poles and the far-right bare
+  upright while omitting the two empty center poles above the title marquee.
 - Keep every interactive control inside landscape safe areas on compact iPhone,
   regular iPhone, and iPad.
 - Decorative stadium and player layers remain hidden from accessibility; every
