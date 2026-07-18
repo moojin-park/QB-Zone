@@ -62,21 +62,24 @@ cards. Its hierarchy is: the stadium-mounted `POCKET VECTOR` marquee and
 tagline, large central Play control, flanking QB and coach, then the two bottom
 destinations. Achievements, Store, and Settings stay in a compact corner rail.
 Privacy and Support live inside Settings. Personal Best is a small live-value
-sideline scoreboard rather than a destination card.
+scoreboard centered between the two bottom destinations rather than a
+destination card.
 
-The selected offense drives the marquee accents, Play face, flags, banner
-emblems and wordmarks, uniforms, equipment highlights, and upper-stadium
-lighting. Nova City Comets is the fresh-profile default; a returning player's
-persisted selection remains authoritative. Runtime palette replacement must
-preserve skin, football leather, white lettering, steel, and neutral shadows.
-A dedicated 4:3 scene is required for iPad; do not letterbox the phone plate
-over a blurred enlargement.
+The menu has one fixed High Mesa Helions art direction regardless of the
+selected gameplay offense. The fully rendered phone and iPad plates author the
+ember `#F06A3B`, deep indigo `#2B234D`, and glacier `#D8F0EC` palette directly;
+there is no runtime palette replacement, mask, team banner, or team-dependent
+asset selection. Skin, football leather, white lettering, steel, turf, and
+neutral shadows remain independent materials. A dedicated 4:3 scene is
+required for iPad; do not letterbox the phone plate over a blurred enlargement.
 
 - Preserve the concept's dark navy, bright stadium lighting, framed marquee,
   detailed character art, oversized dimensional Play control, and clear
   two-button bottom navigation rhythm.
-- Do not place a separate oversized team badge beside the title. Team identity
-  belongs in the stadium banners, palette, uniforms, and environmental light.
+- Both background banners read `HIGH MESA` / `HELIONS`; the solar-mesa mark is
+  used consistently on banners, flags, helmets, and coach apparel.
+- The quarterback and Team & Locker jersey icon both wear number `10`.
+- Do not place a separate oversized team badge beside the title.
 - Coin balance is icon-first and compact: use the coin mark plus value, never a
   large balance card or the word “Coin.”
 - Keep every interactive control inside landscape safe areas on compact iPhone,

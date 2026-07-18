@@ -84,40 +84,42 @@ ios/AssetSources/Menu/menu-concept-reference-original.png
 SHA-256 a45f4ca6b5306cd3791832a2ef6275a62f531edfcc8e87cddf4331ebf7e3fccf
 ```
 
-The shipping phone and iPad plates are:
+The previous Nova source plates are retained as edit inputs. The shipping phone
+and iPad plates are the static High Mesa Helions renders:
 
 ```text
-ios/AssetSources/Menu/menu-concept-scene-v3.png
-ios/AssetSources/Menu/menu-concept-scene-pad-v3.png
-ios/PocketVector/Resources/Assets.xcassets/MenuConceptScene.imageset/
-ios/PocketVector/Resources/Assets.xcassets/MenuConceptScenePad.imageset/
+ios/AssetSources/Menu/menu-high-mesa-helions-phone-v1.png
+SHA-256 1a8f6d2c6f81157b291d92b3f84261b6b391496e8bff8525351598ba446358d3
+ios/AssetSources/Menu/menu-high-mesa-helions-pad-v1.png
+SHA-256 42ef0a17c24cd741004ec8a2b3ef15d84a8d0c5acb960c9acc1cca1c307aff80
+ios/PocketVector/Resources/Assets.xcassets/MenuHighMesaScenePhone.imageset/
+ios/PocketVector/Resources/Assets.xcassets/MenuHighMesaScenePad.imageset/
 ```
 
-The phone plate is a precise built-in ImageGen edit of the reference. Its edit
-brief was: remove the bottom-center Achievements control and the far-right
-Personal Best board; reconstruct the vacated turf, crowd, and sideline equipment
-in the same detailed pixel-art style; preserve the title, tagline, Play control,
-QB, coach, Locker, Leaderboard, typography, lighting, and all other composition.
-The canonical generated output is:
+The phone plate is a precise built-in ImageGen edit of
+`menu-concept-scene-v3.png`, grounded by the original supplied concept. Its
+brief preserved the exact composition and detailed pixel-art materials, baked
+the High Mesa palette and `HIGH MESA` / `HELIONS` banners, replaced all team
+marks with the solar-mesa emblem, changed the quarterback and locker jersey
+numbers to `10`, made the leaderboard bars neutral glacier-white, and kept the
+bottom-center gap clear for the live Personal Best overlay. The canonical
+generated output is:
 
 ```text
-/Users/andypark/.codex/generated_images/019f7182-19d5-7d40-8e97-6ebea8ba5808/exec-64a8d3e9-e33a-453b-93ea-05fc23f3210e.png
+/Users/andypark/.codex/generated_images/019f7182-19d5-7d40-8e97-6ebea8ba5808/exec-d1690610-ee1a-4b51-855e-8d37f0b0632c.png
 ```
 
-The dedicated 1448 x 1086 iPad plate was built with the original concept as
-visual grounding. The complete ImageGen brief was:
-
-> Preserve the centered Pocket Vector concept composition and extend it to a
-> seamless 4:3 stadium. Continue the night sky, upper bowl, trusses,
-> floodlights, flags, turf, sideline, and yard markings in the same polished
-> high-detail pixel-art style. Do not duplicate or add title, Play, navigation,
-> characters, scoreboards, icons, text, logos, or helmets. Do not blur or soften
-> the art.
+The dedicated 1448 x 1086 iPad plate is a separate precise edit of
+`menu-concept-scene-pad-v3.png`. It uses the approved phone render as the
+identity and material reference while preserving the iPad source's 4:3 stadium
+depth and vertical composition. It applies the same exact copy, solar-mesa
+marks, independent material colors, quarterback number `10`, locker number
+`10`, neutral leaderboard bars, and empty Personal Best slot.
 
 Its canonical generated output is:
 
 ```text
-/Users/andypark/.codex/generated_images/019f7182-19d5-7d40-8e97-6ebea8ba5808/exec-8441f627-1b0f-428a-aa3e-ef7acb231db8.png
+/Users/andypark/.codex/generated_images/019f7182-19d5-7d40-8e97-6ebea8ba5808/exec-a72ee551-316d-48da-bbcd-f8bd2b4eaff2.png
 ```
 
 The iPad output is an independently rendered 4:3 adaptation, not a
@@ -125,11 +127,11 @@ pixel-preserving vertical outpaint. It preserves the approved hierarchy and
 subjects while regenerating crowd, field, character, and spacing details for
 the wider vertical composition.
 
-`MainMenuView` applies the selected team's illuminated primary and secondary
-palette asynchronously through a bounded Core Image cache. Authored masks keep
-skin and football leather out of the palette replacement. Dynamic team banners
-and upper-stadium lighting complete the team change. Nova City Comets remains
-the fresh-profile default.
+`MainMenuView` selects only the phone or iPad static plate based on viewport
+shape. It performs no Core Image rendering, semantic masking, palette change,
+dynamic banner composition, or selected-team asset selection. Gameplay team
+selection remains available and persisted, but it does not change the menu's
+visual appearance.
 
 ## Main-menu interface assets
 
