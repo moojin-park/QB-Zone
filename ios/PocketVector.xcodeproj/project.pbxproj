@@ -18,7 +18,11 @@
 		100000000000000000000009 /* TextureLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* TextureLibrary.swift */; };
 		10000000000000000000000A /* GameScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* GameScene.swift */; };
 		10000000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000B /* Assets.xcassets */; };
-		10000000000000000000000C /* GameAssets in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000C /* GameAssets */; };
+		1A1000000000000000000001 /* native-assets.json in Copy Game Assets */ = {isa = PBXBuildFile; fileRef = 2A1000000000000000000001 /* native-assets.json */; };
+		1A1000000000000000000002 /* art in Copy Game Assets */ = {isa = PBXBuildFile; fileRef = 2A1000000000000000000002 /* art */; };
+		1A1000000000000000000003 /* audio in Copy Game Assets */ = {isa = PBXBuildFile; fileRef = 2A1000000000000000000003 /* audio */; };
+		1A1000000000000000000004 /* characters in Copy Game Assets */ = {isa = PBXBuildFile; fileRef = 2A1000000000000000000004 /* characters */; };
+		1A1000000000000000000005 /* pixel in Copy Game Assets */ = {isa = PBXBuildFile; fileRef = 2A1000000000000000000005 /* pixel */; };
 		10000000000000000000000D /* GameCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000D /* GameCoreTests.swift */; };
 		10000000000000000000000E /* GameAudioController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000010 /* GameAudioController.swift */; };
 		10000000000000000000000F /* BallVisualProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000011 /* BallVisualProjection.swift */; };
@@ -157,7 +161,6 @@
 		200000000000000000000009 /* TextureLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextureLibrary.swift; sourceTree = "<group>"; };
 		20000000000000000000000A /* GameScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameScene.swift; sourceTree = "<group>"; };
 		20000000000000000000000B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		20000000000000000000000C /* GameAssets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = GameAssets; sourceTree = "<group>"; };
 		20000000000000000000000D /* GameCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameCoreTests.swift; sourceTree = "<group>"; };
 		20000000000000000000000E /* PocketVector.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketVector.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		20000000000000000000000F /* PocketVectorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PocketVectorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -167,6 +170,11 @@
 		200000000000000000000013 /* BroadcastHUDNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BroadcastHUDNode.swift; sourceTree = "<group>"; };
 		200000000000000000000014 /* FieldBoundaryLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FieldBoundaryLayout.swift; sourceTree = "<group>"; };
 		200000000000000000000015 /* SidelineEnvironmentNode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidelineEnvironmentNode.swift; sourceTree = "<group>"; };
+		2A1000000000000000000001 /* native-assets.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "native-assets.json"; sourceTree = "<group>"; };
+		2A1000000000000000000002 /* art */ = {isa = PBXFileReference; lastKnownFileType = folder; path = art; sourceTree = "<group>"; };
+		2A1000000000000000000003 /* audio */ = {isa = PBXFileReference; lastKnownFileType = folder; path = audio; sourceTree = "<group>"; };
+		2A1000000000000000000004 /* characters */ = {isa = PBXFileReference; lastKnownFileType = folder; path = characters; sourceTree = "<group>"; };
+		2A1000000000000000000005 /* pixel */ = {isa = PBXFileReference; lastKnownFileType = folder; path = pixel; sourceTree = "<group>"; };
 		210000000000000000000001 /* Identifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Identifiers.swift; sourceTree = "<group>"; };
 		210000000000000000000002 /* RunModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunModels.swift; sourceTree = "<group>"; };
 		210000000000000000000003 /* PlayerProfileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerProfileModels.swift; sourceTree = "<group>"; };
@@ -397,6 +405,18 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
+		20000000000000000000000C /* GameAssets */ = {
+			isa = PBXGroup;
+			children = (
+				2A1000000000000000000001 /* native-assets.json */,
+				2A1000000000000000000002 /* art */,
+				2A1000000000000000000003 /* audio */,
+				2A1000000000000000000004 /* characters */,
+				2A1000000000000000000005 /* pixel */,
+			);
+			path = GameAssets;
+			sourceTree = "<group>";
+		};
 		300000000000000000000009 /* PocketVectorTests */ = {
 			isa = PBXGroup;
 			children = (
@@ -594,6 +614,7 @@
 				400000000000000000000001 /* Sources */,
 				400000000000000000000002 /* Frameworks */,
 				400000000000000000000003 /* Resources */,
+				4A1000000000000000000001 /* Copy Game Assets */,
 			);
 			buildRules = (
 			);
@@ -660,13 +681,30 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		4A1000000000000000000001 /* Copy Game Assets */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = GameAssets;
+			dstSubfolderSpec = 7;
+			files = (
+				1A1000000000000000000001 /* native-assets.json in Copy Game Assets */,
+				1A1000000000000000000002 /* art in Copy Game Assets */,
+				1A1000000000000000000003 /* audio in Copy Game Assets */,
+				1A1000000000000000000004 /* characters in Copy Game Assets */,
+				1A1000000000000000000005 /* pixel in Copy Game Assets */,
+			);
+			name = "Copy Game Assets";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXResourcesBuildPhase section */
 		400000000000000000000003 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				10000000000000000000000B /* Assets.xcassets in Resources */,
-				10000000000000000000000C /* GameAssets in Resources */,
 				180000000000000000000001 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
