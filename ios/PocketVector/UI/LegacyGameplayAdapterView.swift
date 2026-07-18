@@ -593,6 +593,7 @@ private struct GameplayPauseButtonStyle: ButtonStyle {
                             ? tint.opacity(configuration.isPressed ? 0.74 : 1)
                             : Color.black.opacity(configuration.isPressed ? 0.88 : 0.7)
                     )
+                    .shadow(color: .black.opacity(0.9), radius: 0, x: 0, y: 4)
             }
             .overlay {
                 BroadcastPlateShape(cut: 7)
@@ -601,7 +602,6 @@ private struct GameplayPauseButtonStyle: ButtonStyle {
                         lineWidth: 2
                     )
             }
-            .shadow(color: .black.opacity(0.9), radius: 0, x: 0, y: 4)
             .offset(y: configuration.isPressed ? 2 : 0)
             .opacity(configuration.isPressed ? 0.92 : 1)
     }
