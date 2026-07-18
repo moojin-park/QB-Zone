@@ -24,6 +24,57 @@ struct GameplaySessionStep: Equatable {
     }
 }
 
+/// The exact live statistics surface consumed by the paused presentation.
+struct LiveGameplayStatisticsSnapshot: Equatable, Sendable {
+    let attempts: Int
+    let successfulCompletions: Int
+    let completionPercentage: Int
+    let touchdowns: Int
+
+    init(statistics: RunStatistics) {
+        let completedRunStatistics = statistics.completedRunSnapshot
+        attempts = completedRunStatistics.attempts
+        successfulCompletions = completedRunStatistics.successfulPasses
+        completionPercentage = completedRunStatistics.displayedAccuracyPercent
+        touchdowns = completedRunStatistics.touchdowns
+    }
+}
+
+/// Read-only gameplay state published to app-owned presentation adapters.
+struct GameplaySceneSnapshot: Equatable, Sendable {
+    let isPaused: Bool
+    let statistics: LiveGameplayStatisticsSnapshot
+
+    init(state: GameState) {
+        isPaused = state.phase == .paused
+        statistics = LiveGameplayStatisticsSnapshot(statistics: state.statistics)
+    }
+}
+
+struct GameplaySnapshotPublicationGate: Equatable {
+    private(set) var lastSnapshot: GameplaySceneSnapshot?
+
+    mutating func accept(_ snapshot: GameplaySceneSnapshot) -> Bool {
+        guard snapshot != lastSnapshot else { return false }
+
+        lastSnapshot = snapshot
+        return true
+    }
+}
+
+extension RunStatistics {
+    var completedRunSnapshot: RunStatisticsSnapshot {
+        RunStatisticsSnapshot(
+            attempts: attempts,
+            completions: completions,
+            touchdowns: touchdowns,
+            incompletions: incompletions,
+            interceptions: interceptions,
+            longestTouchdownStreak: longestTouchdownStreak
+        )
+    }
+}
+
 struct GameplayRunRecorder: Equatable {
     private(set) var completedLaneIDs: Set<LaneID> = []
     private(set) var bonusTouchdownCount = 0
@@ -50,7 +101,6 @@ struct GameplayRunRecorder: Equatable {
         finishReason: RunFinishReason,
         endedAt: Date
     ) -> CompletedRun {
-        let statistics = state.statistics
         return CompletedRun(
             configuration: configuration,
             endedAt: max(endedAt, configuration.startedAt),
@@ -60,14 +110,7 @@ struct GameplayRunRecorder: Equatable {
             ),
             finishReason: finishReason,
             score: max(0, state.score),
-            statistics: RunStatisticsSnapshot(
-                attempts: statistics.attempts,
-                completions: statistics.completions,
-                touchdowns: statistics.touchdowns,
-                incompletions: statistics.incompletions,
-                interceptions: statistics.interceptions,
-                longestTouchdownStreak: statistics.longestTouchdownStreak
-            ),
+            statistics: state.statistics.completedRunSnapshot,
             completedLaneIDs: completedLaneIDs,
             bonusTouchdownCount: bonusTouchdownCount
         )
@@ -97,6 +140,7 @@ struct GameplaySession {
     }
 
     var state: GameState { simulation.state }
+    var snapshot: GameplaySceneSnapshot { GameplaySceneSnapshot(state: state) }
     var canThrow: Bool { completedRun == nil && simulation.canThrow }
 
     @discardableResult
@@ -113,9 +157,16 @@ struct GameplaySession {
         )
     }
 
-    mutating func togglePause() {
-        guard completedRun == nil, isApplicationActive else { return }
-        simulation.togglePause()
+    @discardableResult
+    mutating func pause() -> Bool {
+        guard completedRun == nil, isApplicationActive else { return false }
+        return simulation.pause()
+    }
+
+    @discardableResult
+    mutating func resume() -> Bool {
+        guard completedRun == nil, isApplicationActive else { return false }
+        return simulation.resume()
     }
 
     mutating func setApplicationActive(_ isActive: Bool) {
@@ -124,7 +175,7 @@ struct GameplaySession {
 
         if !isActive,
            state.phase == .playing || state.phase == .resolvingFinalBall {
-            simulation.togglePause()
+            simulation.pause()
         }
     }
 

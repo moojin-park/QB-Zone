@@ -66,8 +66,17 @@ Scoring and coin rewards are documented separately in `scoring.md`.
 ## Pause and audio
 
 The HUD exposes pause and mute controls inside the landscape safe area. Pause
-freezes simulation and the game clock. Mute state affects music and sound
-effects and persists through the profile settings model.
+freezes simulation and the game clock. A paused run publishes a live immutable
+statistics snapshot containing attempts, successful completions (normal catches
+plus touchdowns), rounded completion percentage, and touchdowns. The app-owned
+paused presentation must provide explicit Resume and Exit Run actions. Resume
+is idempotent, and gameplay touches never resume a paused run.
+
+Exit Run from the paused presentation remains a confirmed abandon action.
+Canceling that confirmation leaves the run paused. Confirmation creates at most
+one immutable abandoned run, which must complete the normal durable settlement
+path before navigation changes. Mute state affects music and sound effects and
+persists through the profile settings model.
 
 ## Authoritative files
 

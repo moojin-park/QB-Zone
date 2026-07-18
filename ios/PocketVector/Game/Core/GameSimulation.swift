@@ -21,14 +21,30 @@ struct GameSimulation {
         state.phase = .countdown
     }
 
-    mutating func togglePause() {
-        if state.phase == .paused {
-            state.phase = state.phaseBeforePause ?? .playing
-            state.phaseBeforePause = nil
-        } else if state.phase == .playing || state.phase == .resolvingFinalBall {
-            state.phaseBeforePause = state.phase
-            state.phase = .paused
+    @discardableResult
+    mutating func pause() -> Bool {
+        guard state.phase == .playing || state.phase == .resolvingFinalBall else {
+            return false
         }
+
+        state.phaseBeforePause = state.phase
+        state.phase = .paused
+        return true
+    }
+
+    @discardableResult
+    mutating func resume() -> Bool {
+        guard state.phase == .paused, let resumePhase = state.phaseBeforePause else {
+            return false
+        }
+
+        guard resumePhase == .playing || resumePhase == .resolvingFinalBall else {
+            return false
+        }
+
+        state.phase = resumePhase
+        state.phaseBeforePause = nil
+        return true
     }
 
     @discardableResult

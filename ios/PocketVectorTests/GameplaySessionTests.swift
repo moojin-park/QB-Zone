@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import SpriteKit
 import XCTest
 
 @testable import PocketVector
@@ -24,6 +25,126 @@ final class GameplaySessionTests: XCTestCase {
         XCTAssertEqual(session.settings.sfxVolume, 0.87, accuracy: 0.000_1)
         XCTAssertTrue(session.settings.isMuted)
         XCTAssertTrue(session.settings.reducedMotion)
+    }
+
+    func testLiveSnapshotExposesTouchdownInclusiveCompletionContract() {
+        var state = GameState()
+        state.phase = .paused
+        state.statistics = RunStatistics(
+            attempts: 7,
+            completions: 3,
+            touchdowns: 2,
+            incompletions: 1,
+            interceptions: 1,
+            longestTouchdownStreak: 2
+        )
+
+        let snapshot = GameplaySceneSnapshot(state: state)
+
+        XCTAssertTrue(snapshot.isPaused)
+        XCTAssertEqual(snapshot.statistics.attempts, 7)
+        XCTAssertEqual(snapshot.statistics.successfulCompletions, 5)
+        XCTAssertEqual(snapshot.statistics.completionPercentage, 71)
+        XCTAssertEqual(snapshot.statistics.touchdowns, 2)
+        XCTAssertEqual(
+            GameplaySceneSnapshot(state: GameState())
+                .statistics.completionPercentage,
+            0
+        )
+    }
+
+    func testSnapshotPublicationGateAcceptsOnlyPauseOrStatisticsChanges() {
+        var gate = GameplaySnapshotPublicationGate()
+        var state = GameState()
+        let initial = GameplaySceneSnapshot(state: state)
+
+        XCTAssertTrue(gate.accept(initial))
+        XCTAssertFalse(gate.accept(initial))
+
+        state.phase = .paused
+        let paused = GameplaySceneSnapshot(state: state)
+        XCTAssertTrue(gate.accept(paused))
+        XCTAssertFalse(gate.accept(paused))
+
+        state.phase = .playing
+        XCTAssertTrue(gate.accept(GameplaySceneSnapshot(state: state)))
+
+        state.statistics = RunStatistics(
+            attempts: 2,
+            completions: 1,
+            touchdowns: 1,
+            incompletions: 0,
+            interceptions: 0,
+            longestTouchdownStreak: 1
+        )
+        let statisticsChanged = GameplaySceneSnapshot(state: state)
+        XCTAssertTrue(gate.accept(statisticsChanged))
+        XCTAssertEqual(statisticsChanged.statistics.successfulCompletions, 2)
+        XCTAssertEqual(statisticsChanged.statistics.completionPercentage, 100)
+        XCTAssertFalse(gate.accept(statisticsChanged))
+    }
+
+    func testExplicitPauseAndResumeAreIdempotent() {
+        let configuration = makeConfiguration(seed: 13)
+        var session = GameplaySession(configuration: configuration, settings: PlayerSettings())
+        _ = session.advance(
+            deltaMilliseconds: 3_000,
+            endedAt: configuration.startedAt.addingTimeInterval(3)
+        )
+
+        XCTAssertEqual(session.state.phase, .playing)
+        XCTAssertTrue(session.pause())
+        XCTAssertTrue(session.snapshot.isPaused)
+        XCTAssertFalse(session.pause())
+
+        XCTAssertTrue(session.resume())
+        XCTAssertEqual(session.state.phase, .playing)
+        XCTAssertFalse(session.resume())
+        XCTAssertEqual(session.state.phase, .playing)
+    }
+
+    func testPauseAndResumePreserveAirborneFinalBallState() throws {
+        let configuration = makeConfiguration(seed: 14)
+        var session = GameplaySession(configuration: configuration, settings: PlayerSettings())
+        _ = session.advance(
+            deltaMilliseconds: 3_000,
+            endedAt: configuration.startedAt.addingTimeInterval(3)
+        )
+        _ = session.advance(
+            deltaMilliseconds: 59_900,
+            endedAt: configuration.startedAt.addingTimeInterval(62.9)
+        )
+        XCTAssertTrue(
+            session.throwBall(
+                target: WorldPoint(x: 1.2, depth: 1, height: 0.5),
+                releaseSpeedPixelsPerMillisecond:
+                    GameplayConfig.Throw.slowSpeedPixelsPerMillisecond,
+                aimMarker: .zero
+            )
+        )
+        _ = session.advance(
+            deltaMilliseconds: 100,
+            endedAt: configuration.startedAt.addingTimeInterval(63)
+        )
+
+        XCTAssertEqual(session.state.phase, .resolvingFinalBall)
+        let ballBeforePause = try XCTUnwrap(session.state.ball)
+        let graceBeforePause = session.state.finalBallGraceRemainingMilliseconds
+
+        XCTAssertTrue(session.pause())
+        _ = session.advance(
+            deltaMilliseconds: 500,
+            endedAt: configuration.startedAt.addingTimeInterval(63.5)
+        )
+        XCTAssertEqual(session.state.ball, ballBeforePause)
+        XCTAssertEqual(
+            session.state.finalBallGraceRemainingMilliseconds,
+            graceBeforePause
+        )
+
+        XCTAssertTrue(session.resume())
+        XCTAssertEqual(session.state.phase, .resolvingFinalBall)
+        XCTAssertFalse(session.resume())
     }
 
     func testNaturalCompletionConvertsSimulationAndEmitsOnlyOnce() throws {
@@ -148,6 +269,8 @@ final class GameplaySessionTests: XCTestCase {
         XCTAssertEqual(abandoned.elapsedGameplayMilliseconds, 1_500)
         XCTAssertFalse(abandoned.isNaturallyCompleted)
         XCTAssertFalse(abandoned.isRewardEligible)
+        XCTAssertFalse(session.pause())
+        XCTAssertFalse(session.resume())
         XCTAssertNil(session.abandon(endedAt: configuration.startedAt.addingTimeInterval(6)))
         XCTAssertNil(
             session.advance(
@@ -180,6 +303,7 @@ final class GameplaySessionTests: XCTestCase {
             .idle
         )
         XCTAssertEqual(session.state.elapsedGameplayMilliseconds, 1_000)
+        XCTAssertFalse(session.resume())
 
         session.setApplicationActive(true)
         _ = session.advance(
@@ -188,7 +312,8 @@ final class GameplaySessionTests: XCTestCase {
         )
         XCTAssertEqual(session.state.elapsedGameplayMilliseconds, 1_000)
 
-        session.togglePause()
+        XCTAssertTrue(session.resume())
+        XCTAssertFalse(session.resume())
         _ = session.advance(
             deltaMilliseconds: 1_000,
             endedAt: configuration.startedAt.addingTimeInterval(45)
@@ -217,23 +342,81 @@ final class GameplaySessionTests: XCTestCase {
         let configuration = makeConfiguration(seed: 808)
         let settings = PlayerSettings(isMuted: true, reducedMotion: true)
         var callbacks: [CompletedRun] = []
+        var snapshots: [GameplaySceneSnapshot] = []
         let scene = GameScene(
             size: GameProjection.sceneSize,
             configuration: configuration,
             settings: settings,
             now: { configuration.startedAt.addingTimeInterval(9) },
-            onCompletedRun: { callbacks.append($0) }
+            onCompletedRun: { callbacks.append($0) },
+            onGameplaySnapshotChanged: { snapshots.append($0) }
         )
 
         XCTAssertEqual(scene.configuration, configuration)
         XCTAssertEqual(scene.settings, settings)
-        scene.requestAbandon()
-        scene.requestAbandon()
+        XCTAssertTrue(snapshots.isEmpty)
+        XCTAssertFalse(scene.currentSnapshot.isPaused)
+        scene.setApplicationActive(true)
+        XCTAssertTrue(snapshots.isEmpty)
+        scene.commitConfirmedExitRun()
+        scene.commitConfirmedExitRun()
 
         XCTAssertEqual(callbacks.count, 1)
         XCTAssertEqual(callbacks.first?.finishReason, .abandoned)
         XCTAssertEqual(callbacks.first?.configuration, configuration)
         scene.setApplicationActive(false)
+    }
+
+    @MainActor
+    func testMountedScenePublishesExplicitPauseResumeAndIgnoresPausedInput() async throws {
+        let configuration = makeConfiguration(seed: 809)
+        var snapshots: [GameplaySceneSnapshot] = []
+        let scene = GameScene(
+            size: GameProjection.sceneSize,
+            configuration: configuration,
+            settings: PlayerSettings(isMuted: true, reducedMotion: true),
+            onCompletedRun: { _ in },
+            onGameplaySnapshotChanged: { snapshots.append($0) }
+        )
+        let view = SKView(frame: CGRect(origin: .zero, size: GameProjection.sceneSize))
+
+        scene.didMove(to: view)
+        XCTAssertEqual(snapshots, [scene.currentSnapshot])
+
+        let readinessDeadline = ProcessInfo.processInfo.systemUptime + 8
+        while scene.visualReadiness == .preparing,
+              ProcessInfo.processInfo.systemUptime < readinessDeadline {
+            await Task.yield()
+        }
+        XCTAssertEqual(scene.visualReadiness, .ready)
+
+        scene.update(0)
+        for step in 1 ... 31 {
+            scene.update(TimeInterval(step) / 10)
+        }
+
+        XCTAssertTrue(scene.pause())
+        XCTAssertTrue(scene.currentSnapshot.isPaused)
+        XCTAssertEqual(snapshots.map(\.isPaused), [false, true])
+        let pausedPublicationCount = snapshots.count
+        XCTAssertFalse(scene.pause())
+        XCTAssertEqual(snapshots.count, pausedPublicationCount)
+
+        let pausedSnapshot = scene.currentSnapshot
+        scene.handlePrimaryInputBegan(
+            at: CGPoint(x: scene.size.width / 2, y: scene.size.height / 2)
+        )
+        XCTAssertEqual(scene.currentSnapshot, pausedSnapshot)
+        XCTAssertEqual(snapshots.count, pausedPublicationCount)
+
+        XCTAssertTrue(scene.resume())
+        XCTAssertFalse(scene.currentSnapshot.isPaused)
+        XCTAssertEqual(snapshots.map(\.isPaused), [false, true, false])
+        let resumedPublicationCount = snapshots.count
+        XCTAssertFalse(scene.resume())
+        XCTAssertEqual(snapshots.count, resumedPublicationCount)
+
+        scene.willMove(from: view)
     }
 
     @MainActor

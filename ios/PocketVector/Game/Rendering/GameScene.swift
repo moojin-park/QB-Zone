@@ -32,6 +32,8 @@ final class GameScene: SKScene {
     private let audio: GameAudioController
     private let now: @MainActor () -> Date
     private let onCompletedRun: @MainActor (CompletedRun) -> Void
+    private let onGameplaySnapshotChanged: @MainActor (GameplaySceneSnapshot) -> Void
+    private var snapshotPublicationGate = GameplaySnapshotPublicationGate()
     private var previousUpdateTime: TimeInterval?
     private var accumulatedMilliseconds: CGFloat = 0
     private var renderedPhase: GamePhase?
@@ -79,7 +81,8 @@ final class GameScene: SKScene {
         settings: PlayerSettings,
         textures: TextureLibrary = TextureLibrary(),
         now: @escaping @MainActor () -> Date = { Date() },
-        onCompletedRun: @escaping @MainActor (CompletedRun) -> Void
+        onCompletedRun: @escaping @MainActor (CompletedRun) -> Void,
+        onGameplaySnapshotChanged: @escaping @MainActor (GameplaySceneSnapshot) -> Void = { _ in }
     ) {
         guard let runVisuals = LaunchVisualIdentityCatalog.approved.runIdentity(
             for: configuration
@@ -94,6 +97,7 @@ final class GameScene: SKScene {
         audio = GameAudioController(settings: settings)
         self.now = now
         self.onCompletedRun = onCompletedRun
+        self.onGameplaySnapshotChanged = onGameplaySnapshotChanged
         super.init(size: size)
         anchorPoint = .zero
         backgroundColor = Palette.ink
@@ -115,6 +119,7 @@ final class GameScene: SKScene {
         setupHUD()
         setupAimNodes()
         stageIsBuilt = true
+        publishGameplaySnapshotIfNeeded()
         showVisualReadinessOverlay(.preparing)
         beginVisualPreparation()
     }
@@ -162,9 +167,21 @@ final class GameScene: SKScene {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard visualReadiness == .ready else { return }
         guard let touch = touches.first else { return }
-        let point = touch.location(in: self)
+        handlePrimaryInputBegan(
+            at: touch.location(in: self),
+            initialSample: sample(for: touch)
+        )
+    }
+
+    /// Shared point-input seam for SpriteKit delivery and focused regression
+    /// tests. A missing sample can inspect non-throw controls without starting
+    /// an aiming gesture.
+    func handlePrimaryInputBegan(
+        at point: CGPoint,
+        initialSample: TouchSample? = nil
+    ) {
+        guard visualReadiness == .ready else { return }
 
         switch session.state.phase {
         case .title, .results:
@@ -172,10 +189,9 @@ final class GameScene: SKScene {
             // scene never owns title, replay, or results navigation.
             break
         case .paused:
-            audio.play(.uiSelect)
-            session.togglePause()
-            audio.startMusic()
-            renderFrame()
+            // Pause-menu actions are explicit SwiftUI controls. Gameplay
+            // touches remain inert until the app requests Resume.
+            break
         case .playing, .resolvingFinalBall:
             if broadcastHUD?.containsMuteControl(point) == true {
                 let isMuted = audio.toggleMuted()
@@ -186,17 +202,14 @@ final class GameScene: SKScene {
                 return
             }
             if broadcastHUD?.containsPauseControl(point) == true {
-                audio.play(.uiSelect)
-                session.togglePause()
-                audio.pauseMusic()
-                audio.stopEffects()
-                clearGesture()
-                renderFrame()
+                pause()
                 return
             }
-            guard session.canThrow, projection.isPointOnQuarterback(point) else { return }
+            guard session.canThrow,
+                  projection.isPointOnQuarterback(point),
+                  let initialSample else { return }
             isAiming = true
-            activeSamples = [sample(for: touch)]
+            activeSamples = [initialSample]
             renderAimPreview(currentPoint: point)
         case .countdown:
             break
@@ -250,10 +263,31 @@ final class GameScene: SKScene {
             renderFrame()
         } else {
             showVisualReadinessOverlay(visualReadiness)
+            publishGameplaySnapshotIfNeeded()
         }
     }
 
-    func requestAbandon() {
+    var currentSnapshot: GameplaySceneSnapshot { session.snapshot }
+
+    /// Resumes only an already-paused active run. Repeated requests are inert.
+    @discardableResult
+    func resume() -> Bool {
+        guard session.resume() else { return false }
+
+        previousUpdateTime = nil
+        audio.play(.uiSelect)
+        audio.startMusic()
+        if visualReadiness == .ready {
+            renderFrame()
+        } else {
+            publishGameplaySnapshotIfNeeded()
+        }
+        return true
+    }
+
+    /// Ends a run only after the app-owned confirmation flow authorizes it.
+    /// The session completion gate keeps repeated confirmed requests exact-once.
+    func commitConfirmedExitRun() {
         guard let completedRun = session.abandon(endedAt: now()) else { return }
         cancelVisualPreparation()
         previousUpdateTime = nil
@@ -262,6 +296,12 @@ final class GameScene: SKScene {
         audio.stopMusic()
         audio.stopEffects()
         onCompletedRun(completedRun)
+    }
+
+    /// Compatibility seam for the existing PM-owned bridge. New integration
+    /// should use `commitConfirmedExitRun()` only after confirmation succeeds.
+    func requestAbandon() {
+        commitConfirmedExitRun()
     }
 
     private func makeViewport(for view: SKView) -> GameViewport {
@@ -690,6 +730,28 @@ final class GameScene: SKScene {
         syncHUD()
         syncPhaseOverlay()
         syncAimMarker()
+        publishGameplaySnapshotIfNeeded()
+    }
+
+    @discardableResult
+    func pause() -> Bool {
+        guard session.pause() else { return false }
+
+        audio.play(.uiSelect)
+        audio.pauseMusic()
+        audio.stopEffects()
+        clearGesture()
+        renderFrame()
+        return true
+    }
+
+    private func publishGameplaySnapshotIfNeeded() {
+        guard stageIsBuilt else { return }
+
+        let snapshot = session.snapshot
+        guard snapshotPublicationGate.accept(snapshot) else { return }
+
+        onGameplaySnapshotChanged(snapshot)
     }
 
     private func syncActors() {
@@ -868,15 +930,6 @@ final class GameScene: SKScene {
         )
         title.position = CGPoint(x: projection.centerX, y: 425)
         phaseOverlay.addChild(title)
-
-        let resume = makeLabel(
-            "TAP ANYWHERE TO RESUME",
-            fontName: "AvenirNext-DemiBold",
-            fontSize: 22,
-            color: Palette.gold
-        )
-        resume.position = CGPoint(x: projection.centerX, y: 350)
-        phaseOverlay.addChild(resume)
     }
 
     private func addOverlayBackdrop(alpha: CGFloat) {
