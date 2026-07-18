@@ -31,6 +31,22 @@ passed 770 of 771 tests with the existing conditional filesystem skip, and an
 unsigned generic-iOS Release archive contains all 58 declared assets plus the
 manifest with no extra GameAssets files.
 
+The Art-approved final High Mesa main menu through submitted commit `99909f5`
+is integrated as the ordered, patch-equivalent chain ending at `9b450ba` (`Art:
+separate phone utilities from score`). The integrated Art-owned tree exactly
+matches the approved submission. Asset-catalog JSON, the focused resource and
+Privacy and Support route tests, the complete simulator suite, compact and
+regular iPhone plus iPad captures, and an unsigned generic-iOS Release archive
+all passed. The compact-device UI smoke traversed Settings to Privacy and
+Support and back to the main menu, and exposed the expected labels, hints,
+five-digit score, and pending-coin value. Static independent review found no
+P0-P2 regression and confirmed both operating-system and persisted reduced-
+motion inputs suppress utility scaling animation. A live reduced-motion toggle
+was not repeated after the QA Mac auto-locked. Art follow-up remains to remove
+25 superseded, unreferenced QA captures and correct the stale manifest-blocker
+note in `menu-design-qa.md`; fresh PM captures are clean and no source-art or QA
+evidence is present in the archive.
+
 The dormant StoreKit runtime foundation is versioned at `ce69388` (`Add dormant
 StoreKit runtime coordination`), player-scoped Game Center persistence and
 delivery at `9d749bc` (`Add player-scoped Game Center delivery`), the dormant
@@ -145,7 +161,7 @@ entitlement payload; that remains a release-candidate gate.
 | Domain, catalog, economy, and achievement rules | Complete            | Eight teams, inventory, matchup, clash, reward, coin-pack, and eight-achievement rules pass exhaustive tests                          |
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
 | Account-independent service foundations         | Complete            | Cloud transport/checkpoint, typed genesis/publication/hydration, canonical V4 seed, player-scoped Game Center delivery, StoreKit runtime, and challenge-only rewarded-ad verification/recovery foundations pass; none implies live composition |
-| Production app shell and menus                  | Complete            | Home, teams, locker, store, leaderboard, achievements, settings, tutorial, privacy/support, gameplay, and results all ship             |
+| Production app shell and menus                  | Complete            | Art-approved High Mesa main menu, teams, locker, store, leaderboard, achievements, settings-routed privacy/support, tutorial, gameplay, and results ship |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Eight-team presentation system                  | Complete            | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, HUD palettes, raster recoloring, and preload readiness ship     |
@@ -235,6 +251,10 @@ or runtime ownership boundaries.
 | 2026-07-17 | `1ae59b5` | Explicit GameAssets membership focused gate | 1 passed, 0 failed; 58 declared assets exactly match 58 physical bundle assets and `AGENTS.md` is excluded |
 | 2026-07-17 | `1ae59b5` | Explicit GameAssets membership full simulator suite | 771 total: 770 passed, 0 failed, 1 existing conditional case-alias skip |
 | 2026-07-17 | `1ae59b5` | Unsigned generic-iOS Release archive | Passed at `/tmp/pocketvector-pm-archive-gate.gfsYVe/PocketVector.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, 58 declared assets plus manifest, no bundled repository documentation |
+| 2026-07-17 | `9b450ba` | Art-approved menu integration and focused gates | Six submitted Art commits integrated in order; approved Art tree matches `99909f5`; asset JSON valid; resource and Privacy and Support route tests passed 2 of 2 |
+| 2026-07-17 | `9b450ba` | Exact integrated full simulator suite | 771 total: 770 passed, 0 failed, 1 existing conditional case-alias skip; result bundle `/tmp/pocketvector-art-full-99909f5-v1.xcresult` |
+| 2026-07-17 | `9b450ba` | Compact/regular iPhone and iPad menu QA | Fresh captures passed at `/tmp/pocketvector-menu-compact-99909f5-v1.png`, `/tmp/pocketvector-menu-regular-99909f5-v1.png`, and `/tmp/pocketvector-menu-ipad-99909f5-v1.png`; compact Settings → Privacy and Support → Back navigation and accessibility labels/hints passed |
+| 2026-07-17 | `9b450ba` | Unsigned generic-iOS Release archive | Passed at `/tmp/pocketvector-art-archive-99909f5-v1/PocketVector.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, all seven new Menu imagesets, exact 58 GameAssets plus manifest, and no source-art, QA, or documentation content bundled |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -367,7 +387,7 @@ workflow reaches that gate.
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud-history, typed publication/genesis, hydration, StoreKit delivery, server-verified rewarded-ad delivery/recovery, and account-neutral seed foundations pass; approved policy implementation and live composition remain |
-| Clean-checkout archive               |   Pass | Unsigned archive for the exact `1ae59b5` project content passed; a detached post-commit clean-checkout rerun and final signed entitlement/export proof remain |
+| Clean-checkout archive               |   Pass | Unsigned archive for the exact clean `9b450ba` integrated content passed; a detached post-evidence-commit rerun and final signed entitlement/export proof remain |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
