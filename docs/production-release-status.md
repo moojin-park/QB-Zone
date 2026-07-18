@@ -22,6 +22,15 @@ seed`).
 The iOS-only repository cleanup is versioned at `24cd2c7` (`Remove legacy
 browser project from iOS repository`).
 
+Shipping GameAssets membership is corrected at `1ae59b5` (`Fix GameAssets
+bundle membership`). The app now copies only `native-assets.json` and the
+declared `art`, `audio`, `characters`, and `pixel` runtime directories. The
+repository-owned `GameAssets/AGENTS.md` remains in source but is absent from the
+app bundle. The focused resource test passed, the exact full simulator suite
+passed 770 of 771 tests with the existing conditional filesystem skip, and an
+unsigned generic-iOS Release archive contains all 58 declared assets plus the
+manifest with no extra GameAssets files.
+
 The dormant StoreKit runtime foundation is versioned at `ce69388` (`Add dormant
 StoreKit runtime coordination`), player-scoped Game Center persistence and
 delivery at `9d749bc` (`Add player-scoped Game Center delivery`), the dormant
@@ -223,6 +232,9 @@ or runtime ownership boundaries.
 | 2026-07-17 | `d6c2b4a` | Exact current simulator suite | 771 total: 770 passed, 0 failed, 1 existing conditional case-alias skip |
 | 2026-07-17 | `d6c2b4a` | Debug test-build and generic-iOS Release gates | Simulator Debug build-for-testing, generic-iOS Release build, and Release symbol scans passed; build evidence only, no archive claimed |
 | 2026-07-17 | `d6c2b4a` | Durable rewarded-ad recovery independent audit | Exact staged patch `eb0113ca47c8a516333696742e2d8d08305b9098589952445b480e190578d4bb`; no P0/P1/P2 findings |
+| 2026-07-17 | `1ae59b5` | Explicit GameAssets membership focused gate | 1 passed, 0 failed; 58 declared assets exactly match 58 physical bundle assets and `AGENTS.md` is excluded |
+| 2026-07-17 | `1ae59b5` | Explicit GameAssets membership full simulator suite | 771 total: 770 passed, 0 failed, 1 existing conditional case-alias skip |
+| 2026-07-17 | `1ae59b5` | Unsigned generic-iOS Release archive | Passed at `/tmp/pocketvector-pm-archive-gate.gfsYVe/PocketVector.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, 58 declared assets plus manifest, no bundled repository documentation |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -351,7 +363,7 @@ workflow reaches that gate.
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud-history, typed publication/genesis, hydration, StoreKit delivery, server-verified rewarded-ad delivery/recovery, and account-neutral seed foundations pass; approved policy implementation and live composition remain |
-| Clean-checkout archive               |   Pass | Latest documented unsigned Release archive remains `1a8036e`; later generic-iOS Debug/Release builds pass but are not archive evidence; final signed entitlement/export proof remains |
+| Clean-checkout archive               |   Pass | Unsigned archive for the exact `1ae59b5` project content passed; a detached post-commit clean-checkout rerun and final signed entitlement/export proof remain |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
