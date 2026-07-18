@@ -1,22 +1,5 @@
 import SwiftUI
 
-enum GameplayChromeLayout {
-    static let maximumWidth: CGFloat = 280
-    static let matchupMaximumWidth: CGFloat = 280
-    static let outerPadding: CGFloat = 16
-    static let topPadding: CGFloat = 84
-    static let estimatedHeight: CGFloat = 48
-
-    static func maximumTopTrailingFrame(in viewSize: CGSize) -> CGRect {
-        CGRect(
-            x: max(0, viewSize.width - outerPadding - maximumWidth),
-            y: topPadding,
-            width: min(maximumWidth, max(0, viewSize.width - 2 * outerPadding)),
-            height: estimatedHeight
-        )
-    }
-}
-
 /// SwiftUI owns run navigation and settlement; SpriteKit owns only the active
 /// configured simulation. Exit never changes destinations until the scene has
 /// emitted an authoritative `.abandoned` run and settlement has accepted it.
@@ -36,7 +19,7 @@ struct LegacyGameplayAdapterView: View {
     private let catalog = LaunchCatalog.approved
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack {
             GameRootView(
                 configuration: configuration,
                 settings: settings,
@@ -53,28 +36,6 @@ struct LegacyGameplayAdapterView: View {
                     }
                 }
             )
-
-            HStack(spacing: 10) {
-                if let offense = catalog.team(id: configuration.offenseTeamID),
-                   let defense = catalog.team(id: configuration.defenseTeamID) {
-                    Text("\(offense.displayName) vs \(defense.displayName)")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.64)
-                        .frame(maxWidth: GameplayChromeLayout.matchupMaximumWidth)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 9)
-                        .background(.black.opacity(0.76), in: Capsule())
-                        .accessibilityLabel(
-                            "\(offense.displayName) offense against \(defense.displayName) defense"
-                        )
-                }
-
-            }
-            .frame(maxWidth: GameplayChromeLayout.maximumWidth, alignment: .trailing)
-            .padding(.top, GameplayChromeLayout.topPadding)
-            .padding(.trailing, GameplayChromeLayout.outerPadding)
 
             if let gameplaySnapshot, gameplaySnapshot.isPaused {
                 PausedGameplayOverlay(

@@ -614,35 +614,6 @@ final class LaunchVisualIdentityTests: XCTestCase {
         )
     }
 
-    func testGameplayChromeMaximumFrameDoesNotCoverAdrenalineHUD() {
-        let compactLandscapeSizes = [
-            CGSize(width: 667, height: 375),
-            CGSize(width: 932, height: 430),
-        ]
-
-        for viewSize in compactLandscapeSizes {
-            let viewport = GameViewport(viewSize: viewSize, safeAreaInsets: .zero)
-            let layout = HUDLayout(
-                sceneSize: viewport.projection.sceneSize,
-                contentRect: viewport.safeSceneFrame,
-                metrics: .compact,
-                displayScale: viewport.pointsPerSceneUnit
-            )
-            let scale = viewport.pointsPerSceneUnit
-            let adrenalineInViewCoordinates = CGRect(
-                x: layout.adrenalineFrame.minX * scale,
-                y: (GameProjection.logicalHeight - layout.adrenalineFrame.maxY) * scale,
-                width: layout.adrenalineFrame.width * scale,
-                height: layout.adrenalineFrame.height * scale
-            )
-            let chrome = GameplayChromeLayout.maximumTopTrailingFrame(in: viewSize)
-            XCTAssertFalse(
-                adrenalineInViewCoordinates.intersects(chrome),
-                "Matchup chrome must stay below the top HUD on \(viewSize)"
-            )
-        }
-    }
-
     func testPausedGameplayResumeIssuesOneRequestPerPausedEpoch() {
         var requestState = GameplayPauseRequestState()
         var pausedState = GameState()
