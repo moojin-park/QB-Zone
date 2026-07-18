@@ -67,10 +67,11 @@ scoreboard and utility row remain subordinate to Play rather than reading as a
 third destination card.
 
 The live center stack is responsive rather than uniformly scaled. The phone
-scoreboard clears the Play bezel and uses a bottom-aligned compact utility row
-inside 44-point targets. The 4:3 iPad layout gives Personal Best more visual
-weight and uses larger utility artwork inside 52-point targets so the controls
-remain readable and easy to acquire on the larger screen.
+scoreboard must visibly clear both the Play bezel and the bottom-aligned compact
+utility artwork; keep the utility row inside 44-point targets and above the
+landscape bottom safe boundary. The 4:3 iPad layout gives Personal Best more
+visual weight and uses larger utility artwork inside 52-point targets so the
+controls remain readable and easy to acquire on the larger screen.
 
 The menu has one fixed High Mesa Helions art direction regardless of the
 selected gameplay offense. The fully rendered phone and iPad plates author the

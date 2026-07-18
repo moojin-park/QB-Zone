@@ -19,19 +19,19 @@ lives with the menu source instead.
 ## Final evidence
 
 - Supplied concept and regular-iPhone implementation comparison:
-  `ios/AssetSources/Menu/QA/menu-concept-vs-implementation-v6.png`
+  `ios/AssetSources/Menu/QA/menu-concept-vs-implementation-v7.png`
 - iPad source and implementation comparison:
-  `ios/AssetSources/Menu/QA/menu-ipad-source-vs-implementation-v6.png`
-- Focused regular-iPhone v5-to-v6 HUD comparison:
-  `ios/AssetSources/Menu/QA/menu-phone-v5-vs-v6-hud.png`
-- Focused iPad v5-to-v6 HUD comparison:
-  `ios/AssetSources/Menu/QA/menu-ipad-v5-vs-v6-hud.png`
+  `ios/AssetSources/Menu/QA/menu-ipad-source-vs-implementation-v7.png`
+- Focused regular-iPhone v6-to-v7 HUD comparison:
+  `ios/AssetSources/Menu/QA/menu-phone-v6-vs-v7-hud.png`
+- Focused compact-iPhone v6-to-v7 HUD comparison:
+  `ios/AssetSources/Menu/QA/menu-compact-v6-vs-v7-hud.png`
 - Compact iPhone (iPhone 17e):
-  `ios/AssetSources/Menu/QA/menu-compact-iphone-high-mesa-v6.png`
+  `ios/AssetSources/Menu/QA/menu-compact-iphone-high-mesa-v7.png`
 - Regular iPhone (iPhone 17 Pro):
-  `ios/AssetSources/Menu/QA/menu-regular-iphone-high-mesa-v6.png`
+  `ios/AssetSources/Menu/QA/menu-regular-iphone-high-mesa-v7.png`
 - iPad (iPad Pro 13-inch):
-  `ios/AssetSources/Menu/QA/menu-ipad-high-mesa-v6.png`
+  `ios/AssetSources/Menu/QA/menu-ipad-high-mesa-v7.png`
 
 The focused comparisons are required because the score-to-Play clearance and
 utility-icon scale are too small to judge reliably from the full-screen sheets
@@ -59,11 +59,27 @@ alone.
 - iPad utility art increased from 28 to 36 points inside 52 x 52 point targets
   with 6-point spacing.
 
+### V6 follow-up finding
+
+- P2 phone spacing: the enlarged Personal Best plate sat too close to the three
+  utility icons. Their detailed housings read as clipping the lower scoreboard
+  edge even though the controls remained fully visible.
+
+### V7 fix
+
+- The phone Personal Best plate keeps its requested 260 x 150 source-pixel size
+  and moves from source y 618 to y 610. The utility row remains at source y 758,
+  preserving complete 44 x 44 point targets above the bottom safe boundary.
+- iPad geometry and every route, action, raster, color, and type treatment are
+  unchanged.
+
 ### Post-fix evidence
 
-The v6 compact, regular, and iPad captures show clear Play-to-score separation,
-no score-to-utility collision, no edge clipping, and a materially more readable
-iPad utility row. No actionable P0, P1, or P2 issue remains.
+The v7 compact and regular phone captures show visible air between the score
+housing and all three utility icons while retaining clear Play-to-score
+separation. The utility artwork and full targets stay above the bottom edge and
+compact-phone home indicator. The v7 iPad capture confirms no regression. No
+actionable P0, P1, or P2 issue remains.
 
 ## Required fidelity surfaces
 
@@ -87,21 +103,12 @@ iPad utility row. No actionable P0, P1, or P2 issue remains.
 
 ## Independent review
 
-Three independent reviewers audited the implementation and matched v6 captures.
+Three independent reviewers audited the implementation and matched v7 captures.
 
-- Visual hierarchy and color fidelity: no P0, P1, or P2 findings; passed with
-  one P3 follow-up noted below.
+- Visual hierarchy and color fidelity: no P0, P1, P2, or P3 findings; passed.
 - Responsive geometry, routes, and accessibility: no P0, P1, P2, or P3
   findings; passed.
 - Asset resolution and package scope: no P0, P1, P2, or P3 findings; passed.
-
-## Follow-up polish
-
-- P3: phone utility artwork is 24 points rather than the v5 28 points. This is
-  an intentional compact-layout tradeoff: bottom alignment keeps all three
-  visuals below the enlarged score plate while preserving separate 44-point
-  targets inside the safe boundary. The v6 phone captures remain legible; iPad
-  receives the requested accessibility enlargement.
 
 ## Verification
 

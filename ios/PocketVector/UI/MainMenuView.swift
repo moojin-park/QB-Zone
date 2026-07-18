@@ -242,7 +242,7 @@ private struct MenuSceneMetrics {
     static let phone = Self(
         assetName: "MenuHighMesaScenePhone",
         referenceSize: CGSize(width: 1_847, height: 851),
-        personalBest: CGRect(x: 793.5, y: 618, width: 260, height: 150),
+        personalBest: CGRect(x: 793.5, y: 610, width: 260, height: 150),
         utilityRowCenter: CGPoint(x: 923.5, y: 758),
         utilityIconSize: 24,
         utilityTargetSize: 44,
