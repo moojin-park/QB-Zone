@@ -7,6 +7,8 @@ struct GameRootView: View {
     let configuration: RunConfiguration
     let settings: PlayerSettings
     let abandonRequestID: Int
+    let resumeRequestID: Int
+    let onGameplaySnapshotChanged: @MainActor (GameplaySceneSnapshot) -> Void
 
     @StateObject private var sceneHost: GameplaySceneHost
 
@@ -14,15 +16,21 @@ struct GameRootView: View {
         configuration: RunConfiguration,
         settings: PlayerSettings,
         abandonRequestID: Int,
-        onCompletedRun: @escaping @MainActor (CompletedRun) -> Void
+        resumeRequestID: Int = 0,
+        onCompletedRun: @escaping @MainActor (CompletedRun) -> Void,
+        onGameplaySnapshotChanged: @escaping @MainActor (GameplaySceneSnapshot) -> Void = { _ in }
     ) {
         self.configuration = configuration
         self.settings = settings
         self.abandonRequestID = abandonRequestID
+        self.resumeRequestID = resumeRequestID
+        self.onGameplaySnapshotChanged = onGameplaySnapshotChanged
         _sceneHost = StateObject(
             wrappedValue: GameplaySceneHost(
                 configuration: configuration,
                 settings: settings,
+                initialResumeRequestID: resumeRequestID,
+                initialConfirmedExitRequestID: abandonRequestID,
                 onCompletedRun: onCompletedRun
             )
         )
@@ -40,33 +48,140 @@ struct GameRootView: View {
         .background(CabinetPalette.void.ignoresSafeArea())
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
+        .onAppear {
+            sceneHost.bridge.mountSnapshotPresentation(onGameplaySnapshotChanged)
+        }
+        .onDisappear {
+            sceneHost.bridge.unmountSnapshotPresentation()
+        }
         .onChange(of: scenePhase) { _, newPhase in
-            sceneHost.scene.setApplicationActive(newPhase == .active)
+            sceneHost.bridge.setApplicationActive(newPhase == .active)
         }
-        .onChange(of: abandonRequestID) { oldValue, newValue in
-            guard newValue != oldValue else { return }
-            sceneHost.scene.requestAbandon()
+        .onChange(of: resumeRequestID) { _, newValue in
+            sceneHost.bridge.requestResume(id: newValue)
         }
+        .onChange(of: abandonRequestID) { _, newValue in
+            sceneHost.bridge.requestConfirmedExit(id: newValue)
+        }
+    }
+}
+
+@MainActor
+protocol GameplaySceneActionTarget: AnyObject {
+    var currentSnapshot: GameplaySceneSnapshot { get }
+
+    @discardableResult
+    func resume() -> Bool
+
+    func commitConfirmedExitRun()
+    func setApplicationActive(_ isActive: Bool)
+}
+
+extension GameScene: GameplaySceneActionTarget {}
+
+@MainActor
+final class GameplaySceneBridge {
+    private let target: any GameplaySceneActionTarget
+    private var lastResumeRequestID: Int
+    private var lastConfirmedExitRequestID: Int
+    private var snapshotReceiver: (@MainActor (GameplaySceneSnapshot) -> Void)?
+    private var lastForwardedSnapshot: GameplaySceneSnapshot?
+
+    init(
+        target: any GameplaySceneActionTarget,
+        initialResumeRequestID: Int,
+        initialConfirmedExitRequestID: Int
+    ) {
+        self.target = target
+        lastResumeRequestID = initialResumeRequestID
+        lastConfirmedExitRequestID = initialConfirmedExitRequestID
+    }
+
+    func mountSnapshotPresentation(
+        _ receiver: @escaping @MainActor (GameplaySceneSnapshot) -> Void
+    ) {
+        snapshotReceiver = receiver
+        lastForwardedSnapshot = nil
+        forwardSnapshotIfNeeded(target.currentSnapshot)
+    }
+
+    func unmountSnapshotPresentation() {
+        snapshotReceiver = nil
+        lastForwardedSnapshot = nil
+    }
+
+    func receiveGameplaySnapshot(_ snapshot: GameplaySceneSnapshot) {
+        forwardSnapshotIfNeeded(snapshot)
+    }
+
+    func requestResume(id requestID: Int) {
+        guard requestID != lastResumeRequestID else { return }
+        lastResumeRequestID = requestID
+        target.resume()
+    }
+
+    func requestConfirmedExit(id requestID: Int) {
+        guard requestID != lastConfirmedExitRequestID else { return }
+        lastConfirmedExitRequestID = requestID
+        target.commitConfirmedExitRun()
+    }
+
+    func setApplicationActive(_ isActive: Bool) {
+        target.setApplicationActive(isActive)
+    }
+
+    private func forwardSnapshotIfNeeded(_ snapshot: GameplaySceneSnapshot) {
+        guard snapshot != lastForwardedSnapshot,
+              let snapshotReceiver else {
+            return
+        }
+        lastForwardedSnapshot = snapshot
+        snapshotReceiver(snapshot)
+    }
+}
+
+@MainActor
+private final class GameplaySceneSnapshotCallbackRelay {
+    var receiver: (@MainActor (GameplaySceneSnapshot) -> Void)?
+
+    func receive(_ snapshot: GameplaySceneSnapshot) {
+        receiver?(snapshot)
     }
 }
 
 @MainActor
 private final class GameplaySceneHost: ObservableObject {
     let scene: GameScene
+    let bridge: GameplaySceneBridge
+    private let snapshotCallbackRelay: GameplaySceneSnapshotCallbackRelay
 
     init(
         configuration: RunConfiguration,
         settings: PlayerSettings,
+        initialResumeRequestID: Int,
+        initialConfirmedExitRequestID: Int,
         onCompletedRun: @escaping @MainActor (CompletedRun) -> Void
     ) {
+        let snapshotCallbackRelay = GameplaySceneSnapshotCallbackRelay()
         let scene = GameScene(
             size: GameProjection.sceneSize,
             configuration: configuration,
             settings: settings,
-            onCompletedRun: onCompletedRun
+            onCompletedRun: onCompletedRun,
+            onGameplaySnapshotChanged: snapshotCallbackRelay.receive
+        )
+        let bridge = GameplaySceneBridge(
+            target: scene,
+            initialResumeRequestID: initialResumeRequestID,
+            initialConfirmedExitRequestID: initialConfirmedExitRequestID
         )
         scene.scaleMode = .aspectFit
+        snapshotCallbackRelay.receiver = { [weak bridge] snapshot in
+            bridge?.receiveGameplaySnapshot(snapshot)
+        }
         self.scene = scene
+        self.bridge = bridge
+        self.snapshotCallbackRelay = snapshotCallbackRelay
     }
 }
 
