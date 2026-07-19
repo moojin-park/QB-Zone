@@ -37,6 +37,85 @@ struct UniformTexturePrewarmResult: Equatable, Sendable {
     }
 }
 
+struct GameplayFieldLayer: Equatable, Sendable {
+    enum Kind: String, CaseIterable, Sendable {
+        case neutralBase = "neutral"
+        case endZone = "endZone"
+        case fieldBranding = "fieldBranding"
+        case markings = "markings"
+    }
+
+    let kind: Kind
+    let relativePath: String
+
+    var nodeName: String { "fieldLayer.\(kind.rawValue)" }
+}
+
+struct GameplayFieldLayerStack: Equatable, Sendable {
+    static let textureSize = CGSize(width: 1_728, height: 768)
+
+    let offenseTeamID: TeamID
+
+    var orderedLayers: [GameplayFieldLayer] {
+        let teamRoot = "pixel/teams/\(offenseTeamID.rawValue)"
+        return [
+            GameplayFieldLayer(
+                kind: .neutralBase,
+                relativePath: "pixel/stadium-field-neutral-v1.png"
+            ),
+            GameplayFieldLayer(
+                kind: .endZone,
+                relativePath: "\(teamRoot)/end-zone.png"
+            ),
+            GameplayFieldLayer(
+                kind: .fieldBranding,
+                relativePath: "\(teamRoot)/field-branding.png"
+            ),
+            GameplayFieldLayer(
+                kind: .markings,
+                relativePath: "pixel/field-markings-v1.png"
+            ),
+        ]
+    }
+}
+
+struct GameplayFieldTexturePreloadResult: Equatable, Sendable {
+    let requestedCount: Int
+    let loadedCount: Int
+    let preloadedCount: Int
+    let durationMilliseconds: Double
+    let spriteKitPreloadDurationMilliseconds: Double
+
+    var isComplete: Bool {
+        requestedCount == loadedCount && loadedCount == preloadedCount
+    }
+}
+
+struct GameplayVisualPrewarmResult: Equatable, Sendable {
+    let uniforms: UniformTexturePrewarmResult
+    let field: GameplayFieldTexturePreloadResult
+    let durationMilliseconds: Double
+
+    var requestedCount: Int { uniforms.requestedCount + field.requestedCount }
+    var preparedCount: Int { uniforms.preparedCount + field.loadedCount }
+    var preloadedCount: Int { uniforms.preloadedCount + field.preloadedCount }
+    var preprocessingDurationMilliseconds: Double {
+        uniforms.preprocessingDurationMilliseconds
+    }
+    var mainActorInstallationDurationMilliseconds: Double {
+        uniforms.mainActorInstallationDurationMilliseconds
+    }
+    var totalMainActorInstallationDurationMilliseconds: Double {
+        uniforms.totalMainActorInstallationDurationMilliseconds
+    }
+    var spriteKitPreloadDurationMilliseconds: Double {
+        uniforms.spriteKitPreloadDurationMilliseconds
+            + field.spriteKitPreloadDurationMilliseconds
+    }
+
+    var isComplete: Bool { uniforms.isComplete && field.isComplete }
+}
+
 struct UniformRaster: Equatable, Sendable {
     let width: Int
     let height: Int
@@ -409,8 +488,11 @@ final class TextureLibrary {
     private var cache: [String: SKTexture] = [:]
     private var uniformCache: [UniformTextureCacheKey: SKTexture] = [:]
     private var preparedRunPalettes: Set<RunUniformPaletteKey> = []
+    private var preloadedFieldTexturePaths: Set<String> = []
     private var uniformPrewarmIsActive = false
     private var uniformPrewarmWaiters: [CheckedContinuation<Void, Never>] = []
+    private var fieldPrewarmIsActive = false
+    private var fieldPrewarmWaiters: [CheckedContinuation<Void, Never>] = []
     private let uniformTexturePreparer: any UniformTexturePreparing
     private let uniformTexturePreloader: any UniformTexturePreloading
 
@@ -449,6 +531,84 @@ final class TextureLibrary {
             palette: palette,
             role: role
         )]
+    }
+
+    func prewarmRunVisualTextures(
+        offensePalette: UniformSpritePalette,
+        defensePalette: UniformSpritePalette,
+        fieldLayerStack: GameplayFieldLayerStack
+    ) async -> GameplayVisualPrewarmResult {
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let uniforms = await prewarmRunUniformTextures(
+            offensePalette: offensePalette,
+            defensePalette: defensePalette
+        )
+        let field: GameplayFieldTexturePreloadResult
+        if Task.isCancelled {
+            field = emptyFieldPreloadResult(
+                requestedCount: fieldLayerStack.orderedLayers.count,
+                startedAt: ProcessInfo.processInfo.systemUptime
+            )
+        } else {
+            field = await prewarmGameplayFieldTextures(fieldLayerStack)
+        }
+
+        return GameplayVisualPrewarmResult(
+            uniforms: uniforms,
+            field: field,
+            durationMilliseconds: (
+                ProcessInfo.processInfo.systemUptime - startedAt
+            ) * 1_000
+        )
+    }
+
+    func prewarmGameplayFieldTextures(
+        _ layerStack: GameplayFieldLayerStack
+    ) async -> GameplayFieldTexturePreloadResult {
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        let layers = layerStack.orderedLayers
+        await acquireFieldPrewarmTurn()
+        defer { releaseFieldPrewarmTurn() }
+
+        guard !Task.isCancelled else {
+            return emptyFieldPreloadResult(
+                requestedCount: layers.count,
+                startedAt: startedAt
+            )
+        }
+
+        let loadedLayers = layers.filter { layer in
+            guard let texture = texture(layer.relativePath) else { return false }
+            return texture.size() == GameplayFieldLayerStack.textureSize
+        }
+        var preloadedCount = loadedLayers.reduce(into: 0) { count, layer in
+            if preloadedFieldTexturePaths.contains(layer.relativePath) {
+                count += 1
+            }
+        }
+        let preloadStartedAt = ProcessInfo.processInfo.systemUptime
+        for layer in loadedLayers
+        where !preloadedFieldTexturePaths.contains(layer.relativePath) {
+            guard !Task.isCancelled,
+                  let texture = texture(layer.relativePath) else { break }
+            if await uniformTexturePreloader.preload(texture) {
+                preloadedFieldTexturePaths.insert(layer.relativePath)
+                preloadedCount += 1
+            }
+            guard !Task.isCancelled else { break }
+        }
+
+        return GameplayFieldTexturePreloadResult(
+            requestedCount: layers.count,
+            loadedCount: loadedLayers.count,
+            preloadedCount: preloadedCount,
+            durationMilliseconds: (
+                ProcessInfo.processInfo.systemUptime - startedAt
+            ) * 1_000,
+            spriteKitPreloadDurationMilliseconds: (
+                ProcessInfo.processInfo.systemUptime - preloadStartedAt
+            ) * 1_000
+        )
     }
 
     /// Prepares every finite animation texture used by one run. Raster decode and palette
@@ -608,6 +768,37 @@ final class TextureLibrary {
         let waiters = uniformPrewarmWaiters
         uniformPrewarmWaiters.removeAll(keepingCapacity: true)
         waiters.forEach { $0.resume() }
+    }
+
+    private func acquireFieldPrewarmTurn() async {
+        while fieldPrewarmIsActive {
+            await withCheckedContinuation { continuation in
+                fieldPrewarmWaiters.append(continuation)
+            }
+        }
+        fieldPrewarmIsActive = true
+    }
+
+    private func releaseFieldPrewarmTurn() {
+        fieldPrewarmIsActive = false
+        let waiters = fieldPrewarmWaiters
+        fieldPrewarmWaiters.removeAll(keepingCapacity: true)
+        waiters.forEach { $0.resume() }
+    }
+
+    private func emptyFieldPreloadResult(
+        requestedCount: Int,
+        startedAt: TimeInterval
+    ) -> GameplayFieldTexturePreloadResult {
+        GameplayFieldTexturePreloadResult(
+            requestedCount: requestedCount,
+            loadedCount: 0,
+            preloadedCount: 0,
+            durationMilliseconds: (
+                ProcessInfo.processInfo.systemUptime - startedAt
+            ) * 1_000,
+            spriteKitPreloadDurationMilliseconds: 0
+        )
     }
 
     private func emptyPrewarmResult(

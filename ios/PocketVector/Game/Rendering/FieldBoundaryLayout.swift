@@ -15,9 +15,6 @@ struct FieldBoundaryLayout {
     static let endZoneBackBrowserY: CGFloat = 230
     static let endZoneFrontBrowserY: CGFloat = 291
 
-    private static let legacyFarHalfWidthPixels: CGFloat = 445
-    private static let legacyNearHalfWidthPixels: CGFloat = 700
-
     static func halfWidth(atBrowserY browserY: CGFloat) -> CGFloat {
         interpolatedHalfWidth(
             atBrowserY: browserY,
@@ -33,21 +30,6 @@ struct FieldBoundaryLayout {
     ) -> CGPoint {
         CGPoint(
             x: projection.centerX + side.rawValue * halfWidth(atBrowserY: browserY),
-            y: GameProjection.logicalHeight - browserY
-        )
-    }
-
-    static func legacyBoundaryPoint(
-        side: FieldBoundarySide,
-        browserY: CGFloat,
-        projection: GameProjection
-    ) -> CGPoint {
-        CGPoint(
-            x: projection.centerX + side.rawValue * interpolatedHalfWidth(
-                atBrowserY: browserY,
-                far: legacyFarHalfWidthPixels,
-                near: legacyNearHalfWidthPixels
-            ),
             y: GameProjection.logicalHeight - browserY
         )
     }
