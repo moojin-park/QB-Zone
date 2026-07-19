@@ -39,10 +39,23 @@ shading, helmet structure, and pose silhouettes.
 
 ## Field and ball
 
-The checked-in wide stadium plate supplies turf, stands, and authored texture.
-SpriteKit draws current sidelines, team end zones, and wordmarks so team identity
-is never baked into the base plate. The selected football cosmetic is a runtime
-vector/material choice and remains attached to the player across teams.
+The stadium field is a registered 1728 x 768 layer stack. The opaque neutral
+base supplies the stadium, stands, lighting, goalpost, and one continuous turf
+material. Grass uses one uniform green across the full field; fine same-hue
+grain is allowed, but mowing bands, alternating light/dark sections, wedges,
+and broad gradients are not. The centered goalpost must meet the rear end-zone
+edge at source coordinate `(864, 230)`, never the wall by the stands.
+
+Team identity is supplied by two transparent layers per team: projected
+end-zone paint and a distressed midfield emblem painted directly onto the
+turf. Both remain free of opaque cover panels. Universal sidelines, goal lines,
+yard lines, and hashes render above team paint from
+`pixel/field-markings-v1.png`. Every layer shares the exact canvas, origin, and
+projection declared in `ios/AssetSources/Field/field-layers-v1.json`.
+
+Runtime layer order is neutral base, selected team paint, universal markings,
+then gameplay actors and HUD. The selected football cosmetic remains a runtime
+vector/material choice and stays attached to the player across teams.
 
 ## HUD and safe areas
 

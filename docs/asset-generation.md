@@ -8,12 +8,16 @@ are intentionally kept outside that bundle.
 ## Inventory contract
 
 `ios/PocketVector/Resources/GameAssets/native-assets.json` declares the exact
-runtime inventory and its source provenance. The manifest contains 58 assets:
+runtime inventory and its source provenance. The manifest contains 76 assets:
 
 - 3 native control PNGs;
 - 16 WAV audio files;
 - 38 lossless character WebPs;
-- 1 wide stadium field PNG.
+- 1 compatibility stadium field PNG;
+- 1 neutral stadium/turf PNG;
+- 1 universal field-markings PNG;
+- 16 team paint PNGs: one end-zone layer and one midfield layer for each of
+  the eight launch teams.
 
 `GameCoreTests.testNativeAssetManifestMatchesBundledResources` enumerates the
 physical bundle and requires exact set equality with the manifest, excluding
@@ -53,21 +57,51 @@ Review every binary diff before committing.
 
 ## Stadium field
 
-Source:
+Neutral source and registration specification:
 
 ```text
-ios/AssetSources/Field/stadium-field-wide-endzone-v2.png
+ios/AssetSources/Field/stadium-field-neutral-v1.png
+ios/AssetSources/Field/field-layers-v1.json
 ```
 
-Runtime output:
+Generated editable layers:
 
 ```text
+ios/AssetSources/Field/field-markings-v1.png
+ios/AssetSources/Field/field-paint-distress-mask-v1.png
+ios/AssetSources/Field/teams/<team-id>/end-zone-v1.png
+ios/AssetSources/Field/teams/<team-id>/field-branding-v1.png
+```
+
+Runtime outputs:
+
+```text
+ios/PocketVector/Resources/GameAssets/pixel/stadium-field-neutral-v1.png
+ios/PocketVector/Resources/GameAssets/pixel/field-markings-v1.png
+ios/PocketVector/Resources/GameAssets/pixel/teams/<team-id>/end-zone.png
+ios/PocketVector/Resources/GameAssets/pixel/teams/<team-id>/field-branding.png
 ios/PocketVector/Resources/GameAssets/pixel/stadium-field-wide-endzone-v3.png
 ```
 
-The tool removes obsolete painted sidelines while preserving the authored turf
-and yard-line texture. SpriteKit draws current boundaries, team wordmarks, and
-end-zone identity at runtime.
+All field layers share an exact 1728 x 768 canvas and pixel origin. The neutral
+plate contains one continuous green turf material with no mowing bands or team
+identity. Its centered goalpost contacts the rear end-zone edge at `(864, 230)`.
+The generated universal markings use the locked perspective in
+`field-layers-v1.json`; team end zones use the same projected four-corner mask,
+and midfield emblems are transparent distressed paint without backing panels.
+
+The intended runtime stack is neutral base, selected team's end-zone and
+field-branding layers, universal markings, then gameplay actors and HUD. The
+shipping `stadium-field-wide-endzone-v3.png` is retained as a neutral-plus-
+markings compatibility plate until Technical switches the gameplay renderer to
+the layered files. Do not add team identity to that compatibility plate.
+
+The neutral stadium was created with built-in ImageGen and normalized to the
+locked canvas without changing its 9:4 composition. Canonical generated output:
+
+```text
+/Users/andypark/.codex/generated_images/019f7182-19d5-7d40-8e97-6ebea8ba5808/exec-b2d3647f-b9fe-4a33-b4c0-e33da141c6b0.png
+```
 
 Requirements: Node.js and ImageMagick.
 

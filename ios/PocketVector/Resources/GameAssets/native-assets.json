@@ -14,7 +14,13 @@
     },
     "field": {
       "generator": "ios/Tools/generate-native-field-plate.mjs",
-      "input": "ios/AssetSources/Field/stadium-field-wide-endzone-v2.png"
+      "input": "ios/AssetSources/Field/stadium-field-neutral-v1.png",
+      "spec": "ios/AssetSources/Field/field-layers-v1.json",
+      "sourceLayers": [
+        "ios/AssetSources/Field/field-markings-v1.png",
+        "ios/AssetSources/Field/field-paint-distress-mask-v1.png",
+        "ios/AssetSources/Field/teams"
+      ]
     },
     "controls": {
       "generator": "ios/Tools/generate-native-control-icons.mjs",
@@ -86,6 +92,24 @@
     { "path": "characters/receiver-run-4-right.webp", "kind": "image" },
     { "path": "characters/receiver-touchdown-left.webp", "kind": "image" },
     { "path": "characters/receiver-touchdown-right.webp", "kind": "image" },
-    { "path": "pixel/stadium-field-wide-endzone-v3.png", "kind": "image" }
+    { "path": "pixel/field-markings-v1.png", "kind": "image" },
+    { "path": "pixel/stadium-field-neutral-v1.png", "kind": "image" },
+    { "path": "pixel/stadium-field-wide-endzone-v3.png", "kind": "image" },
+    { "path": "pixel/teams/bayline_redshifts/end-zone.png", "kind": "image" },
+    { "path": "pixel/teams/bayline_redshifts/field-branding.png", "kind": "image" },
+    { "path": "pixel/teams/foundry_reach_orbiters/end-zone.png", "kind": "image" },
+    { "path": "pixel/teams/foundry_reach_orbiters/field-branding.png", "kind": "image" },
+    { "path": "pixel/teams/high_mesa_helions/end-zone.png", "kind": "image" },
+    { "path": "pixel/teams/high_mesa_helions/field-branding.png", "kind": "image" },
+    { "path": "pixel/teams/luma_coast_prisms/end-zone.png", "kind": "image" },
+    { "path": "pixel/teams/luma_coast_prisms/field-branding.png", "kind": "image" },
+    { "path": "pixel/teams/meridian_plains_radiants/end-zone.png", "kind": "image" },
+    { "path": "pixel/teams/meridian_plains_radiants/field-branding.png", "kind": "image" },
+    { "path": "pixel/teams/neon_basin_eclipses/end-zone.png", "kind": "image" },
+    { "path": "pixel/teams/neon_basin_eclipses/field-branding.png", "kind": "image" },
+    { "path": "pixel/teams/nova_city_comets/end-zone.png", "kind": "image" },
+    { "path": "pixel/teams/nova_city_comets/field-branding.png", "kind": "image" },
+    { "path": "pixel/teams/rainport_auroras/end-zone.png", "kind": "image" },
+    { "path": "pixel/teams/rainport_auroras/field-branding.png", "kind": "image" }
   ]
 }

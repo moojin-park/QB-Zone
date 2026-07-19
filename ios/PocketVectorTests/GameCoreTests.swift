@@ -707,7 +707,7 @@ final class GameCoreTests: XCTestCase {
     )
 
     XCTAssertEqual(manifest.schemaVersion, 1)
-    XCTAssertEqual(paths.count, 58)
+    XCTAssertEqual(paths.count, 76)
     XCTAssertEqual(Set(paths).count, paths.count, "Manifest contains duplicate paths")
     XCTAssertEqual(
       Set(paths),
