@@ -4,10 +4,12 @@ Status: implementation contract for version 1
 
 Last updated: 2026-07-18
 
-Implementation baseline: `e9af0bc`, the explicit gameplay-presentation bridge
-integration, including the online-only commerce composition, canonical V4
-cloud-profile seed, and StoreKit, player-scoped Game Center, and rewarded-ad
-foundations.
+Implementation baseline: `0971f9b`, the layered team-field asset integration,
+including the explicit gameplay-presentation bridge, online-only commerce
+composition, canonical V4 cloud-profile seed, and StoreKit, player-scoped Game
+Center, and rewarded-ad foundations. The layered field files are bundled and
+manifested; gameplay continues to use the neutral compatibility plate until a
+Technical renderer handoff activates the registered layer stack.
 
 This document translates the approved release charter into ownership and data
 boundaries. It is deliberately narrower than a feature specification: it says
