@@ -59,6 +59,7 @@ final class BroadcastHUDNode: SKNode {
     private let teamPrimary: UIColor
     private let teamSecondary: UIColor
     private let teamAccent: UIColor
+    private let feedbackAnnouncementHandler: (String) -> Void
 
     private let meterNode = SKNode()
     private let meterCopyNode = SKNode()
@@ -81,12 +82,20 @@ final class BroadcastHUDNode: SKNode {
     private var renderedBonusActive: Bool?
     private var renderedTimerWarning: Bool?
     private var renderedFeedbackSignature: String?
+    private var renderedFeedbackRemainingMilliseconds: CGFloat?
+    private var renderedFeedbackFinalPosition: CGPoint?
     private var reducedMotion = false
+
+    static let feedbackRevealActionKey = "scoreReactionReveal"
 
     init(
         layout: HUDLayout,
         textureLibrary: TextureLibrary,
-        teamIdentity: TeamVisualIdentity? = nil
+        teamIdentity: TeamVisualIdentity? = nil,
+        feedbackAnnouncementHandler: @escaping (String) -> Void = { announcement in
+            guard UIAccessibility.isVoiceOverRunning else { return }
+            UIAccessibility.post(notification: .announcement, argument: announcement)
+        }
     ) {
         self.layout = layout
         self.textureLibrary = textureLibrary
@@ -97,6 +106,7 @@ final class BroadcastHUDNode: SKNode {
         teamPrimary = resolvedPrimary
         teamSecondary = resolvedSecondary
         teamAccent = resolvedAccent
+        self.feedbackAnnouncementHandler = feedbackAnnouncementHandler
         let controlHitFrames = Self.controlHitFrames(for: layout)
         muteHitFrame = controlHitFrames.mute
         pauseHitFrame = controlHitFrames.pause
@@ -137,7 +147,10 @@ final class BroadcastHUDNode: SKNode {
         buildClock()
         buildScoreBug()
         buildControls()
-        feedbackNode.zPosition = 30
+        feedbackNode.name = "scoreReaction"
+        feedbackNode.zPosition = 9
+        feedbackNode.isAccessibilityElement = false
+        feedbackNode.accessibilityElementsHidden = true
         addChild(feedbackNode)
     }
 
@@ -219,9 +232,7 @@ final class BroadcastHUDNode: SKNode {
             muteBorderNode.fillColor = isMuted ? Palette.red : teamAccent
         }
 
-        if motionSettingChanged {
-            renderedFeedbackSignature = nil
-        }
+        if motionSettingChanged { settleCurrentFeedbackMotion() }
         updateFeedback(feedback)
     }
 
@@ -749,150 +760,215 @@ final class BroadcastHUDNode: SKNode {
     private func updateFeedback(_ feedback: PlayFeedback?) {
         guard let feedback else {
             feedbackNode.isHidden = true
+            feedbackNode.removeAction(forKey: Self.feedbackRevealActionKey)
             renderedFeedbackSignature = nil
+            renderedFeedbackRemainingMilliseconds = nil
+            renderedFeedbackFinalPosition = nil
             return
         }
 
         feedbackNode.isHidden = false
         let signature = [feedback.headline, feedback.detail, toneKey(feedback.tone)].joined(separator: "|")
-        guard signature != renderedFeedbackSignature else { return }
+        let lifetimeRestarted = signature == renderedFeedbackSignature &&
+            feedback.remainingMilliseconds >
+            (renderedFeedbackRemainingMilliseconds ?? feedback.remainingMilliseconds) + 0.5
+        renderedFeedbackRemainingMilliseconds = feedback.remainingMilliseconds
+        guard signature != renderedFeedbackSignature || lifetimeRestarted else { return }
         renderedFeedbackSignature = signature
 
         feedbackNode.removeAllActions()
         feedbackNode.removeAllChildren()
+        feedbackNode.alpha = 1
+        feedbackNode.setScale(1)
 
         let headlineColor: UIColor
-        let borderColor: UIColor
-        let backgroundColor: UIColor
+        let semanticColor: UIColor
         switch feedback.tone {
         case .positive:
             headlineColor = Palette.positive
-            borderColor = teamPrimary
-            backgroundColor = Palette.ink.withAlphaComponent(0.95)
+            semanticColor = Palette.positive
         case .touchdown, .bonus:
             headlineColor = Palette.gold
-            borderColor = Palette.gold
-            backgroundColor = UIColor(red: 36 / 255, green: 24 / 255, blue: 6 / 255, alpha: 0.97)
+            semanticColor = Palette.gold
         case .negative:
             headlineColor = Palette.coral
-            borderColor = Palette.red
-            backgroundColor = UIColor(red: 33 / 255, green: 11 / 255, blue: 19 / 255, alpha: 0.97)
+            semanticColor = Palette.coral
         }
 
         let headline = ShadowedLabel(
-            fontName: "AvenirNext-Heavy",
-            fontSize: max(17 * scale, min(34 * scale, layout.contentRect.width * 0.033)),
+            fontName: "AvenirNextCondensed-Heavy",
+            fontSize: layout.feedbackHeadlineFontSize,
             color: headlineColor,
-            outlineDistance: max(1, 3 * scale)
+            outlineDistance: max(1 / layout.displayScale, 1.5 * scale)
         )
+        headline.name = "scoreReaction.headline"
+        headline.isAccessibilityElement = false
         headline.text = feedback.headline.uppercased()
         headline.horizontalAlignmentMode = .center
         headline.verticalAlignmentMode = .center
 
+        let hasDetail = !feedback.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let detail = ShadowedLabel(
             fontName: "AvenirNextCondensed-Heavy",
-            fontSize: max(9 * scale, min(14 * scale, layout.contentRect.width * 0.014)),
-            color: Palette.gold,
-            outlineDistance: max(1, 2 * scale)
+            fontSize: layout.feedbackDetailFontSize,
+            color: Palette.cream,
+            outlineDistance: max(1 / layout.displayScale, scale)
         )
+        detail.name = "scoreReaction.detail"
+        detail.isAccessibilityElement = false
         detail.text = feedback.detail
         detail.horizontalAlignmentMode = .center
         detail.verticalAlignmentMode = .center
 
-        let paddingX = max(12, 18 * scale)
-        let paddingY = max(6, 9 * scale)
-        let minimumWidth = max(160, 220 * scale)
-        let maximumWidth = layout.contentRect.width * 0.75
-        let textWidth = max(headline.contentWidth, detail.contentWidth)
-        let panelWidth = min(maximumWidth, max(minimumWidth, textWidth + paddingX * 2))
-        let contentHeight = headline.contentHeight + detail.contentHeight + max(2, 3 * scale)
-        let panelHeight = max(52, contentHeight + paddingY * 2)
+        let panelFrame = layout.feedbackFrame(hasDetail: hasDetail)
         let localFrame = CGRect(
-            x: -panelWidth / 2,
-            y: -panelHeight / 2,
-            width: panelWidth,
-            height: panelHeight
+            x: -panelFrame.width / 2,
+            y: -panelFrame.height / 2,
+            width: panelFrame.width,
+            height: panelFrame.height
         )
+        let finalPosition = CGPoint(x: panelFrame.midX, y: panelFrame.midY)
+        renderedFeedbackFinalPosition = finalPosition
+        feedbackNode.position = finalPosition
 
-        feedbackNode.position = CGPoint(
-            x: layout.feedbackTopAnchor.x,
-            y: layout.feedbackTopAnchor.y - panelHeight / 2
+        let renderedPoint = 1 / max(0.001, layout.displayScale)
+        let shadowOffset = 3 * renderedPoint
+        let shadowFrame = localFrame.offsetBy(dx: shadowOffset, dy: -shadowOffset)
+        let shadow = SKShapeNode(
+            path: pixelCutPath(in: shadowFrame, corner: max(2 * renderedPoint, 3 * scale))
         )
-
-        let shadowPath = pixelCutPath(in: localFrame, corner: max(2, 4 * scale))
-        let shadow = SKShapeNode(path: shadowPath)
-        shadow.fillColor = UIColor.black.withAlphaComponent(0.72)
+        shadow.name = "scoreReaction.shadow"
+        shadow.fillColor = UIColor.black.withAlphaComponent(0.86)
         shadow.strokeColor = .clear
-        shadow.position = CGPoint(x: max(3, 6 * scale), y: -max(3, 6 * scale))
-        shadow.zPosition = -3
+        shadow.zPosition = -5
         feedbackNode.addChild(shadow)
 
-        let steelFrame = localFrame.insetBy(dx: -max(1, 2 * scale), dy: -max(1, 2 * scale))
-        let steel = SKShapeNode(path: pixelCutPath(in: steelFrame, corner: max(2, 5 * scale)))
+        let steelFrame = localFrame
+        let steel = SKShapeNode(
+            path: pixelCutPath(in: steelFrame, corner: max(2 * renderedPoint, 4 * scale))
+        )
+        steel.name = "scoreReaction.steel"
         steel.fillColor = Palette.steelDark
         steel.strokeColor = .clear
-        steel.zPosition = -2
+        steel.zPosition = -4
         feedbackNode.addChild(steel)
 
-        let border = SKShapeNode(path: shadowPath)
-        border.fillColor = borderColor
-        border.strokeColor = .clear
-        border.zPosition = -1
-        feedbackNode.addChild(border)
+        let teamFrame = steelFrame.insetBy(dx: 1.5 * renderedPoint, dy: 1.5 * renderedPoint)
+        let teamBorder = SKShapeNode(
+            path: pixelCutPath(in: teamFrame, corner: max(1.5 * renderedPoint, 3 * scale))
+        )
+        teamBorder.name = "scoreReaction.teamBorder"
+        teamBorder.fillColor = teamPrimary
+        teamBorder.strokeColor = .clear
+        teamBorder.zPosition = -3
+        feedbackNode.addChild(teamBorder)
 
-        let bodyFrame = localFrame.insetBy(dx: max(2, 3 * scale), dy: max(2, 3 * scale))
-        let body = SKShapeNode(path: pixelCutPath(in: bodyFrame, corner: max(1, 3 * scale)))
-        body.fillColor = backgroundColor
+        let bodyFrame = teamFrame.insetBy(dx: 1.5 * renderedPoint, dy: 1.5 * renderedPoint)
+        let body = SKShapeNode(
+            path: pixelCutPath(in: bodyFrame, corner: max(renderedPoint, 2 * scale))
+        )
+        body.name = "scoreReaction.body"
+        body.fillColor = Palette.scoreBase
         body.strokeColor = .clear
-        body.zPosition = 0
+        body.zPosition = -2
         feedbackNode.addChild(body)
 
-        let topRail = SKSpriteNode(
-            color: UIColor(red: 23 / 255, green: 56 / 255, blue: 86 / 255, alpha: 1),
-            size: CGSize(width: bodyFrame.width, height: max(2, 5 * scale))
+        let railFrame = bodyFrame.insetBy(
+            dx: 2.5 * renderedPoint,
+            dy: 2.5 * renderedPoint
         )
-        topRail.position = CGPoint(
-            x: bodyFrame.midX,
-            y: bodyFrame.maxY - topRail.size.height / 2
+        let semanticRail = SKShapeNode(
+            path: pixelCutPath(in: railFrame, corner: max(renderedPoint, 1.5 * scale))
         )
-        topRail.zPosition = 1
-        feedbackNode.addChild(topRail)
+        semanticRail.name = "scoreReaction.semanticRail"
+        semanticRail.fillColor = .clear
+        semanticRail.strokeColor = semanticColor
+        semanticRail.lineWidth = layout.feedbackInnerRailWidth
+        semanticRail.isAntialiased = false
+        semanticRail.zPosition = -1
+        feedbackNode.addChild(semanticRail)
 
-        let maxTextWidth = panelWidth - paddingX * 2
+        let maxTextWidth = bodyFrame.width - layout.feedbackHorizontalTextPadding * 2
         if headline.contentWidth > maxTextWidth {
             headline.xScale = maxTextWidth / headline.contentWidth
         }
-        if detail.contentWidth > maxTextWidth {
+        if hasDetail, detail.contentWidth > maxTextWidth {
             detail.xScale = maxTextWidth / detail.contentWidth
         }
 
-        headline.position = CGPoint(
-            x: 0,
-            y: detail.contentHeight / 2 + max(1, 2 * scale)
-        )
-        headline.zPosition = 2
+        if hasDetail {
+            let rowGap = 1.5 * renderedPoint
+            let blockHeight = headline.contentHeight + rowGap + detail.contentHeight
+            headline.position = CGPoint(
+                x: 0,
+                y: blockHeight / 2 - headline.contentHeight / 2
+            )
+            detail.position = CGPoint(
+                x: 0,
+                y: -blockHeight / 2 + detail.contentHeight / 2
+            )
+            detail.zPosition = 0
+            feedbackNode.addChild(detail)
+        } else {
+            headline.position = .zero
+        }
+        headline.zPosition = 0
         feedbackNode.addChild(headline)
 
-        detail.position = CGPoint(
-            x: 0,
-            y: -headline.contentHeight / 2 - max(1, 2 * scale)
+        Self.excludeFromAccessibility(feedbackNode)
+        feedbackAnnouncementHandler(Self.feedbackAnnouncementText(feedback))
+        revealFeedback(from: finalPosition)
+    }
+
+    private static func excludeFromAccessibility(_ node: SKNode) {
+        node.isAccessibilityElement = false
+        node.children.forEach(excludeFromAccessibility)
+    }
+
+    static func feedbackAnnouncementText(_ feedback: PlayFeedback) -> String {
+        let detail = feedback.detail
+            .replacingOccurrences(of: "•", with: ",")
+            .split(whereSeparator: \Character.isWhitespace)
+            .joined(separator: " ")
+            .replacingOccurrences(of: " ,", with: ",")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return [feedback.headline, detail]
+            .filter { !$0.isEmpty }
+            .joined(separator: ". ")
+    }
+
+    private func revealFeedback(from finalPosition: CGPoint) {
+        let motion = HUDFeedbackMotionSpec.resolved(
+            reducedMotion: reducedMotion,
+            displayScale: layout.displayScale
         )
-        detail.zPosition = 2
-        feedbackNode.addChild(detail)
+        feedbackNode.alpha = 0
+        feedbackNode.setScale(1)
+        feedbackNode.position = CGPoint(
+            x: finalPosition.x,
+            y: finalPosition.y - motion.travel
+        )
 
-        guard !reducedMotion else {
-            feedbackNode.setScale(1)
-            return
+        let fade = SKAction.fadeAlpha(to: 1, duration: motion.duration)
+        fade.timingMode = .easeOut
+        if motion.usesTranslation {
+            let move = SKAction.moveTo(y: finalPosition.y, duration: motion.duration)
+            move.timingMode = .easeOut
+            feedbackNode.run(
+                .group([fade, move]),
+                withKey: Self.feedbackRevealActionKey
+            )
+        } else {
+            feedbackNode.run(fade, withKey: Self.feedbackRevealActionKey)
         }
+    }
 
-        feedbackNode.setScale(0.82)
-        feedbackNode.run(.sequence([
-            .scale(to: 0.90, duration: 0),
-            .wait(forDuration: 0.06),
-            .scale(to: 0.96, duration: 0),
-            .wait(forDuration: 0.06),
-            .scale(to: 1, duration: 0),
-        ]), withKey: "feedbackPop")
+    private func settleCurrentFeedbackMotion() {
+        guard let finalPosition = renderedFeedbackFinalPosition else { return }
+        feedbackNode.removeAction(forKey: Self.feedbackRevealActionKey)
+        feedbackNode.position = finalPosition
+        feedbackNode.alpha = 1
+        feedbackNode.setScale(1)
     }
 
     private func toneKey(_ tone: FeedbackState.Tone) -> String {

@@ -47,6 +47,30 @@ struct HUDLayoutMetrics: Equatable {
     )
 }
 
+struct HUDFeedbackMotionSpec: Equatable {
+    let travel: CGFloat
+    let duration: TimeInterval
+    let usesTranslation: Bool
+    let usesScale: Bool
+
+    static func resolved(reducedMotion: Bool, displayScale: CGFloat) -> Self {
+        if reducedMotion {
+            return Self(
+                travel: 0,
+                duration: 0.08,
+                usesTranslation: false,
+                usesScale: false
+            )
+        }
+        return Self(
+            travel: 4 / max(0.001, displayScale),
+            duration: 0.14,
+            usesTranslation: true,
+            usesScale: false
+        )
+    }
+}
+
 /// Pure SpriteKit-coordinate layout for the in-game HUD.
 ///
 /// All returned rectangles use a bottom-left origin, matching `SKScene`.
@@ -70,7 +94,13 @@ struct HUDLayout: Equatable {
     let pauseButtonFrame: CGRect
     let controlsFrame: CGRect
     let scorePlateFrame: CGRect
-    let feedbackTopAnchor: CGPoint
+    let feedbackOneLineFrame: CGRect
+    let feedbackTwoLineFrame: CGRect
+    let feedbackAttachmentOverlap: CGFloat
+    let feedbackInnerRailWidth: CGFloat
+    let feedbackHorizontalTextPadding: CGFloat
+    let feedbackHeadlineFontSize: CGFloat
+    let feedbackDetailFontSize: CGFloat
     let meterHeadingAnchor: CGPoint
     let multiplierTopAnchor: CGPoint
     let readyCopyAnchor: CGPoint
@@ -165,7 +195,7 @@ struct HUDLayout: Equatable {
 
         let scoreWidth = resolvedContentRect.width * metrics.scoreWidthFraction
         let scoreHeight = resolvedContentRect.height * metrics.scoreHeightFraction
-        scorePlateFrame = CGRect(
+        let resolvedScorePlateFrame = CGRect(
             x: resolvedContentRect.maxX
                 - resolvedContentRect.width * metrics.scoreRightFraction
                 - scoreWidth,
@@ -174,10 +204,62 @@ struct HUDLayout: Equatable {
             width: scoreWidth,
             height: scoreHeight
         )
+        scorePlateFrame = resolvedScorePlateFrame
 
-        feedbackTopAnchor = CGPoint(
-            x: resolvedContentRect.midX,
-            y: resolvedContentRect.maxY - resolvedContentRect.height * 0.20
+        let feedbackRenderedMetrics: (
+            width: CGFloat,
+            oneLineHeight: CGFloat,
+            twoLineHeight: CGFloat,
+            headlineFontSize: CGFloat,
+            detailFontSize: CGFloat,
+            railWidth: CGFloat,
+            horizontalTextPadding: CGFloat
+        )
+        if renderedStageWidth <= 740 {
+            feedbackRenderedMetrics = (172, 32, 46, 15, 12, 2, 4)
+        } else if renderedStageWidth >= 1_100 {
+            feedbackRenderedMetrics = (316, 42, 56, 22, 16, 3, 9)
+        } else {
+            feedbackRenderedMetrics = (248, 34, 48, 18, 13, 2.5, 7)
+        }
+
+        let resolvedFeedbackAttachmentOverlap = 3 / resolvedDisplayScale
+        feedbackAttachmentOverlap = resolvedFeedbackAttachmentOverlap
+        feedbackInnerRailWidth = feedbackRenderedMetrics.railWidth / resolvedDisplayScale
+        feedbackHorizontalTextPadding = feedbackRenderedMetrics.horizontalTextPadding
+            / resolvedDisplayScale
+        feedbackHeadlineFontSize = feedbackRenderedMetrics.headlineFontSize
+            / resolvedDisplayScale
+        feedbackDetailFontSize = feedbackRenderedMetrics.detailFontSize
+            / resolvedDisplayScale
+
+        func attachedFeedbackFrame(renderedHeight: CGFloat) -> CGRect {
+            let width = min(
+                resolvedContentRect.width,
+                feedbackRenderedMetrics.width / resolvedDisplayScale
+            )
+            let height = min(
+                resolvedContentRect.height,
+                renderedHeight / resolvedDisplayScale
+            )
+            let centeredX = resolvedScorePlateFrame.midX - width / 2
+            let x = min(
+                max(resolvedContentRect.minX, centeredX),
+                resolvedContentRect.maxX - width
+            )
+            let attachedY = resolvedScorePlateFrame.maxY - resolvedFeedbackAttachmentOverlap
+            let y = min(
+                max(resolvedContentRect.minY, attachedY),
+                resolvedContentRect.maxY - height
+            )
+            return CGRect(x: x, y: y, width: width, height: height)
+        }
+
+        feedbackOneLineFrame = attachedFeedbackFrame(
+            renderedHeight: feedbackRenderedMetrics.oneLineHeight
+        )
+        feedbackTwoLineFrame = attachedFeedbackFrame(
+            renderedHeight: feedbackRenderedMetrics.twoLineHeight
         )
         meterHeadingAnchor = CGPoint(
             x: adrenalineFrame.minX + adrenalineFrame.width * 0.03,
@@ -207,6 +289,10 @@ struct HUDLayout: Equatable {
         meterActionFontSize = cssClamp(10, 0.013, 14)
         multiplierFontSize = cssClamp(18, 0.0255, 27)
         readyCopyFontSize = readySize
+    }
+
+    func feedbackFrame(hasDetail: Bool) -> CGRect {
+        hasDetail ? feedbackTwoLineFrame : feedbackOneLineFrame
     }
 
     var meterMaskPath: CGPath {

@@ -1,5 +1,6 @@
 import AVFAudio
 import CoreGraphics
+import SpriteKit
 import UIKit
 import XCTest
 
@@ -497,6 +498,8 @@ final class GameCoreTests: XCTestCase {
     XCTAssertTrue(viewport.safeSceneFrame.contains(layout.adrenalineFrame))
     XCTAssertTrue(viewport.safeSceneFrame.contains(layout.controlsFrame))
     XCTAssertTrue(viewport.safeSceneFrame.contains(layout.scorePlateFrame))
+    XCTAssertTrue(viewport.safeSceneFrame.contains(layout.feedbackOneLineFrame))
+    XCTAssertTrue(viewport.safeSceneFrame.contains(layout.feedbackTwoLineFrame))
     XCTAssertTrue(viewport.safeSceneFrame.contains(layout.clockTopAnchor))
     XCTAssertEqual(layout.clockTopAnchor.x, viewport.safeSceneFrame.midX, accuracy: 0.000_001)
   }
@@ -805,8 +808,15 @@ final class GameCoreTests: XCTestCase {
     XCTAssertEqual(layout.scorePlateFrame.minY, 13.056, accuracy: 0.000_001)
     XCTAssertEqual(layout.scorePlateFrame.width, 312.32, accuracy: 0.000_001)
     XCTAssertEqual(layout.scorePlateFrame.height, 103.68, accuracy: 0.000_001)
-    XCTAssertEqual(layout.feedbackTopAnchor.x, 512, accuracy: 0.000_001)
-    XCTAssertEqual(layout.feedbackTopAnchor.y, 614.4, accuracy: 0.000_001)
+    XCTAssertEqual(layout.feedbackOneLineFrame.minX, 729.504, accuracy: 0.000_001)
+    XCTAssertEqual(layout.feedbackOneLineFrame.minY, 113.736, accuracy: 0.000_001)
+    XCTAssertEqual(layout.feedbackOneLineFrame.width, 248, accuracy: 0.000_001)
+    XCTAssertEqual(layout.feedbackOneLineFrame.height, 34, accuracy: 0.000_001)
+    XCTAssertEqual(layout.feedbackTwoLineFrame.minX, 729.504, accuracy: 0.000_001)
+    XCTAssertEqual(layout.feedbackTwoLineFrame.minY, 113.736, accuracy: 0.000_001)
+    XCTAssertEqual(layout.feedbackTwoLineFrame.width, 248, accuracy: 0.000_001)
+    XCTAssertEqual(layout.feedbackTwoLineFrame.height, 48, accuracy: 0.000_001)
+    XCTAssertEqual(layout.feedbackAttachmentOverlap, 3, accuracy: 0.000_001)
 
     XCTAssertEqual(layout.clockFontSize, 43.008, accuracy: 0.000_001)
     XCTAssertEqual(layout.scoreFontSize, 50, accuracy: 0.000_001)
@@ -817,6 +827,8 @@ final class GameCoreTests: XCTestCase {
     XCTAssertTrue(sceneBounds.contains(layout.adrenalineFrame))
     XCTAssertTrue(sceneBounds.contains(layout.controlsFrame))
     XCTAssertTrue(sceneBounds.contains(layout.scorePlateFrame))
+    XCTAssertTrue(sceneBounds.contains(layout.feedbackOneLineFrame))
+    XCTAssertTrue(sceneBounds.contains(layout.feedbackTwoLineFrame))
     XCTAssertLessThan(layout.controlsFrame.maxX, layout.scorePlateFrame.minX)
   }
 
@@ -988,6 +1000,424 @@ final class GameCoreTests: XCTestCase {
     XCTAssertEqual(layout.readyCopyFontSize * displayScale, 12, accuracy: 0.000_001)
   }
 
+  func testScoreReactionGeometryMatchesCanonicalPhoneAndIPadTargets() {
+    let configurations: [(
+      name: String,
+      viewport: GameViewport,
+      metrics: HUDLayoutMetrics,
+      width: CGFloat,
+      oneLineHeight: CGFloat,
+      twoLineHeight: CGFloat
+    )] = [
+      (
+        "canonical",
+        .canonical,
+        .canonical,
+        248,
+        34,
+        48
+      ),
+      (
+        "compact iPhone safe area",
+        GameViewport(
+          viewSize: CGSize(width: 832, height: 384),
+          safeAreaInsets: GameSafeAreaInsets(top: 0, left: 59, bottom: 21, right: 59)
+        ),
+        .compact,
+        172,
+        32,
+        46
+      ),
+      (
+        "regular iPhone",
+        GameViewport(
+          viewSize: CGSize(width: 932, height: 430),
+          safeAreaInsets: GameSafeAreaInsets(top: 0, left: 62, bottom: 21, right: 62)
+        ),
+        .compact,
+        248,
+        34,
+        48
+      ),
+      (
+        "iPad landscape",
+        GameViewport(
+          viewSize: CGSize(width: 1_366, height: 1_024),
+          safeAreaInsets: .zero
+        ),
+        .canonical,
+        316,
+        42,
+        56
+      ),
+    ]
+
+    for configuration in configurations {
+      let viewport = configuration.viewport
+      let layout = HUDLayout(
+        sceneSize: viewport.projection.sceneSize,
+        contentRect: viewport.safeSceneFrame,
+        metrics: configuration.metrics,
+        displayScale: viewport.pointsPerSceneUnit
+      )
+      let oneLine = layout.feedbackOneLineFrame
+      let twoLine = layout.feedbackTwoLineFrame
+      let displayScale = viewport.pointsPerSceneUnit
+
+      XCTAssertEqual(
+        oneLine.width * displayScale,
+        configuration.width,
+        accuracy: 0.000_001,
+        configuration.name
+      )
+      XCTAssertEqual(
+        oneLine.height * displayScale,
+        configuration.oneLineHeight,
+        accuracy: 0.000_001,
+        configuration.name
+      )
+      XCTAssertEqual(
+        twoLine.width * displayScale,
+        configuration.width,
+        accuracy: 0.000_001,
+        configuration.name
+      )
+      XCTAssertEqual(
+        twoLine.height * displayScale,
+        configuration.twoLineHeight,
+        accuracy: 0.000_001,
+        configuration.name
+      )
+      XCTAssertEqual(oneLine.midX, layout.scorePlateFrame.midX, accuracy: 0.000_001)
+      XCTAssertEqual(twoLine.midX, layout.scorePlateFrame.midX, accuracy: 0.000_001)
+      XCTAssertEqual(
+        (layout.scorePlateFrame.maxY - oneLine.minY) * displayScale,
+        3,
+        accuracy: 0.000_001,
+        configuration.name
+      )
+      XCTAssertEqual(
+        (layout.scorePlateFrame.maxY - twoLine.minY) * displayScale,
+        3,
+        accuracy: 0.000_001,
+        configuration.name
+      )
+      XCTAssertTrue(viewport.safeSceneFrame.contains(oneLine), configuration.name)
+      XCTAssertTrue(viewport.safeSceneFrame.contains(twoLine), configuration.name)
+      XCTAssertGreaterThan(oneLine.minX, viewport.safeSceneFrame.midX, configuration.name)
+      XCTAssertGreaterThan(twoLine.minX, viewport.safeSceneFrame.midX, configuration.name)
+    }
+  }
+
+  func testScoreReactionMotionHonorsStandardAndReducedMotionLimits() {
+    let standard = HUDFeedbackMotionSpec.resolved(reducedMotion: false, displayScale: 0.5)
+    XCTAssertEqual(standard.travel * 0.5, 4, accuracy: 0.000_001)
+    XCTAssertEqual(standard.duration, 0.14, accuracy: 0.000_001)
+    XCTAssertTrue(standard.usesTranslation)
+    XCTAssertFalse(standard.usesScale)
+
+    let reduced = HUDFeedbackMotionSpec.resolved(reducedMotion: true, displayScale: 0.5)
+    XCTAssertEqual(reduced.travel, 0, accuracy: 0.000_001)
+    XCTAssertEqual(reduced.duration, 0.08, accuracy: 0.000_001)
+    XCTAssertFalse(reduced.usesTranslation)
+    XCTAssertFalse(reduced.usesScale)
+  }
+
+  @MainActor
+  func testScoreReactionRendersCanonicalOutcomeVariantsAndMaterials() throws {
+    struct ReactionCase {
+      let name: String
+      let feedback: PlayFeedback
+      let hasDetail: Bool
+      let semanticColor: UIColor
+    }
+
+    let compactViewport = GameViewport(
+      viewSize: CGSize(width: 832, height: 384),
+      safeAreaInsets: GameSafeAreaInsets(top: 0, left: 59, bottom: 21, right: 59)
+    )
+    let layout = HUDLayout(
+      sceneSize: compactViewport.projection.sceneSize,
+      contentRect: compactViewport.safeSceneFrame,
+      metrics: .compact,
+      displayScale: compactViewport.pointsPerSceneUnit
+    )
+    let cases = [
+      ReactionCase(
+        name: "one-line completion",
+        feedback: PlayFeedback(
+          headline: "DEEP COMPLETE +1,500",
+          detail: "",
+          tone: .positive,
+          remainingMilliseconds: 760
+        ),
+        hasDetail: false,
+        semanticColor: color(0x8CE6E6)
+      ),
+      ReactionCase(
+        name: "incomplete",
+        feedback: PlayFeedback(
+          headline: "INCOMPLETE",
+          detail: "BONUS LOST",
+          tone: .negative,
+          remainingMilliseconds: 920
+        ),
+        hasDetail: true,
+        semanticColor: color(0xFF6A46)
+      ),
+      ReactionCase(
+        name: "interception",
+        feedback: PlayFeedback(
+          headline: "INTERCEPTED",
+          detail: "BONUS LOST",
+          tone: .negative,
+          remainingMilliseconds: 920
+        ),
+        hasDetail: true,
+        semanticColor: color(0xFF6A46)
+      ),
+      ReactionCase(
+        name: "touchdown without bonus detail",
+        feedback: PlayFeedback(
+          headline: "TOUCHDOWN +2,500",
+          detail: "",
+          tone: .touchdown,
+          remainingMilliseconds: 1_050
+        ),
+        hasDetail: false,
+        semanticColor: color(0xF4BC35)
+      ),
+      ReactionCase(
+        name: "maximum two-line touchdown",
+        feedback: PlayFeedback(
+          headline: "TOUCHDOWN +16,500",
+          detail: "TD BONUS  •  STREAK x3",
+          tone: .touchdown,
+          remainingMilliseconds: 1_050
+        ),
+        hasDetail: true,
+        semanticColor: color(0xF4BC35)
+      ),
+    ]
+
+    for reactionCase in cases {
+      let hud = BroadcastHUDNode(
+        layout: layout,
+        textureLibrary: TextureLibrary(),
+        feedbackAnnouncementHandler: { _ in }
+      )
+      hud.update(
+        presentation: playingHUDPresentation(),
+        feedback: reactionCase.feedback,
+        isMuted: false,
+        reducedMotion: false
+      )
+
+      let scoreBug = try XCTUnwrap(hud.childNode(withName: "scoreBug"))
+      let reaction = try XCTUnwrap(hud.childNode(withName: "scoreReaction"))
+      let expectedFrame = layout.feedbackFrame(hasDetail: reactionCase.hasDetail)
+      XCTAssertEqual(scoreBug.zPosition, 10, reactionCase.name)
+      XCTAssertEqual(reaction.zPosition, 9, reactionCase.name)
+      XCTAssertFalse(reaction.isAccessibilityElement, reactionCase.name)
+      XCTAssertTrue(reaction.accessibilityElementsHidden, reactionCase.name)
+      XCTAssertEqual(reaction.xScale, 1, accuracy: 0.000_001, reactionCase.name)
+      XCTAssertEqual(reaction.yScale, 1, accuracy: 0.000_001, reactionCase.name)
+      XCTAssertEqual(reaction.position.x, expectedFrame.midX, accuracy: 0.001)
+      XCTAssertEqual(
+        reaction.position.y,
+        expectedFrame.midY - 4 / layout.displayScale,
+        accuracy: 0.000_001,
+        reactionCase.name
+      )
+
+      let steel = try XCTUnwrap(reaction.childNode(withName: "scoreReaction.steel") as? SKShapeNode)
+      let body = try XCTUnwrap(reaction.childNode(withName: "scoreReaction.body") as? SKShapeNode)
+      let shadow = try XCTUnwrap(
+        reaction.childNode(withName: "scoreReaction.shadow") as? SKShapeNode
+      )
+      let rail = try XCTUnwrap(
+        reaction.childNode(withName: "scoreReaction.semanticRail") as? SKShapeNode
+      )
+      assertColor(steel.fillColor, equals: color(0x354157), message: reactionCase.name)
+      assertColor(body.fillColor, equals: color(0x07101F), message: reactionCase.name)
+      assertColor(rail.strokeColor, equals: reactionCase.semanticColor, message: reactionCase.name)
+      XCTAssertEqual(
+        rail.lineWidth * layout.displayScale,
+        2,
+        accuracy: 0.000_001,
+        reactionCase.name
+      )
+      let steelBounds = try XCTUnwrap(steel.path?.boundingBox)
+      let shadowBounds = try XCTUnwrap(shadow.path?.boundingBox)
+      XCTAssertEqual(
+        steelBounds.width * layout.displayScale,
+        expectedFrame.width * layout.displayScale,
+        accuracy: 0.001,
+        reactionCase.name
+      )
+      XCTAssertEqual(
+        steelBounds.height * layout.displayScale,
+        expectedFrame.height * layout.displayScale,
+        accuracy: 0.001,
+        reactionCase.name
+      )
+      XCTAssertGreaterThan(shadowBounds.maxX, steelBounds.maxX, reactionCase.name)
+      XCTAssertLessThan(shadowBounds.minY, steelBounds.minY, reactionCase.name)
+      XCTAssertNotNil(reaction.childNode(withName: "scoreReaction.teamBorder"), reactionCase.name)
+
+      let headlineRoot = try XCTUnwrap(reaction.childNode(withName: "scoreReaction.headline"))
+      let headline = try foregroundLabel(in: headlineRoot)
+      assertColor(headline.fontColor, equals: reactionCase.semanticColor, message: reactionCase.name)
+      XCTAssertGreaterThanOrEqual(
+        headline.fontSize * headlineRoot.xScale * layout.displayScale,
+        15,
+        reactionCase.name
+      )
+
+      let detailRoot = reaction.childNode(withName: "scoreReaction.detail")
+      XCTAssertEqual(detailRoot != nil, reactionCase.hasDetail, reactionCase.name)
+      if let detailRoot {
+        let detail = try foregroundLabel(in: detailRoot)
+        assertColor(detail.fontColor, equals: color(0xF4EAD4), message: reactionCase.name)
+        XCTAssertGreaterThanOrEqual(
+          detail.fontSize * detailRoot.xScale * layout.displayScale,
+          12,
+          reactionCase.name
+        )
+      } else {
+        XCTAssertEqual(headlineRoot.position.y, 0, accuracy: 0.000_001, reactionCase.name)
+      }
+
+      let reveal = try XCTUnwrap(
+        reaction.action(forKey: BroadcastHUDNode.feedbackRevealActionKey)
+      )
+      XCTAssertEqual(reveal.duration, 0.14, accuracy: 0.000_001, reactionCase.name)
+    }
+  }
+
+  @MainActor
+  func testScoreReactionReducedMotionUsesDissolveAndSettlesWithoutReplay() throws {
+    let layout = HUDLayout()
+    var announcements: [String] = []
+    let hud = BroadcastHUDNode(
+      layout: layout,
+      textureLibrary: TextureLibrary(),
+      feedbackAnnouncementHandler: { announcements.append($0) }
+    )
+    let feedback = PlayFeedback(
+      headline: "TOUCHDOWN +2,500",
+      detail: "",
+      tone: .touchdown,
+      remainingMilliseconds: 1_050
+    )
+
+    hud.update(
+      presentation: playingHUDPresentation(),
+      feedback: feedback,
+      isMuted: false,
+      reducedMotion: true
+    )
+    let reaction = try XCTUnwrap(hud.childNode(withName: "scoreReaction"))
+    let expectedPosition = CGPoint(
+      x: layout.feedbackOneLineFrame.midX,
+      y: layout.feedbackOneLineFrame.midY
+    )
+    XCTAssertEqual(reaction.position.x, expectedPosition.x, accuracy: 0.001)
+    XCTAssertEqual(reaction.position.y, expectedPosition.y, accuracy: 0.001)
+    XCTAssertEqual(reaction.xScale, 1, accuracy: 0.000_001)
+    XCTAssertEqual(reaction.yScale, 1, accuracy: 0.000_001)
+    XCTAssertEqual(
+      try XCTUnwrap(reaction.action(forKey: BroadcastHUDNode.feedbackRevealActionKey)).duration,
+      0.08,
+      accuracy: 0.000_001
+    )
+    XCTAssertEqual(announcements, ["TOUCHDOWN +2,500"])
+
+    hud.update(
+      presentation: playingHUDPresentation(),
+      feedback: feedback,
+      isMuted: false,
+      reducedMotion: false
+    )
+    XCTAssertNil(reaction.action(forKey: BroadcastHUDNode.feedbackRevealActionKey))
+    XCTAssertEqual(reaction.position.x, expectedPosition.x, accuracy: 0.001)
+    XCTAssertEqual(reaction.position.y, expectedPosition.y, accuracy: 0.001)
+    XCTAssertEqual(reaction.alpha, 1, accuracy: 0.000_001)
+    XCTAssertEqual(reaction.xScale, 1, accuracy: 0.000_001)
+    XCTAssertEqual(announcements, ["TOUCHDOWN +2,500"])
+  }
+
+  @MainActor
+  func testScoreReactionAnnouncesEachResolvedPlayOnceIncludingRepeatedCopy() {
+    let layout = HUDLayout()
+    var announcements: [String] = []
+    let hud = BroadcastHUDNode(
+      layout: layout,
+      textureLibrary: TextureLibrary(),
+      feedbackAnnouncementHandler: { announcements.append($0) }
+    )
+    let presentation = playingHUDPresentation()
+    let initial = PlayFeedback(
+      headline: "TOUCHDOWN +16,500",
+      detail: "TD BONUS  •  STREAK x3",
+      tone: .touchdown,
+      remainingMilliseconds: 1_050
+    )
+
+    hud.update(
+      presentation: presentation,
+      feedback: initial,
+      isMuted: false,
+      reducedMotion: false
+    )
+    var countingDown = initial
+    countingDown.remainingMilliseconds = 900
+    var pausedState = GameState()
+    pausedState.phase = .paused
+    hud.update(
+      presentation: HUDPresentation(state: pausedState),
+      feedback: countingDown,
+      isMuted: false,
+      reducedMotion: false
+    )
+    XCTAssertTrue(hud.childNode(withName: "scoreReaction")?.isHidden == true)
+    hud.update(
+      presentation: presentation,
+      feedback: countingDown,
+      isMuted: false,
+      reducedMotion: false
+    )
+    XCTAssertTrue(hud.childNode(withName: "scoreReaction")?.isHidden == false)
+    hud.update(
+      presentation: presentation,
+      feedback: initial,
+      isMuted: false,
+      reducedMotion: false
+    )
+    hud.update(
+      presentation: presentation,
+      feedback: nil,
+      isMuted: false,
+      reducedMotion: false
+    )
+    hud.update(
+      presentation: presentation,
+      feedback: initial,
+      isMuted: false,
+      reducedMotion: false
+    )
+
+    XCTAssertEqual(
+      announcements,
+      [
+        "TOUCHDOWN +16,500. TD BONUS, STREAK x3",
+        "TOUCHDOWN +16,500. TD BONUS, STREAK x3",
+        "TOUCHDOWN +16,500. TD BONUS, STREAK x3",
+      ]
+    )
+    XCTAssertFalse(announcements.contains(where: { $0.contains("0 points") }))
+  }
+
   @MainActor
   func testCompactHUDUsesFullSizeTouchTargetsWithoutGrowingTheArtwork() {
     let viewport = GameViewport(
@@ -1026,6 +1456,69 @@ final class GameCoreTests: XCTestCase {
     XCTAssertTrue(path.contains(CGPoint(x: frame.maxX - 0.5, y: frame.midY)))
     XCTAssertFalse(path.contains(CGPoint(x: frame.minX + 0.5, y: frame.maxY - 0.5)))
     XCTAssertFalse(path.contains(CGPoint(x: frame.maxX - 0.5, y: frame.minY + 0.5)))
+  }
+
+  private func playingHUDPresentation() -> HUDPresentation {
+    var state = GameState()
+    state.phase = .playing
+    return HUDPresentation(state: state)
+  }
+
+  @MainActor
+  private func foregroundLabel(in labelRoot: SKNode) throws -> SKLabelNode {
+    try XCTUnwrap(
+      labelRoot.children
+        .compactMap { $0 as? SKLabelNode }
+        .first(where: { $0.zPosition == 1 })
+    )
+  }
+
+  private func color(_ value: UInt32) -> UIColor {
+    UIColor(
+      red: CGFloat((value >> 16) & 0xff) / 255,
+      green: CGFloat((value >> 8) & 0xff) / 255,
+      blue: CGFloat(value & 0xff) / 255,
+      alpha: 1
+    )
+  }
+
+  private func assertColor(
+    _ actual: UIColor?,
+    equals expected: UIColor,
+    message: String,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    guard let actual else {
+      XCTFail("Missing color: \(message)", file: file, line: line)
+      return
+    }
+    var actualRed: CGFloat = 0
+    var actualGreen: CGFloat = 0
+    var actualBlue: CGFloat = 0
+    var actualAlpha: CGFloat = 0
+    var expectedRed: CGFloat = 0
+    var expectedGreen: CGFloat = 0
+    var expectedBlue: CGFloat = 0
+    var expectedAlpha: CGFloat = 0
+    guard actual.getRed(
+      &actualRed,
+      green: &actualGreen,
+      blue: &actualBlue,
+      alpha: &actualAlpha
+    ), expected.getRed(
+      &expectedRed,
+      green: &expectedGreen,
+      blue: &expectedBlue,
+      alpha: &expectedAlpha
+    ) else {
+      XCTFail("Unable to resolve color components: \(message)", file: file, line: line)
+      return
+    }
+    XCTAssertEqual(actualRed, expectedRed, accuracy: 0.001, message, file: file, line: line)
+    XCTAssertEqual(actualGreen, expectedGreen, accuracy: 0.001, message, file: file, line: line)
+    XCTAssertEqual(actualBlue, expectedBlue, accuracy: 0.001, message, file: file, line: line)
+    XCTAssertEqual(actualAlpha, expectedAlpha, accuracy: 0.001, message, file: file, line: line)
   }
 }
 
