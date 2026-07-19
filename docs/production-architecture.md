@@ -4,12 +4,13 @@ Status: implementation contract for version 1
 
 Last updated: 2026-07-18
 
-Implementation baseline: `0971f9b`, the layered team-field asset integration,
-including the explicit gameplay-presentation bridge, online-only commerce
-composition, canonical V4 cloud-profile seed, and StoreKit, player-scoped Game
-Center, and rewarded-ad foundations. The layered field files are bundled and
-manifested; gameplay continues to use the neutral compatibility plate until a
-Technical renderer handoff activates the registered layer stack.
+Implementation baseline: `3ed7598`, the combined Art and Technical gameplay
+presentation integration, including the active layered team-field renderer,
+refined paused-run controls, explicit gameplay-presentation bridge, online-only
+commerce composition, canonical V4 cloud-profile seed, and StoreKit,
+player-scoped Game Center, and rewarded-ad foundations. Gameplay renders the
+registered neutral base, selected-team paint, and universal markings before
+placing actors and the HUD above the field stack.
 
 This document translates the approved release charter into ownership and data
 boundaries. It is deliberately narrower than a feature specification: it says

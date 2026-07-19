@@ -56,16 +56,23 @@ an unsigned generic-iOS Release archive passed. The archived app contains the
 compiled 120-pixel iPhone and 152-pixel iPad icons, the privacy manifest, and
 the exact GameAssets package without source-art or documentation content.
 
-The approved layered team-field assets submitted at `cc029c3` are integrated
-patch-equivalently at `0971f9b` (`Art: add layered team field system`). The
-registered 1728 x 768 package contains one neutral field, universal markings,
-and transparent end-zone and midfield paint for all eight teams. The exact
-shipping manifest now declares 76 unique assets: 60 images and 16 audio files.
-The focused bundle-manifest test, exact 816-test simulator suite, deterministic
-field regeneration, independent asset and integration audits, and an unsigned
-generic-iOS Release archive all passed with no open P0-P3 finding. The existing
-neutral-plus-markings compatibility plate remains the gameplay renderer input;
-activating the layered stack requires a separate Technical handoff.
+The complete Art branch through `cc029c3` is merged at `ad2f50e` (`Merge latest
+Art direction`), preserving its submitted ancestry. It adds the paused gameplay
+status panel, fixes the Resume label shadow, removes the active-gameplay matchup
+capsule, refines the PAUSED/STATS header and confirmed END RUN flow, and supplies
+the registered 1728 x 768 layered field package. The exact shipping manifest
+declares 76 unique assets: 60 images and 16 audio files.
+
+The complete Technical branch through `04060b8` is merged at `3ed7598` (`Merge
+latest Technical direction`). Gameplay now renders the neutral stadium base,
+selected offense's transparent end-zone and midfield paint, and universal
+markings in registered order, with actors and the HUD above the field. The
+combined 44-test presentation/gameplay gate, 827-test simulator suite,
+deterministic field regeneration, independent integration and archive audits,
+Debug simulator build, and unsigned generic-iOS Release archive passed with no
+open P0-P3 finding. The verified Debug build is installed and launched on the
+iPhone 17 Pro simulator for owner testing. Compact-iPhone, regular-iPhone, and
+iPad paused-panel and field visual acceptance remains pending.
 
 Technical gameplay handoff `955a63e` is integrated patch-equivalently at
 `d5131cf` (`Expose explicit paused gameplay controls`). The PM bridge at
@@ -77,9 +84,8 @@ single `CompletedRun`; `AppCoordinator` remains the only settlement and
 navigation authority, including failure and retry. The focused 25-test gate,
 exact 816-test simulator suite, unsigned generic-iOS Release archive, and two
 independent audits passed with no open P0-P2 finding. The Art-owned paused panel
-is not integrated, so release acceptance is explicitly withheld until its
-compact-iPhone, regular-iPhone, and iPad landscape presentation is integrated
-and visually verified by PM.
+is now integrated through `ad2f50e`; multi-device landscape visual approval
+remains required before release acceptance.
 
 The dormant StoreKit runtime foundation is versioned at `ce69388` (`Add dormant
 StoreKit runtime coordination`), player-scoped Game Center persistence and
@@ -198,8 +204,8 @@ final codesigned entitlement payload; that remains a release-candidate gate.
 | Production app shell and menus                  | Complete            | Art-approved High Mesa main menu, teams, locker, store, leaderboard, achievements, settings-routed privacy/support, tutorial, gameplay, and results ship |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
-| Paused gameplay presentation                    | In progress         | Technical snapshot/actions and PM bridge pass; Art paused panel integration and compact-iPhone, regular-iPhone, and iPad landscape visual QA remain |
-| Layered team-field assets                       | In progress         | Registered neutral, universal-marking, and eight-team paint layers are bundled in the exact 76-asset manifest; Technical renderer activation and gameplay visual QA remain |
+| Paused gameplay presentation                    | In progress         | Refined Art panel and Technical/PM snapshot, Resume, and confirmed-exit actions are integrated and pass combined tests; compact-iPhone, regular-iPhone, and iPad landscape visual approval remains |
+| Layered team-field assets                       | In progress         | Registered neutral, universal-marking, and eight-team paint layers are bundled and actively rendered in exact order; multi-device gameplay visual approval remains |
 | Eight-team presentation system                  | Complete            | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, HUD palettes, raster recoloring, and preload readiness ship     |
 | Live Apple and advertising services             | In progress         | Cloud claim/hydration and online-only StoreKit composition are implemented and fail closed without complete configuration; permanent IDs, products, records, production schema, Game Center retention, authenticated ad transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
@@ -305,6 +311,10 @@ or runtime ownership boundaries.
 | 2026-07-18 | `0971f9b` | Layered team-field manifest and asset gate | Focused manifest test passed 1 of 1; 76 unique declared assets exactly match 76 physical resources (60 image, 16 audio); deterministic regeneration and independent asset/integration audits passed with no open P0-P3 finding |
 | 2026-07-18 | `0971f9b` | Exact integrated full simulator suite | 816 total: 815 passed, 0 failed, 1 existing conditional case-alias skip on iPhone 17 Pro; result bundle `/tmp/PocketVector-LayeredField-0971f9b-full.xcresult` |
 | 2026-07-18 | `0971f9b` | Unsigned generic-iOS Release archive | Passed at `/tmp/pocket-vector-release-archive-verified.uX4Sj4/PocketVector.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit condition, valid privacy manifest, and exact 76-asset GameAssets package verified; source art, tools, and repository documentation are absent |
+| 2026-07-18 | `3ed7598` | Full Art and Technical branch integration | Art head `cc029c3` merged at `ad2f50e`, then Technical head `04060b8` merged at `3ed7598`; combined 44-test presentation/gameplay gate passed, deterministic field regeneration produced no diff, and independent review found no open P0-P3 finding |
+| 2026-07-18 | `3ed7598` | Exact combined full simulator suite | 827 total: 826 passed, 0 failed, 1 existing conditional case-alias skip on iPhone 17 Pro; result bundle `/tmp/PocketVector-Combined-3ed7598-full.xcresult` |
+| 2026-07-18 | `3ed7598` | Combined unsigned generic-iOS Release archive | Passed at `/tmp/pocket-vector-combined-archive-3ed7598.ozYLrE/PocketVector.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit condition, valid privacy manifest, exact 76-asset package, and no bundled source art, tools, or documentation |
+| 2026-07-18 | `3ed7598` | Owner simulator build | Clean Debug simulator build passed and was installed without erasing app data on iPhone 17 Pro; `com.pocketvector.game` launched successfully for owner gameplay testing |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -429,13 +439,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the exact audited online-commerce, Championship app-icon, gameplay-bridge, and layered-field asset integrations; paused-panel Art QA and full release audit remain |
+| Known P0/P1 defects                  |      0 | 0 open in the exact audited combined Art/Technical gameplay integration; multi-device paused-panel/field visual approval and full release audit remain |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud history, initial publication, hydration, online-only catalog debit/ownership, and StoreKit durable delivery pass internal tests; external sandbox/device gates remain |
-| Clean-checkout archive               |   Pass | Unsigned archive for exact integrated implementation commit `0971f9b` passed; final codesigned entitlement/export proof remains |
+| Clean-checkout archive               |   Pass | Unsigned archive for exact integrated implementation commit `3ed7598` passed; final codesigned entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
