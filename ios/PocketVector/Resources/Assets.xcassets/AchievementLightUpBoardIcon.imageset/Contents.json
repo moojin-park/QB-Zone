@@ -1,0 +1,16 @@
+{
+  "images": [
+    {
+      "filename": "achievement-light-board-v1.png",
+      "idiom": "universal",
+      "scale": "1x"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  },
+  "properties": {
+    "compression-type": "lossless"
+  }
+}

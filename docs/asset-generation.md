@@ -230,6 +230,44 @@ these sizes cover the largest device-pixel slot without shipping multi-megabyte
 utility textures. Menu assets are validated through asset-catalog compilation
 and are not part of the exact `native-assets.json` inventory.
 
+## Championship submenu assets
+
+Editable masters for the neutral stadium plate, shared controls, eight
+achievement medals, and Settings icons live under:
+
+```text
+ios/AssetSources/Submenus/
+```
+
+The exact main-menu coin remains the only currency artwork and is consumed
+directly as `MenuCoinIcon`; the submenu generator does not duplicate or alter
+it. Team emblems, jersey previews, and football previews remain data-driven and
+are not baked into the neutral submenu assets.
+
+Runtime outputs are universal lossless PNG imagesets under:
+
+```text
+ios/PocketVector/Resources/Assets.xcassets/SubmenuStadiumBackdrop.imageset/
+ios/PocketVector/Resources/Assets.xcassets/Submenu*Icon.imageset/
+ios/PocketVector/Resources/Assets.xcassets/Achievement*Icon.imageset/
+ios/PocketVector/Resources/Assets.xcassets/Settings*Icon.imageset/
+```
+
+The backdrop is normalized to 2532 x 1170. Shared control icons are 144 px;
+achievement medals are 384 px; Settings panel icons are 192 px and row icons
+are 144 px. Nearest-neighbor reduction preserves the authored pixel edges and
+all outputs are stripped to deterministic 8-bit sRGB PNGs.
+
+Requirements: Node.js and ImageMagick.
+
+```bash
+node ios/Tools/generate-submenu-assets.mjs
+```
+
+These asset-catalog resources are outside `native-assets.json`. Validate them
+through JSON checks, asset-catalog compilation, simulator builds, and visual
+inspection on compact iPhone, regular iPhone, and iPad landscape.
+
 ## HUD control icons
 
 Sources:
