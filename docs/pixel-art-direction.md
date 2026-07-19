@@ -59,11 +59,17 @@ vector/material choice and stays attached to the player across teams.
 
 ## HUD and safe areas
 
-- Keep gameplay, matchup, score, clock, Adrenaline, pause, mute, and exit
-  controls inside the current device safe area.
+- Keep gameplay, score, clock, Adrenaline, pause, and mute controls inside the
+  current device safe area. Exit belongs only inside the paused gameplay panel.
 - Protect the central throwing lane and receiver crossing space.
-- Compact layouts must not overlap the matchup/exit chrome with the Adrenaline
-  meter or scorebug.
+- Do not add a separate matchup or team-name capsule during active gameplay;
+  the in-scene field treatment already communicates team identity.
+- Compact pause panels must remain inside the safe area without covering the
+  essential score or control readouts.
+- Center `PAUSED` in the panel with `STATS` directly beneath it; omit ornamental
+  header taglines that compete with the run information.
+- Exit confirmation must provide explicit `KEEP PLAYING` and `END RUN` actions
+  on every device class, with the paused controls inaccessible behind it.
 - Preserve visible texture-readiness and failure states; never hide a stalled
   preload behind an unresponsive scene.
 - Reduced motion must remove ornamental motion without changing simulation.

@@ -614,31 +614,121 @@ final class LaunchVisualIdentityTests: XCTestCase {
         )
     }
 
-    func testGameplayChromeMaximumFrameDoesNotCoverAdrenalineHUD() {
-        let compactLandscapeSizes = [
-            CGSize(width: 667, height: 375),
-            CGSize(width: 932, height: 430),
+    func testPausedGameplayResumeIssuesOneRequestPerPausedEpoch() {
+        var requestState = GameplayPauseRequestState()
+        var pausedState = GameState()
+        pausedState.phaseBeforePause = .playing
+        pausedState.phase = .paused
+        let pausedSnapshot = GameplaySceneSnapshot(state: pausedState)
+
+        requestState.receive(pausedSnapshot)
+        XCTAssertTrue(requestState.requestResume(whilePaused: true))
+        XCTAssertFalse(requestState.requestResume(whilePaused: true))
+        XCTAssertEqual(requestState.resumeRequestID, 1)
+
+        requestState.receive(pausedSnapshot)
+        XCTAssertFalse(requestState.requestResume(whilePaused: true))
+        XCTAssertEqual(requestState.resumeRequestID, 1)
+
+        var playingState = pausedState
+        playingState.phase = .playing
+        playingState.phaseBeforePause = nil
+        requestState.receive(GameplaySceneSnapshot(state: playingState))
+        requestState.receive(pausedSnapshot)
+
+        XCTAssertTrue(requestState.requestResume(whilePaused: true))
+        XCTAssertFalse(requestState.requestResume(whilePaused: true))
+        XCTAssertEqual(requestState.resumeRequestID, 2)
+    }
+
+    func testPausedGameplayConfirmedExitIsGatedAndExactOnce() {
+        var requestState = GameplayPauseRequestState()
+
+        XCTAssertFalse(requestState.requestConfirmedExit(whilePaused: false))
+        XCTAssertTrue(requestState.requestConfirmedExit(whilePaused: true))
+        XCTAssertFalse(requestState.requestConfirmedExit(whilePaused: true))
+        XCTAssertFalse(requestState.requestResume(whilePaused: true))
+        XCTAssertEqual(requestState.confirmedExitRequestID, 1)
+        XCTAssertTrue(requestState.confirmedExitRequestPending)
+    }
+
+    func testPausedGameplayExitConfirmationCancelLeavesRequestsUntouched() {
+        var confirmation = GameplayExitConfirmationState()
+        let requestState = GameplayPauseRequestState()
+
+        XCTAssertFalse(confirmation.present(whilePaused: false))
+        XCTAssertTrue(confirmation.present(whilePaused: true))
+        XCTAssertFalse(confirmation.present(whilePaused: true))
+        XCTAssertTrue(confirmation.isPresented)
+
+        confirmation.cancel()
+
+        XCTAssertFalse(confirmation.isPresented)
+        XCTAssertEqual(requestState.resumeRequestID, 0)
+        XCTAssertEqual(requestState.confirmedExitRequestID, 0)
+    }
+
+    func testPausedGameplayStatsUseSuccessfulCompletions() throws {
+        let statistics = RunStatistics(
+            attempts: 9,
+            completions: 4,
+            touchdowns: 2,
+            incompletions: 2,
+            interceptions: 1,
+            longestTouchdownStreak: 1
+        )
+        let liveStatistics = LiveGameplayStatisticsSnapshot(statistics: statistics)
+        let items = Dictionary(
+            uniqueKeysWithValues: GameplayPauseStatPresentation
+                .items(for: liveStatistics)
+                .map { ($0.id, $0.value) }
+        )
+
+        XCTAssertEqual(items[.attempts], "9")
+        XCTAssertEqual(items[.completions], "6")
+        XCTAssertEqual(items[.completionPercentage], "67%")
+        XCTAssertEqual(items[.touchdowns], "2")
+    }
+
+    func testPausedGameplayPanelFitsRepresentativeLandscapeSafeAreas() {
+        let scenarios: [(size: CGSize, expectedColumns: Int)] = [
+            (CGSize(width: 579, height: 354), 2),
+            (CGSize(width: 852, height: 409), 4),
+            (CGSize(width: 1_194, height: 834), 4),
         ]
 
-        for viewSize in compactLandscapeSizes {
-            let viewport = GameViewport(viewSize: viewSize, safeAreaInsets: .zero)
-            let layout = HUDLayout(
-                sceneSize: viewport.projection.sceneSize,
-                contentRect: viewport.safeSceneFrame,
-                metrics: .compact,
-                displayScale: viewport.pointsPerSceneUnit
+        for scenario in scenarios {
+            let layout = GameplayPauseLayout(availableSize: scenario.size)
+            XCTAssertEqual(layout.statColumnCount, scenario.expectedColumns)
+            XCTAssertGreaterThanOrEqual(layout.buttonHeight, 44)
+            XCTAssertLessThanOrEqual(
+                layout.panelWidth + (layout.outerMargin * 2),
+                scenario.size.width
             )
-            let scale = viewport.pointsPerSceneUnit
-            let adrenalineInViewCoordinates = CGRect(
-                x: layout.adrenalineFrame.minX * scale,
-                y: (GameProjection.logicalHeight - layout.adrenalineFrame.maxY) * scale,
-                width: layout.adrenalineFrame.width * scale,
-                height: layout.adrenalineFrame.height * scale
+            XCTAssertLessThanOrEqual(
+                layout.panelHeight + (layout.outerMargin * 2),
+                scenario.size.height
             )
-            let chrome = GameplayChromeLayout.maximumTopTrailingFrame(in: viewSize)
-            XCTAssertFalse(
-                adrenalineInViewCoordinates.intersects(chrome),
-                "Exit/matchup chrome must stay below the top HUD on \(viewSize)"
+        }
+    }
+
+    func testPausedGameplayExitConfirmationFitsRepresentativeLandscapeSafeAreas() {
+        let sizes = [
+            CGSize(width: 579, height: 354),
+            CGSize(width: 852, height: 409),
+            CGSize(width: 1_194, height: 834),
+        ]
+
+        for size in sizes {
+            let layout = GameplayExitConfirmationLayout(availableSize: size)
+            XCTAssertGreaterThanOrEqual(layout.buttonHeight, 44)
+            XCTAssertLessThanOrEqual(
+                layout.panelWidth + (layout.outerMargin * 2),
+                size.width
+            )
+            XCTAssertLessThanOrEqual(
+                layout.panelHeight + (layout.outerMargin * 2),
+                size.height
             )
         }
     }
