@@ -17,7 +17,6 @@ final class GameScene: SKScene {
         static let coral = UIColor(red: 1, green: 93 / 255, blue: 115 / 255, alpha: 1)
         static let gold = UIColor(red: 1, green: 209 / 255, blue: 102 / 255, alpha: 1)
         static let ice = UIColor(red: 239 / 255, green: 252 / 255, blue: 1, alpha: 1)
-        static let turf = UIColor(red: 25 / 255, green: 170 / 255, blue: 136 / 255, alpha: 1)
         static let leather = UIColor(red: 158 / 255, green: 67 / 255, blue: 40 / 255, alpha: 1)
         static let leatherLight = UIColor(red: 226 / 255, green: 122 / 255, blue: 69 / 255, alpha: 1)
         static let leatherDark = UIColor(red: 70 / 255, green: 23 / 255, blue: 19 / 255, alpha: 1)
@@ -27,6 +26,7 @@ final class GameScene: SKScene {
     let settings: PlayerSettings
 
     private let runVisuals: RunVisualIdentity
+    let fieldLayerStack: GameplayFieldLayerStack
     private var session: GameplaySession
     private let textures: TextureLibrary
     private let audio: GameAudioController
@@ -42,15 +42,14 @@ final class GameScene: SKScene {
     private var viewport = GameViewport.canonical
     private var stageIsBuilt = false
     private(set) var visualReadiness: GameSceneVisualReadiness = .preparing
-    private(set) var visualPreparationResult: UniformTexturePrewarmResult?
+    private(set) var visualPreparationResult: GameplayVisualPrewarmResult?
     private var visualPreparationTask: Task<Void, Never>?
 
     private var projection: GameProjection {
         viewport.projection
     }
 
-    private let fieldFillNode = SKSpriteNode()
-    private let fieldNode = SKSpriteNode()
+    private var fieldLayerNodes: [SKSpriteNode] = []
     private let sidelineEnvironmentNode = SidelineEnvironmentNode()
     private let actorLayer = SKNode()
     private let quarterbackNode = SKSpriteNode()
@@ -92,6 +91,9 @@ final class GameScene: SKScene {
         self.configuration = configuration
         self.settings = settings
         self.runVisuals = runVisuals
+        fieldLayerStack = GameplayFieldLayerStack(
+            offenseTeamID: configuration.offenseTeamID
+        )
         session = GameplaySession(configuration: configuration, settings: settings)
         self.textures = textures
         audio = GameAudioController(settings: settings)
@@ -112,6 +114,11 @@ final class GameScene: SKScene {
     }
 
     override func didMove(to view: SKView) {
+        cancelVisualPreparation()
+        visualReadiness = .preparing
+        visualPreparationResult = nil
+        previousUpdateTime = nil
+        stageIsBuilt = false
         view.ignoresSiblingOrder = true
         view.isMultipleTouchEnabled = false
         applyViewport(makeViewport(for: view), relayout: false)
@@ -338,12 +345,11 @@ final class GameScene: SKScene {
     }
 
     private func layoutStageForViewport() {
-        fieldFillNode.size = size
-        fieldFillNode.position = .zero
-        fieldNode.position = CGPoint(x: projection.centerX, y: 0)
+        for node in fieldLayerNodes {
+            node.position = CGPoint(x: projection.centerX, y: 0)
+        }
         sidelineEnvironmentNode.rebuild(
             for: projection,
-            offenseIdentity: runVisuals.offenseTeam,
             textures: textures
         )
         sidelineEnvironmentNode.isPaused = session.settings.reducedMotion
@@ -445,24 +451,24 @@ final class GameScene: SKScene {
     private func setupStage() {
         removeAllChildren()
         actorLayer.removeAllChildren()
+        fieldLayerNodes.removeAll(keepingCapacity: true)
         receiverNodes.removeAll(keepingCapacity: true)
         defenderNodes.removeAll(keepingCapacity: true)
 
-        fieldFillNode.color = Palette.turf
-        fieldFillNode.colorBlendFactor = 1
-        fieldFillNode.anchorPoint = .zero
-        fieldFillNode.zPosition = -1_001
-        addChild(fieldFillNode)
-
-        let fieldTexture = textures.texture("pixel/stadium-field-wide-endzone-v3.png")
-        if let fieldTexture {
-            fieldNode.texture = fieldTexture
-            fieldNode.size = fieldTexture.size()
-            fieldNode.anchorPoint = CGPoint(x: 0.5, y: 0)
-            fieldNode.zPosition = -1_000
-            addChild(fieldNode)
+        for (index, layer) in fieldLayerStack.orderedLayers.enumerated() {
+            let node = SKSpriteNode()
+            node.name = layer.nodeName
+            node.size = GameplayFieldLayerStack.textureSize
+            node.anchorPoint = CGPoint(x: 0.5, y: 0)
+            node.position = CGPoint(x: projection.centerX, y: 0)
+            node.xScale = 1
+            node.yScale = 1
+            node.zPosition = -1_000 + CGFloat(index)
+            fieldLayerNodes.append(node)
+            addChild(node)
         }
 
+        sidelineEnvironmentNode.name = "sideline.environment"
         sidelineEnvironmentNode.zPosition = -900
         addChild(sidelineEnvironmentNode)
 
@@ -604,10 +610,12 @@ final class GameScene: SKScene {
         let textures = textures
         let offensePalette = runVisuals.offenseUniform
         let defensePalette = runVisuals.defenseUniform
+        let fieldLayerStack = fieldLayerStack
         visualPreparationTask = Task { [weak self, textures] in
-            let result = await textures.prewarmRunUniformTextures(
+            let result = await textures.prewarmRunVisualTextures(
                 offensePalette: offensePalette,
-                defensePalette: defensePalette
+                defensePalette: defensePalette,
+                fieldLayerStack: fieldLayerStack
             )
             guard !Task.isCancelled, let self else { return }
             finishVisualPreparation(result)
@@ -619,13 +627,13 @@ final class GameScene: SKScene {
         visualPreparationTask = nil
     }
 
-    private func finishVisualPreparation(_ result: UniformTexturePrewarmResult) {
+    private func finishVisualPreparation(_ result: GameplayVisualPrewarmResult) {
         visualPreparationResult = result
         visualPreparationTask = nil
-        guard result.isComplete else {
+        guard result.isComplete, installFieldLayerTextures() else {
             visualReadiness = .failed
             showVisualReadinessOverlay(.failed)
-            assertionFailure("Every run animation texture must be available before countdown")
+            assertionFailure("Every run visual texture must be available before countdown")
             return
         }
 
@@ -648,6 +656,26 @@ final class GameScene: SKScene {
             audio.play(.countdown)
         }
         renderFrame()
+    }
+
+    private func installFieldLayerTextures() -> Bool {
+        let layers = fieldLayerStack.orderedLayers
+        let fieldTextures = layers.compactMap { layer in
+            textures.texture(layer.relativePath)
+        }
+        guard fieldTextures.count == layers.count,
+              fieldTextures.allSatisfy({
+                  $0.size() == GameplayFieldLayerStack.textureSize
+              }),
+              fieldLayerNodes.count == layers.count else {
+            return false
+        }
+
+        for (node, texture) in zip(fieldLayerNodes, fieldTextures) {
+            node.texture = texture
+            node.size = texture.size()
+        }
+        return true
     }
 
     private func showVisualReadinessOverlay(_ readiness: GameSceneVisualReadiness) {
@@ -689,7 +717,7 @@ final class GameScene: SKScene {
 
         let detail = makeLabel(
             readiness == .preparing
-                ? "Preparing team uniforms…"
+                ? "Preparing matchup visuals…"
                 : "Return home and try this run again.",
             fontName: "AvenirNext-DemiBold",
             fontSize: 20,

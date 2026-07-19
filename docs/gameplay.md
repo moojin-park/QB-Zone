@@ -52,6 +52,20 @@ completion path but marks the run abandoned and ineligible for rewards.
 The deterministic core does not know about SwiftUI navigation, persistence,
 coins, Game Center, StoreKit, ads, or telemetry.
 
+## Field presentation
+
+Gameplay renders four registered 1728 x 768 field textures in this order:
+the neutral stadium base, the selected offense team's end-zone paint, that
+team's flat midfield branding, and the shared field markings. All four use the
+same bottom-center anchor, unit scale, and viewport-centered origin. They are
+part of visual readiness, so the countdown cannot begin until the complete
+field stack and run-uniform textures have preloaded.
+
+The neutral base owns the grass, stadium, sidelines, and baked goalpost.
+SpriteKit adds only retained gameplay elements such as pylons, officials,
+characters, effects, and HUD above the field stack. Team field presentation is
+cosmetic and never changes projection, collision, scoring, or input authority.
+
 ## Outcomes
 
 A throw resolves exactly once as a completion, touchdown, incompletion, or

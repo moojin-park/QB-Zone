@@ -1,5 +1,6 @@
 import Foundation
 import SpriteKit
+import UIKit
 import XCTest
 
 @testable import PocketVector
@@ -734,6 +735,208 @@ final class LaunchVisualIdentityTests: XCTestCase {
     }
 
     @MainActor
+    func testAllEightGameplayFieldStacksResolveAndPreloadInExactOrder() async throws {
+        let catalog = LaunchCatalog.approved
+        let preloader = RecordingUniformTexturePreloader()
+        let library = TextureLibrary(uniformTexturePreloader: preloader)
+        var endZonePaths = Set<String>()
+        var brandingPaths = Set<String>()
+
+        for team in catalog.teams {
+            let stack = GameplayFieldLayerStack(offenseTeamID: team.id)
+            let layers = stack.orderedLayers
+            XCTAssertEqual(
+                layers.map(\.kind),
+                [.neutralBase, .endZone, .fieldBranding, .markings]
+            )
+            XCTAssertEqual(
+                layers.map(\.relativePath),
+                [
+                    "pixel/stadium-field-neutral-v1.png",
+                    "pixel/teams/\(team.id.rawValue)/end-zone.png",
+                    "pixel/teams/\(team.id.rawValue)/field-branding.png",
+                    "pixel/field-markings-v1.png",
+                ]
+            )
+            endZonePaths.insert(layers[1].relativePath)
+            brandingPaths.insert(layers[2].relativePath)
+
+            for layer in layers {
+                let url = try XCTUnwrap(GameAssetResources.url(for: layer.relativePath))
+                let image = try XCTUnwrap(UIImage(contentsOfFile: url.path))
+                let cgImage = try XCTUnwrap(image.cgImage)
+                XCTAssertEqual(cgImage.width, 1_728, layer.relativePath)
+                XCTAssertEqual(cgImage.height, 768, layer.relativePath)
+            }
+
+            let result = await library.prewarmGameplayFieldTextures(stack)
+            XCTAssertEqual(result.requestedCount, 4)
+            XCTAssertEqual(result.loadedCount, 4)
+            XCTAssertEqual(result.preloadedCount, 4)
+            XCTAssertTrue(result.isComplete)
+        }
+
+        XCTAssertEqual(endZonePaths.count, 8)
+        XCTAssertEqual(brandingPaths.count, 8)
+        XCTAssertEqual(
+            preloader.invocationCount,
+            18,
+            "Two shared layers preload once and each team contributes two unique layers"
+        )
+    }
+
+    @MainActor
+    func testRunVisualReadinessCombinesUniformAndFieldPreloads() async throws {
+        let palettes = try launchUniformPalettes()
+        let preloader = RecordingUniformTexturePreloader()
+        let library = TextureLibrary(
+            uniformTexturePreparer: SyntheticUniformTexturePreparer(),
+            uniformTexturePreloader: preloader
+        )
+        let stack = GameplayFieldLayerStack(offenseTeamID: LaunchTeamID.novaCityComets)
+
+        let result = await library.prewarmRunVisualTextures(
+            offensePalette: palettes.offense,
+            defensePalette: palettes.defense,
+            fieldLayerStack: stack
+        )
+
+        XCTAssertEqual(result.requestedCount, 38)
+        XCTAssertEqual(result.preparedCount, 38)
+        XCTAssertEqual(result.preloadedCount, 38)
+        XCTAssertEqual(result.field.requestedCount, 4)
+        XCTAssertEqual(result.field.loadedCount, 4)
+        XCTAssertEqual(result.field.preloadedCount, 4)
+        XCTAssertTrue(result.isComplete)
+        XCTAssertEqual(preloader.invocationCount, 38)
+
+        let cached = await library.prewarmRunVisualTextures(
+            offensePalette: palettes.offense,
+            defensePalette: palettes.defense,
+            fieldLayerStack: stack
+        )
+        XCTAssertTrue(cached.isComplete)
+        XCTAssertEqual(cached.preloadedCount, 38)
+        XCTAssertEqual(preloader.invocationCount, 38)
+    }
+
+    @MainActor
+    func testMissingTeamFieldLayersFailVisualReadinessClosed() async {
+        let preloader = RecordingUniformTexturePreloader()
+        let library = TextureLibrary(uniformTexturePreloader: preloader)
+        let result = await library.prewarmGameplayFieldTextures(
+            GameplayFieldLayerStack(offenseTeamID: TeamID("missing_field_team"))
+        )
+
+        XCTAssertEqual(result.requestedCount, 4)
+        XCTAssertEqual(result.loadedCount, 2)
+        XCTAssertEqual(result.preloadedCount, 2)
+        XCTAssertFalse(result.isComplete)
+    }
+
+    @MainActor
+    func testCancellationDuringFieldPreloadSerializesAndRetryCompletes() async throws {
+        let firstTextureStarted = VisualLifecycleReceipt(
+            "First gameplay field texture preload started"
+        )
+        let preloader = FirstTextureGatePreloader(firstStarted: firstTextureStarted)
+        let library = TextureLibrary(uniformTexturePreloader: preloader)
+        let stack = GameplayFieldLayerStack(offenseTeamID: LaunchTeamID.novaCityComets)
+
+        let cancelledTask = Task { @MainActor in
+            await library.prewarmGameplayFieldTextures(stack)
+        }
+        await fulfillment(of: [firstTextureStarted.expectation], timeout: 5)
+        cancelledTask.cancel()
+
+        let retryEntered = VisualLifecycleReceipt("Field retry entered TextureLibrary")
+        let retryTask = Task { @MainActor in
+            retryEntered.record()
+            return await library.prewarmGameplayFieldTextures(stack)
+        }
+        await fulfillment(of: [retryEntered.expectation], timeout: 5)
+        preloader.releaseFirstTexture()
+
+        let cancelledResult = await cancelledTask.value
+        let retryResult = await retryTask.value
+        XCTAssertEqual(cancelledResult.loadedCount, 4)
+        XCTAssertEqual(cancelledResult.preloadedCount, 1)
+        XCTAssertFalse(cancelledResult.isComplete)
+        XCTAssertTrue(retryResult.isComplete)
+        XCTAssertEqual(retryResult.preloadedCount, 4)
+        XCTAssertEqual(preloader.invocationCount, 4)
+        XCTAssertEqual(preloader.maximumConcurrentInvocationCount, 1)
+    }
+
+    @MainActor
+    func testFieldLayersKeepLegacyPlateRegistrationAcrossLandscapeViewports() throws {
+        let viewSizes = [
+            CGSize(width: 667, height: 375),
+            CGSize(width: 932, height: 430),
+            CGSize(width: 1_366, height: 1_024),
+        ]
+
+        for viewSize in viewSizes {
+            let configuration = try launchRunConfiguration()
+            let scene = GameScene(
+                size: GameProjection.classicSceneSize,
+                configuration: configuration,
+                settings: PlayerSettings(isMuted: true, reducedMotion: true),
+                textures: TextureLibrary(
+                    uniformTexturePreparer: SyntheticUniformTexturePreparer()
+                ),
+                onCompletedRun: { _ in }
+            )
+            let view = SKView(frame: CGRect(origin: .zero, size: viewSize))
+            let expectedViewport = GameViewport(
+                viewSize: viewSize,
+                safeAreaInsets: .zero
+            )
+
+            scene.didMove(to: view)
+            XCTAssertEqual(
+                scene.fieldLayerStack.offenseTeamID,
+                configuration.offenseTeamID
+            )
+            for (index, layer) in scene.fieldLayerStack.orderedLayers.enumerated() {
+                let node = try XCTUnwrap(
+                    scene.childNode(withName: "//\(layer.nodeName)") as? SKSpriteNode
+                )
+                XCTAssertEqual(node.anchorPoint, CGPoint(x: 0.5, y: 0))
+                XCTAssertEqual(node.size, GameplayFieldLayerStack.textureSize)
+                XCTAssertEqual(
+                    node.position.x,
+                    expectedViewport.projection.centerX,
+                    accuracy: 0.000_1
+                )
+                XCTAssertEqual(node.position.y, 0, accuracy: 0.000_1)
+                XCTAssertEqual(node.xScale, 1)
+                XCTAssertEqual(node.yScale, 1)
+                XCTAssertEqual(node.zPosition, -1_000 + CGFloat(index))
+            }
+            scene.willMove(from: view)
+        }
+    }
+
+    @MainActor
+    func testSidelineEnvironmentRetainsOnlyPylonsAndOfficials() {
+        let environment = SidelineEnvironmentNode()
+        environment.rebuild(
+            for: GameProjection(viewportWidth: GameProjection.maximumFieldArtWidth),
+            textures: TextureLibrary()
+        )
+        let childNames = environment.children.compactMap(\.name)
+
+        XCTAssertEqual(childNames.filter { $0.hasPrefix("sideline.pylon.") }.count, 4)
+        XCTAssertEqual(childNames.filter { $0.hasPrefix("sideline.official.") }.count, 2)
+        XCTAssertTrue(
+            childNames.allSatisfy {
+                $0.hasPrefix("sideline.pylon.") || $0.hasPrefix("sideline.official.")
+            }
+        )
+    }
+
+    @MainActor
     func testFiniteRunTextureSetPrewarmsBeforeGameplay() async throws {
         XCTAssertEqual(TextureLibrary.offenseUniformPaths.count, 24)
         XCTAssertEqual(TextureLibrary.defenseUniformPaths.count, 10)
@@ -1047,8 +1250,50 @@ final class LaunchVisualIdentityTests: XCTestCase {
         XCTAssertNil(scene.childNode(withName: "//visualReadiness.loading"))
         let result = try XCTUnwrap(scene.visualPreparationResult)
         XCTAssertTrue(result.isComplete)
-        XCTAssertEqual(result.preloadedCount, 34)
+        XCTAssertEqual(result.preloadedCount, 38)
+        XCTAssertEqual(result.field.preloadedCount, 4)
         XCTAssertLessThan(result.mainActorInstallationDurationMilliseconds, 16.67)
+
+        for layer in scene.fieldLayerStack.orderedLayers {
+            let node = try XCTUnwrap(
+                scene.childNode(withName: "//\(layer.nodeName)") as? SKSpriteNode
+            )
+            XCTAssertNotNil(node.texture)
+        }
+
+        scene.willMove(from: view)
+        scene.didMove(to: view)
+        XCTAssertEqual(scene.visualReadiness, .preparing)
+        XCTAssertNil(scene.visualPreparationResult)
+        for layer in scene.fieldLayerStack.orderedLayers {
+            let node = try XCTUnwrap(
+                scene.childNode(withName: "//\(layer.nodeName)") as? SKSpriteNode
+            )
+            XCTAssertNil(node.texture)
+        }
+        scene.update(0)
+        for step in 1 ... 31 {
+            scene.update(TimeInterval(step) / 10)
+        }
+        XCTAssertFalse(
+            scene.pause(),
+            "A remount must not advance countdown before rebuilt field nodes are ready"
+        )
+
+        let remountDeadline = ProcessInfo.processInfo.systemUptime + 8
+        while scene.visualReadiness == .preparing,
+              ProcessInfo.processInfo.systemUptime < remountDeadline {
+            await Task.yield()
+        }
+        XCTAssertEqual(scene.visualReadiness, .ready)
+        XCTAssertEqual(scene.visualPreparationResult?.preloadedCount, 38)
+        for layer in scene.fieldLayerStack.orderedLayers {
+            let node = try XCTUnwrap(
+                scene.childNode(withName: "//\(layer.nodeName)") as? SKSpriteNode
+            )
+            XCTAssertNotNil(node.texture)
+        }
+        scene.willMove(from: view)
     }
 
     private func launchUniformPalettes() throws -> (
