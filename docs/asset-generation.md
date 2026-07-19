@@ -8,12 +8,12 @@ are intentionally kept outside that bundle.
 ## Inventory contract
 
 `ios/PocketVector/Resources/GameAssets/native-assets.json` declares the exact
-runtime inventory and its source provenance. The manifest contains 144 assets:
+runtime inventory and its source provenance. The manifest contains 620 assets:
 
 - 3 native control PNGs;
 - 16 WAV audio files;
-- 106 lossless character WebPs: 38 shared/fallback frames and 68 baked Nova
-  City Comets primary/alternate uniform frames;
+- 582 lossless character WebPs: 38 shared/fallback frames and 544 baked
+  primary/alternate uniform frames for all eight launch teams;
 - 1 compatibility stadium field PNG;
 - 1 neutral stadium/turf PNG;
 - 1 universal field-markings PNG;
@@ -35,12 +35,15 @@ ios/AssetSources/PixelCharacters/defender-strip.png
 ios/AssetSources/PixelCharacters/official-strip.png
 ```
 
-Approved baked Nova City Comets source strips:
+Approved baked launch-team source strips:
 
 ```text
-ios/AssetSources/PixelCharacters/teams/nova_city_comets/primary/{qb,receiver,defender}-strip.png
-ios/AssetSources/PixelCharacters/teams/nova_city_comets/alternate/{qb,receiver,defender}-strip.png
+ios/AssetSources/PixelCharacters/teams/<team-id>/primary/{qb,receiver,defender}-strip.png
+ios/AssetSources/PixelCharacters/teams/<team-id>/alternate/{qb,receiver,defender}-strip.png
 ```
+
+The eight valid `<team-id>` values and their palettes are documented in
+`ios/AssetSources/PixelCharacters/teams/README.md`.
 
 The processor validates nonempty equal-width slots, shared per-role scale,
 nearest-neighbor palette preservation, transparent padding, lossless WebP
@@ -65,8 +68,9 @@ Review every binary diff before committing.
 
 Team-specific baked sets use the same processor in `--uniform-only` mode. That
 mode emits exactly 34 QB, receiver, and defender frames and intentionally omits
-the four universal official frames. Generate each set into its catalog-backed
-asset prefix:
+the four universal official frames. Generate every primary and alternate set
+into its catalog-backed asset prefix. Nova City is shown as the concrete
+example:
 
 ```bash
 python3 ios/Tools/process-pixel-character-strips.py \
@@ -86,11 +90,12 @@ python3 ios/Tools/process-pixel-character-strips.py \
   --force
 ```
 
-Both directories contain lossless 384 x 512 WebPs anchored at `[192, 496]`.
-They preserve fully authored team materials and must be loaded without runtime
-uniform projection. The shared 38-frame set remains as the transitional
-fallback for teams whose baked sets have not yet been authored. Technical owns
-team/jersey routing and the projection-bypass behavior.
+All 16 team/uniform directories contain lossless 384 x 512 WebPs anchored at
+`[192, 496]`. Together they add 544 baked frames and approximately 25.14 MiB to
+the checked-in resource bundle. They preserve fully authored team materials
+and must be loaded without runtime uniform projection. The shared 38-frame set
+remains an emergency/development fallback rather than launch-team presentation.
+Technical owns team/jersey routing and the projection-bypass behavior.
 
 ## Stadium field
 

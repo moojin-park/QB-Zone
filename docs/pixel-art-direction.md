@@ -38,8 +38,9 @@ team-specific uniform sets author jersey, pants, helmet, trim, and sock colors
 directly into the source art and must be loaded without runtime recoloring,
 tinting, or semantic masks. Transparent padding, skin details, authored
 shading, helmet structure, and pose silhouettes remain independent materials.
-The shared generic set is a transitional fallback only for teams whose baked
-sets have not yet been authored.
+All eight launch teams have primary and alternate baked sets. The shared
+generic set is an emergency/development fallback only and is not approved as
+the launch presentation for any team.
 
 ## Field and ball
 
