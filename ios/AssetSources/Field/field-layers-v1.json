@@ -27,11 +27,16 @@
       "palette": { "primary": "#1DE6EF", "secondary": "#7D4DFF", "accent": "#F7FCFF" },
       "endZoneBackground": "secondary",
       "fieldPaintRole": "primary",
+      "fieldPaintColor": "#16D6C1",
       "emblem": [
-        { "type": "arc", "center": [0.47, 0.52], "radius": 0.36, "start": 198, "end": 354, "lineWidth": 0.07, "role": "primary" },
-        { "type": "polygon", "points": [[0.10, 0.68], [0.47, 0.47], [0.34, 0.74]], "role": "secondary" },
-        { "type": "disk", "center": [0.70, 0.34], "radius": 0.14, "role": "accent" },
-        { "type": "ring", "center": [0.70, 0.34], "radius": 0.18, "lineWidth": 0.045, "role": "primary" }
+        { "type": "polygon", "points": [[0.05, 0.34], [0.54, 0.41], [0.63, 0.48], [0.24, 0.51]], "role": "primary" },
+        { "type": "polygon", "points": [[0.10, 0.57], [0.56, 0.51], [0.64, 0.56], [0.28, 0.68]], "role": "secondary" },
+        { "type": "polygon", "points": [[0.20, 0.76], [0.58, 0.59], [0.65, 0.61], [0.39, 0.82]], "role": "secondary" },
+        { "type": "arc", "center": [0.71, 0.49], "radius": 0.25, "start": 34, "end": 326, "lineWidth": 0.055, "role": "primary" },
+        { "type": "disk", "center": [0.71, 0.49], "radius": 0.135, "role": "accent" },
+        { "type": "ring", "center": [0.71, 0.49], "radius": 0.175, "lineWidth": 0.035, "role": "primary" },
+        { "type": "disk", "center": [0.18, 0.22], "radius": 0.026, "role": "accent" },
+        { "type": "disk", "center": [0.33, 0.27], "radius": 0.018, "role": "secondary" }
       ]
     },
     {
@@ -55,11 +60,14 @@
       "endZoneBackground": "secondary",
       "fieldPaintRole": "primary",
       "emblem": [
-        { "type": "polyline", "points": [[0.05, 0.49], [0.35, 0.49]], "lineWidth": 0.06, "role": "primary" },
-        { "type": "polygon", "points": [[0.36, 0.18], [0.36, 0.82], [0.70, 0.50]], "role": "secondary" },
-        { "type": "polyline", "points": [[0.70, 0.50], [0.95, 0.27]], "lineWidth": 0.045, "role": "accent" },
-        { "type": "polyline", "points": [[0.70, 0.50], [0.97, 0.50]], "lineWidth": 0.045, "role": "primary" },
-        { "type": "polyline", "points": [[0.70, 0.50], [0.95, 0.73]], "lineWidth": 0.045, "role": "accent" }
+        { "type": "polyline", "points": [[0.04, 0.50], [0.31, 0.50]], "lineWidth": 0.065, "role": "primary" },
+        { "type": "polyline", "points": [[0.34, 0.17], [0.34, 0.83], [0.70, 0.50], [0.34, 0.17]], "lineWidth": 0.05, "role": "secondary" },
+        { "type": "polyline", "points": [[0.34, 0.50], [0.48, 0.50], [0.34, 0.17]], "lineWidth": 0.035, "role": "secondary" },
+        { "type": "polyline", "points": [[0.48, 0.50], [0.34, 0.83]], "lineWidth": 0.035, "role": "secondary" },
+        { "type": "polygon", "points": [[0.37, 0.21], [0.47, 0.47], [0.37, 0.47]], "role": "secondary" },
+        { "type": "polygon", "points": [[0.37, 0.79], [0.47, 0.53], [0.37, 0.53]], "role": "secondary" },
+        { "type": "polyline", "points": [[0.70, 0.50], [0.96, 0.77]], "lineWidth": 0.055, "role": "primary" },
+        { "type": "polyline", "points": [[0.70, 0.50], [0.96, 0.23]], "lineWidth": 0.055, "role": "accent" }
       ]
     },
     {
@@ -70,13 +78,20 @@
       "endZoneBackground": "primary",
       "fieldPaintRole": "accent",
       "emblem": [
-        { "type": "ring", "center": [0.50, 0.50], "radius": 0.32, "lineWidth": 0.09, "role": "primary" },
-        { "type": "ring", "center": [0.50, 0.50], "radius": 0.18, "lineWidth": 0.05, "role": "secondary" },
-        { "type": "disk", "center": [0.50, 0.16], "radius": 0.045, "role": "accent" },
-        { "type": "disk", "center": [0.84, 0.50], "radius": 0.045, "role": "accent" },
-        { "type": "disk", "center": [0.50, 0.84], "radius": 0.045, "role": "accent" },
-        { "type": "disk", "center": [0.16, 0.50], "radius": 0.045, "role": "accent" },
-        { "type": "polygon", "points": [[0.50, 0.31], [0.69, 0.50], [0.50, 0.69], [0.31, 0.50]], "role": "secondary" }
+        { "type": "ring", "center": [0.50, 0.50], "radius": 0.34, "lineWidth": 0.075, "role": "primary" },
+        { "type": "ring", "center": [0.50, 0.50], "radius": 0.23, "lineWidth": 0.045, "role": "secondary" },
+        { "type": "arc", "center": [0.50, 0.50], "radius": 0.15, "start": 22, "end": 202, "lineWidth": 0.035, "role": "secondary" },
+        { "type": "arc", "center": [0.50, 0.50], "radius": 0.15, "start": 202, "end": 382, "lineWidth": 0.035, "role": "secondary" },
+        { "type": "roundedBar", "frame": [0.46, 0.81, 0.08, 0.15], "cornerRadius": 0.02, "role": "primary" },
+        { "type": "roundedBar", "frame": [0.46, 0.04, 0.08, 0.15], "cornerRadius": 0.02, "role": "primary" },
+        { "type": "roundedBar", "frame": [0.04, 0.46, 0.15, 0.08], "cornerRadius": 0.02, "role": "primary" },
+        { "type": "roundedBar", "frame": [0.81, 0.46, 0.15, 0.08], "cornerRadius": 0.02, "role": "primary" },
+        { "type": "disk", "center": [0.25, 0.25], "radius": 0.035, "role": "accent" },
+        { "type": "disk", "center": [0.75, 0.25], "radius": 0.035, "role": "accent" },
+        { "type": "disk", "center": [0.25, 0.75], "radius": 0.035, "role": "accent" },
+        { "type": "disk", "center": [0.75, 0.75], "radius": 0.035, "role": "accent" },
+        { "type": "polygon", "points": [[0.50, 0.35], [0.65, 0.50], [0.50, 0.65], [0.35, 0.50]], "role": "secondary" },
+        { "type": "disk", "center": [0.50, 0.50], "radius": 0.055, "role": "accent" }
       ]
     },
     {
@@ -86,11 +101,12 @@
       "palette": { "primary": "#171923", "secondary": "#ADB5C2", "accent": "#A05CFF" },
       "endZoneBackground": "primary",
       "fieldPaintRole": "accent",
+      "fieldPaintColor": "#F4C84B",
       "emblem": [
-        { "type": "disk", "center": [0.43, 0.53], "radius": 0.29, "role": "secondary" },
-        { "type": "disk", "center": [0.57, 0.42], "radius": 0.28, "role": "primary" },
-        { "type": "arc", "center": [0.50, 0.48], "radius": 0.38, "start": 35, "end": 215, "lineWidth": 0.055, "role": "accent" },
-        { "type": "disk", "center": [0.19, 0.71], "radius": 0.035, "role": "accent" }
+        { "type": "polygon", "points": [[0.48, 0.80], [0.32, 0.76], [0.19, 0.65], [0.14, 0.50], [0.19, 0.35], [0.32, 0.24], [0.48, 0.20], [0.39, 0.30], [0.33, 0.40], [0.31, 0.50], [0.34, 0.61], [0.40, 0.71]], "role": "secondary" },
+        { "type": "arc", "center": [0.50, 0.50], "radius": 0.38, "start": 55, "end": 235, "lineWidth": 0.055, "role": "accent" },
+        { "type": "arc", "center": [0.50, 0.50], "radius": 0.38, "start": 250, "end": 320, "lineWidth": 0.055, "role": "accent" },
+        { "type": "polygon", "points": [[0.82, 0.39], [0.84, 0.47], [0.92, 0.50], [0.84, 0.53], [0.82, 0.61], [0.80, 0.53], [0.72, 0.50], [0.80, 0.47]], "role": "accent" }
       ]
     },
     {
@@ -101,13 +117,18 @@
       "endZoneBackground": "primary",
       "fieldPaintRole": "accent",
       "emblem": [
-        { "type": "ring", "center": [0.50, 0.50], "radius": 0.34, "lineWidth": 0.075, "role": "primary" },
-        { "type": "ring", "center": [0.50, 0.50], "radius": 0.22, "lineWidth": 0.055, "role": "secondary" },
-        { "type": "polygon", "points": [[0.50, 0.26], [0.74, 0.50], [0.50, 0.74], [0.26, 0.50]], "role": "accent" },
-        { "type": "disk", "center": [0.50, 0.50], "radius": 0.105, "role": "primary" },
-        { "type": "polyline", "points": [[0.50, 0.04], [0.50, 0.18]], "lineWidth": 0.045, "role": "secondary" },
-        { "type": "polyline", "points": [[0.82, 0.18], [0.72, 0.28]], "lineWidth": 0.045, "role": "secondary" },
-        { "type": "polyline", "points": [[0.18, 0.18], [0.28, 0.28]], "lineWidth": 0.045, "role": "secondary" }
+        { "type": "polyline", "points": [[0.50, 0.21], [0.79, 0.50], [0.50, 0.79], [0.21, 0.50], [0.50, 0.21]], "lineWidth": 0.05, "role": "primary" },
+        { "type": "polygon", "points": [[0.50, 0.31], [0.56, 0.44], [0.69, 0.50], [0.56, 0.56], [0.50, 0.69], [0.44, 0.56], [0.31, 0.50], [0.44, 0.44]], "role": "accent" },
+        { "type": "polyline", "points": [[0.50, 0.02], [0.50, 0.15]], "lineWidth": 0.055, "role": "secondary" },
+        { "type": "polyline", "points": [[0.50, 0.85], [0.50, 0.98]], "lineWidth": 0.055, "role": "secondary" },
+        { "type": "polyline", "points": [[0.02, 0.50], [0.15, 0.50]], "lineWidth": 0.055, "role": "secondary" },
+        { "type": "polyline", "points": [[0.85, 0.50], [0.98, 0.50]], "lineWidth": 0.055, "role": "secondary" },
+        { "type": "polyline", "points": [[0.16, 0.16], [0.26, 0.26]], "lineWidth": 0.045, "role": "secondary" },
+        { "type": "polyline", "points": [[0.74, 0.74], [0.84, 0.84]], "lineWidth": 0.045, "role": "secondary" },
+        { "type": "polyline", "points": [[0.16, 0.84], [0.26, 0.74]], "lineWidth": 0.045, "role": "secondary" },
+        { "type": "polyline", "points": [[0.74, 0.26], [0.84, 0.16]], "lineWidth": 0.045, "role": "secondary" },
+        { "type": "disk", "center": [0.11, 0.70], "radius": 0.022, "role": "accent" },
+        { "type": "disk", "center": [0.89, 0.30], "radius": 0.022, "role": "accent" }
       ]
     },
     {
@@ -118,13 +139,15 @@
       "endZoneBackground": "primary",
       "fieldPaintRole": "accent",
       "emblem": [
-        { "type": "polyline", "points": [[0.08, 0.31], [0.28, 0.18], [0.49, 0.34], [0.70, 0.20], [0.92, 0.32]], "lineWidth": 0.085, "role": "secondary" },
-        { "type": "polyline", "points": [[0.08, 0.48], [0.29, 0.36], [0.50, 0.52], [0.72, 0.37], [0.92, 0.49]], "lineWidth": 0.055, "role": "accent" },
-        { "type": "polyline", "points": [[0.12, 0.66], [0.88, 0.66]], "lineWidth": 0.035, "role": "primary" },
-        { "type": "polyline", "points": [[0.20, 0.58], [0.20, 0.83]], "lineWidth": 0.025, "role": "primary" },
-        { "type": "polyline", "points": [[0.40, 0.58], [0.40, 0.83]], "lineWidth": 0.025, "role": "primary" },
-        { "type": "polyline", "points": [[0.60, 0.58], [0.60, 0.83]], "lineWidth": 0.025, "role": "primary" },
-        { "type": "polyline", "points": [[0.80, 0.58], [0.80, 0.83]], "lineWidth": 0.025, "role": "primary" }
+        { "type": "polyline", "points": [[0.07, 0.61], [0.27, 0.43], [0.47, 0.62], [0.68, 0.45], [0.92, 0.60]], "lineWidth": 0.085, "role": "accent" },
+        { "type": "polyline", "points": [[0.07, 0.35], [0.28, 0.19], [0.50, 0.38], [0.72, 0.21], [0.93, 0.36]], "lineWidth": 0.085, "role": "secondary" },
+        { "type": "polyline", "points": [[0.17, 0.72], [0.17, 0.86]], "lineWidth": 0.026, "role": "primary" },
+        { "type": "polyline", "points": [[0.37, 0.69], [0.37, 0.82]], "lineWidth": 0.026, "role": "primary" },
+        { "type": "polyline", "points": [[0.58, 0.72], [0.58, 0.88]], "lineWidth": 0.026, "role": "primary" },
+        { "type": "polyline", "points": [[0.80, 0.69], [0.80, 0.82]], "lineWidth": 0.026, "role": "primary" },
+        { "type": "polyline", "points": [[0.25, 0.06], [0.25, 0.14]], "lineWidth": 0.026, "role": "primary" },
+        { "type": "polyline", "points": [[0.65, 0.07], [0.65, 0.15]], "lineWidth": 0.026, "role": "primary" },
+        { "type": "disk", "center": [0.89, 0.78], "radius": 0.022, "role": "accent" }
       ]
     },
     {
@@ -135,11 +158,11 @@
       "endZoneBackground": "primary",
       "fieldPaintRole": "accent",
       "emblem": [
-        { "type": "roundedBar", "frame": [0.08, 0.18, 0.78, 0.12], "cornerRadius": 0.055, "role": "accent" },
-        { "type": "roundedBar", "frame": [0.18, 0.38, 0.68, 0.12], "cornerRadius": 0.055, "role": "secondary" },
-        { "type": "roundedBar", "frame": [0.30, 0.58, 0.56, 0.12], "cornerRadius": 0.055, "role": "primary" },
-        { "type": "roundedBar", "frame": [0.44, 0.78, 0.42, 0.10], "cornerRadius": 0.045, "role": "secondary" },
-        { "type": "polyline", "points": [[0.88, 0.13], [0.88, 0.91]], "lineWidth": 0.035, "role": "accent" }
+        { "type": "roundedBar", "frame": [0.08, 0.18, 0.74, 0.11], "cornerRadius": 0.05, "role": "accent" },
+        { "type": "roundedBar", "frame": [0.18, 0.36, 0.64, 0.11], "cornerRadius": 0.05, "role": "secondary" },
+        { "type": "roundedBar", "frame": [0.30, 0.54, 0.52, 0.11], "cornerRadius": 0.05, "role": "primary" },
+        { "type": "roundedBar", "frame": [0.42, 0.72, 0.40, 0.11], "cornerRadius": 0.05, "role": "secondary" },
+        { "type": "polyline", "points": [[0.845, 0.12], [0.845, 0.90]], "lineWidth": 0.05, "role": "accent" }
       ]
     }
   ]

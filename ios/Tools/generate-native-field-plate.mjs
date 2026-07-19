@@ -330,7 +330,7 @@ function teamLayerSvgs(spec, team) {
     '</g>',
   ].join('');
 
-  const fieldPaintColor = team.palette[team.fieldPaintRole];
+  const fieldPaintColor = team.fieldPaintColor ?? team.palette[team.fieldPaintRole];
   const fieldPalette = {
     primary: fieldPaintColor,
     secondary: fieldPaintColor,
