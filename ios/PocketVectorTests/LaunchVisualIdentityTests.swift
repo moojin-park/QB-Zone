@@ -142,9 +142,51 @@ private final class FirstTextureGatePreloader: UniformTexturePreloading {
 }
 
 final class LaunchVisualIdentityTests: XCTestCase {
-    func testLaunchCoverageAndPalettesMatchApprovedCatalog() throws {
+    func testLaunchCoverageAndPalettesMatchApprovedVisualDirection() throws {
         let productCatalog = LaunchCatalog.approved
         let visuals = LaunchVisualIdentityCatalog.approved
+        let approvedEmblemPalettes: [TeamID: TeamBrandPalette] = [
+            LaunchTeamID.novaCityComets: TeamBrandPalette(
+                primary: RGBColor(hex: "#08B59F"),
+                secondary: RGBColor(hex: "#F4C64E"),
+                accent: RGBColor(hex: "#F7FCFF")
+            ),
+            LaunchTeamID.highMesaHelions: TeamBrandPalette(
+                primary: RGBColor(hex: "#F06A3B"),
+                secondary: RGBColor(hex: "#6F35C5"),
+                accent: RGBColor(hex: "#D8F0EC")
+            ),
+            LaunchTeamID.lumaCoastPrisms: TeamBrandPalette(
+                primary: RGBColor(hex: "#63CFE7"),
+                secondary: RGBColor(hex: "#54308F"),
+                accent: RGBColor(hex: "#F4C64E")
+            ),
+            LaunchTeamID.foundryReachOrbiters: TeamBrandPalette(
+                primary: RGBColor(hex: "#0C705C"),
+                secondary: RGBColor(hex: "#D9A928"),
+                accent: RGBColor(hex: "#F4EED8")
+            ),
+            LaunchTeamID.neonBasinEclipses: TeamBrandPalette(
+                primary: RGBColor(hex: "#111118"),
+                secondary: RGBColor(hex: "#FFC928"),
+                accent: RGBColor(hex: "#FF9B4A")
+            ),
+            LaunchTeamID.meridianPlainsRadiants: TeamBrandPalette(
+                primary: RGBColor(hex: "#C72F4F"),
+                secondary: RGBColor(hex: "#F06A3B"),
+                accent: RGBColor(hex: "#FFD166")
+            ),
+            LaunchTeamID.rainportAuroras: TeamBrandPalette(
+                primary: RGBColor(hex: "#0B4D5C"),
+                secondary: RGBColor(hex: "#9DD643"),
+                accent: RGBColor(hex: "#C7ECEA")
+            ),
+            LaunchTeamID.baylineRedshifts: TeamBrandPalette(
+                primary: RGBColor(hex: "#9A3154"),
+                secondary: RGBColor(hex: "#D77B46"),
+                accent: RGBColor(hex: "#F4F2EA")
+            ),
+        ]
 
         XCTAssertEqual(visuals.allTeams.map(\.teamID), productCatalog.teams.map(\.id))
         XCTAssertEqual(visuals.allTeams.count, 8)
@@ -156,6 +198,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
         )
         XCTAssertEqual(visuals.allFootballStyles.count, 2)
         XCTAssertEqual(Set(visuals.allFootballStyles.map(\.panelTreatment)).count, 2)
+        XCTAssertEqual(Set(visuals.allTeams.map(\.palette)).count, 8)
         for football in productCatalog.footballs {
             XCTAssertEqual(visuals.football(id: football.id)?.footballID, football.id)
         }
@@ -168,7 +211,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
                 accent: team.accentColor
             )
             XCTAssertEqual(identity.displayName, team.displayName)
-            XCTAssertEqual(identity.palette, expectedPalette)
+            XCTAssertEqual(identity.palette, approvedEmblemPalettes[team.id])
             XCTAssertEqual(
                 identity.hud,
                 HUDVisualPalette(

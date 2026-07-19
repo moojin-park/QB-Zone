@@ -298,7 +298,7 @@ struct LaunchVisualIdentityCatalog: Sendable {
                 TeamVisualIdentity(
                     teamID: team.id,
                     displayName: team.displayName,
-                    palette: brandPalette,
+                    palette: spec.emblemPalette,
                     emblem: spec.emblem,
                     wordmark: spec.wordmark,
                     endZone: spec.endZone,
@@ -378,7 +378,11 @@ struct LaunchVisualIdentityCatalog: Sendable {
 private extension LaunchVisualIdentityCatalog {
     struct IdentitySpec: Sendable {
         let displayName: String
+        /// Catalog colors remain authoritative for uniforms, HUD, and descriptor validation.
         let palette: TeamBrandPalette
+        /// Emblems use a deliberately independent material palette so their small-scale marks
+        /// can stay distinctive without changing team uniforms or other catalog-owned colors.
+        let emblemPalette: TeamBrandPalette
         let emblem: EmblemDefinition
         let wordmark: TeamWordmarkTreatment
         let endZone: EndZoneTreatment
@@ -440,19 +444,43 @@ private extension LaunchVisualIdentityCatalog {
         LaunchTeamID.novaCityComets: IdentitySpec(
             displayName: "Nova City Comets",
             palette: palette("#1DE6EF", "#7D4DFF", "#F7FCFF"),
+            emblemPalette: palette("#08B59F", "#F4C64E", "#F7FCFF"),
             emblem: EmblemDefinition(
                 motif: .cometOrbit,
                 primitives: [
-                    .arc(
-                        center: p(0.47, 0.52), radius: 0.36, startDegrees: 198,
-                        endDegrees: 354, lineWidth: 0.07, color: .primary
+                    // Layered teal plasma trail, kept broad enough to survive the 42-point badge.
+                    .polygon(
+                        vertices: [
+                            p(0.08, 0.43), p(0.34, 0.38), p(0.62, 0.45),
+                            p(0.47, 0.54), p(0.20, 0.57),
+                        ],
+                        fill: .primary
                     ),
                     .polygon(
-                        vertices: [p(0.10, 0.68), p(0.47, 0.47), p(0.34, 0.74)],
+                        vertices: [
+                            p(0.13, 0.35), p(0.39, 0.37), p(0.63, 0.45),
+                            p(0.40, 0.45), p(0.22, 0.50),
+                        ],
+                        fill: .accent
+                    ),
+                    .arc(
+                        center: p(0.71, 0.47), radius: 0.22, startDegrees: 198,
+                        endDegrees: 514, lineWidth: 0.065, color: .primary
+                    ),
+                    .polygon(
+                        vertices: [
+                            p(0.26, 0.79), p(0.49, 0.70), p(0.62, 0.57),
+                            p(0.42, 0.69),
+                        ],
                         fill: .secondary
                     ),
-                    .disk(center: p(0.70, 0.34), radius: 0.14, fill: .accent),
-                    .ring(center: p(0.70, 0.34), radius: 0.18, lineWidth: 0.045, color: .primary),
+                    .disk(center: p(0.71, 0.47), radius: 0.145, fill: .accent),
+                    .ring(
+                        center: p(0.71, 0.47), radius: 0.19,
+                        lineWidth: 0.055, color: .primary
+                    ),
+                    .disk(center: p(0.16, 0.66), radius: 0.018, fill: .secondary),
+                    .disk(center: p(0.22, 0.30), radius: 0.014, fill: .accent),
                 ]
             ),
             wordmark: wordmark(
@@ -464,16 +492,25 @@ private extension LaunchVisualIdentityCatalog {
         LaunchTeamID.highMesaHelions: IdentitySpec(
             displayName: "High Mesa Helions",
             palette: palette("#F06A3B", "#2B234D", "#D8F0EC"),
+            emblemPalette: palette("#F06A3B", "#6F35C5", "#D8F0EC"),
             emblem: EmblemDefinition(
                 motif: .solarMesa,
                 primitives: [
                     .disk(center: p(0.50, 0.34), radius: 0.20, fill: .primary),
+                    .arc(
+                        center: p(0.50, 0.34), radius: 0.13, startDegrees: 110,
+                        endDegrees: 175, lineWidth: 0.025, color: .accent
+                    ),
                     .polygon(
                         vertices: [
                             p(0.12, 0.76), p(0.28, 0.54), p(0.43, 0.54),
                             p(0.51, 0.43), p(0.61, 0.60), p(0.78, 0.60), p(0.90, 0.76),
                         ],
                         fill: .secondary
+                    ),
+                    .polyline(
+                        vertices: [p(0.20, 0.72), p(0.45, 0.54), p(0.74, 0.70)],
+                        lineWidth: 0.025, color: .accent
                     ),
                     .polyline(
                         vertices: [p(0.13, 0.80), p(0.50, 0.80), p(0.87, 0.80)],
@@ -490,6 +527,7 @@ private extension LaunchVisualIdentityCatalog {
         LaunchTeamID.lumaCoastPrisms: IdentitySpec(
             displayName: "Luma Coast Prisms",
             palette: palette("#63CFE7", "#30214F", "#F4C64E"),
+            emblemPalette: palette("#63CFE7", "#54308F", "#F4C64E"),
             emblem: EmblemDefinition(
                 motif: .splitBeamPrism,
                 primitives: [
@@ -498,8 +536,20 @@ private extension LaunchVisualIdentityCatalog {
                         lineWidth: 0.06, color: .primary
                     ),
                     .polygon(
-                        vertices: [p(0.36, 0.18), p(0.36, 0.82), p(0.70, 0.50)],
+                        vertices: [p(0.34, 0.16), p(0.34, 0.84), p(0.71, 0.50)],
                         fill: .secondary
+                    ),
+                    .polyline(
+                        vertices: [p(0.34, 0.84), p(0.53, 0.58), p(0.71, 0.50)],
+                        lineWidth: 0.032, color: .primary
+                    ),
+                    .polyline(
+                        vertices: [p(0.34, 0.16), p(0.53, 0.42), p(0.71, 0.50)],
+                        lineWidth: 0.032, color: .accent
+                    ),
+                    .polyline(
+                        vertices: [p(0.34, 0.50), p(0.53, 0.42), p(0.53, 0.58)],
+                        lineWidth: 0.025, color: .primary
                     ),
                     .polyline(
                         vertices: [p(0.70, 0.50), p(0.95, 0.27)],
@@ -524,19 +574,47 @@ private extension LaunchVisualIdentityCatalog {
         LaunchTeamID.foundryReachOrbiters: IdentitySpec(
             displayName: "Foundry Reach Orbiters",
             palette: palette("#146353", "#D4A73E", "#F0E8CF"),
+            emblemPalette: palette("#0C705C", "#D9A928", "#F4EED8"),
             emblem: EmblemDefinition(
                 motif: .rivetedOrbit,
                 primitives: [
-                    .ring(center: p(0.50, 0.50), radius: 0.32, lineWidth: 0.09, color: .primary),
-                    .ring(center: p(0.50, 0.50), radius: 0.18, lineWidth: 0.05, color: .secondary),
-                    .disk(center: p(0.50, 0.16), radius: 0.045, fill: .accent),
-                    .disk(center: p(0.84, 0.50), radius: 0.045, fill: .accent),
-                    .disk(center: p(0.50, 0.84), radius: 0.045, fill: .accent),
-                    .disk(center: p(0.16, 0.50), radius: 0.045, fill: .accent),
-                    .polygon(
-                        vertices: [p(0.50, 0.31), p(0.69, 0.50), p(0.50, 0.69), p(0.31, 0.50)],
-                        fill: .secondary
+                    .ring(
+                        center: p(0.50, 0.50), radius: 0.36,
+                        lineWidth: 0.085, color: .primary
                     ),
+                    .ring(
+                        center: p(0.50, 0.50), radius: 0.29,
+                        lineWidth: 0.025, color: .accent
+                    ),
+                    .ring(
+                        center: p(0.50, 0.50), radius: 0.20,
+                        lineWidth: 0.055, color: .secondary
+                    ),
+                    .polyline(
+                        vertices: [p(0.14, 0.50), p(0.86, 0.50)],
+                        lineWidth: 0.035, color: .secondary
+                    ),
+                    .polyline(
+                        vertices: [p(0.50, 0.14), p(0.50, 0.86)],
+                        lineWidth: 0.035, color: .secondary
+                    ),
+                    .disk(center: p(0.50, 0.14), radius: 0.050, fill: .accent),
+                    .disk(center: p(0.86, 0.50), radius: 0.050, fill: .accent),
+                    .disk(center: p(0.50, 0.86), radius: 0.050, fill: .accent),
+                    .disk(center: p(0.14, 0.50), radius: 0.050, fill: .accent),
+                    .disk(center: p(0.27, 0.27), radius: 0.025, fill: .secondary),
+                    .disk(center: p(0.73, 0.27), radius: 0.025, fill: .secondary),
+                    .disk(center: p(0.73, 0.73), radius: 0.025, fill: .secondary),
+                    .disk(center: p(0.27, 0.73), radius: 0.025, fill: .secondary),
+                    .disk(center: p(0.50, 0.50), radius: 0.135, fill: .secondary),
+                    .polygon(
+                        vertices: [
+                            p(0.50, 0.39), p(0.61, 0.50),
+                            p(0.50, 0.61), p(0.39, 0.50),
+                        ],
+                        fill: .accent
+                    ),
+                    .disk(center: p(0.50, 0.50), radius: 0.045, fill: .primary),
                 ]
             ),
             wordmark: wordmark(
@@ -548,16 +626,31 @@ private extension LaunchVisualIdentityCatalog {
         LaunchTeamID.neonBasinEclipses: IdentitySpec(
             displayName: "Neon Basin Eclipses",
             palette: palette("#171923", "#ADB5C2", "#A05CFF"),
+            emblemPalette: palette("#111118", "#FFC928", "#FF9B4A"),
             emblem: EmblemDefinition(
                 motif: .offsetEclipse,
                 primitives: [
-                    .disk(center: p(0.43, 0.53), radius: 0.29, fill: .secondary),
-                    .disk(center: p(0.57, 0.42), radius: 0.28, fill: .primary),
                     .arc(
-                        center: p(0.50, 0.48), radius: 0.38, startDegrees: 35,
-                        endDegrees: 215, lineWidth: 0.055, color: .accent
+                        center: p(0.49, 0.50), radius: 0.38, startDegrees: 35,
+                        endDegrees: 305, lineWidth: 0.055, color: .accent
                     ),
-                    .disk(center: p(0.19, 0.71), radius: 0.035, fill: .accent),
+                    .disk(center: p(0.45, 0.52), radius: 0.29, fill: .secondary),
+                    .disk(center: p(0.58, 0.47), radius: 0.29, fill: .primary),
+                    .polygon(
+                        vertices: [
+                            p(0.84, 0.54), p(0.87, 0.57), p(0.90, 0.54),
+                            p(0.87, 0.51),
+                        ],
+                        fill: .secondary
+                    ),
+                    .polyline(
+                        vertices: [p(0.82, 0.54), p(0.92, 0.54)],
+                        lineWidth: 0.018, color: .accent
+                    ),
+                    .polyline(
+                        vertices: [p(0.87, 0.49), p(0.87, 0.59)],
+                        lineWidth: 0.018, color: .accent
+                    ),
                 ]
             ),
             wordmark: wordmark(
@@ -569,28 +662,45 @@ private extension LaunchVisualIdentityCatalog {
         LaunchTeamID.meridianPlainsRadiants: IdentitySpec(
             displayName: "Meridian Plains Radiants",
             palette: palette("#C72F4F", "#F0A253", "#FFF0DD"),
+            emblemPalette: palette("#C72F4F", "#F06A3B", "#FFD166"),
             emblem: EmblemDefinition(
                 motif: .reactorCore,
                 primitives: [
-                    .ring(center: p(0.50, 0.50), radius: 0.34, lineWidth: 0.075, color: .primary),
-                    .ring(center: p(0.50, 0.50), radius: 0.22, lineWidth: 0.055, color: .secondary),
                     .polygon(
-                        vertices: [p(0.50, 0.26), p(0.74, 0.50), p(0.50, 0.74), p(0.26, 0.50)],
+                        vertices: [
+                            p(0.50, 0.04), p(0.57, 0.36), p(0.84, 0.16),
+                            p(0.64, 0.43), p(0.96, 0.50), p(0.64, 0.57),
+                            p(0.84, 0.84), p(0.57, 0.64), p(0.50, 0.96),
+                            p(0.43, 0.64), p(0.16, 0.84), p(0.36, 0.57),
+                            p(0.04, 0.50), p(0.36, 0.43), p(0.16, 0.16),
+                            p(0.43, 0.36),
+                        ],
+                        fill: .secondary
+                    ),
+                    .polygon(
+                        vertices: [
+                            p(0.50, 0.14), p(0.62, 0.38), p(0.86, 0.50),
+                            p(0.62, 0.62), p(0.50, 0.86), p(0.38, 0.62),
+                            p(0.14, 0.50), p(0.38, 0.38),
+                        ],
                         fill: .accent
                     ),
-                    .disk(center: p(0.50, 0.50), radius: 0.105, fill: .primary),
-                    .polyline(
-                        vertices: [p(0.50, 0.04), p(0.50, 0.18)],
-                        lineWidth: 0.045, color: .secondary
+                    .polygon(
+                        vertices: [
+                            p(0.50, 0.23), p(0.77, 0.50),
+                            p(0.50, 0.77), p(0.23, 0.50),
+                        ],
+                        fill: .primary
                     ),
-                    .polyline(
-                        vertices: [p(0.82, 0.18), p(0.72, 0.28)],
-                        lineWidth: 0.045, color: .secondary
+                    .polygon(
+                        vertices: [
+                            p(0.50, 0.34), p(0.58, 0.42), p(0.66, 0.50),
+                            p(0.58, 0.58), p(0.50, 0.66), p(0.42, 0.58),
+                            p(0.34, 0.50), p(0.42, 0.42),
+                        ],
+                        fill: .accent
                     ),
-                    .polyline(
-                        vertices: [p(0.18, 0.18), p(0.28, 0.28)],
-                        lineWidth: 0.045, color: .secondary
-                    ),
+                    .disk(center: p(0.50, 0.50), radius: 0.055, fill: .primary),
                 ]
             ),
             wordmark: wordmark(
@@ -602,42 +712,51 @@ private extension LaunchVisualIdentityCatalog {
         LaunchTeamID.rainportAuroras: IdentitySpec(
             displayName: "Rainport Auroras",
             palette: palette("#0B3A4A", "#9DD643", "#E5F2EA"),
+            emblemPalette: palette("#0B4D5C", "#9DD643", "#C7ECEA"),
             emblem: EmblemDefinition(
                 motif: .auroraGridWave,
                 primitives: [
                     .polyline(
                         vertices: [
-                            p(0.08, 0.31), p(0.28, 0.18), p(0.49, 0.34),
-                            p(0.70, 0.20), p(0.92, 0.32),
+                            p(0.08, 0.34), p(0.28, 0.22), p(0.50, 0.38),
+                            p(0.72, 0.24), p(0.92, 0.35),
                         ],
-                        lineWidth: 0.085, color: .secondary
+                        lineWidth: 0.095, color: .secondary
                     ),
                     .polyline(
                         vertices: [
-                            p(0.08, 0.48), p(0.29, 0.36), p(0.50, 0.52),
-                            p(0.72, 0.37), p(0.92, 0.49),
+                            p(0.12, 0.55), p(0.31, 0.43), p(0.52, 0.58),
+                            p(0.73, 0.44), p(0.88, 0.54),
                         ],
-                        lineWidth: 0.055, color: .accent
+                        lineWidth: 0.075, color: .accent
                     ),
                     .polyline(
-                        vertices: [p(0.12, 0.66), p(0.88, 0.66)],
-                        lineWidth: 0.035, color: .primary
-                    ),
-                    .polyline(
-                        vertices: [p(0.20, 0.58), p(0.20, 0.83)],
+                        vertices: [p(0.14, 0.67), p(0.86, 0.67)],
                         lineWidth: 0.025, color: .primary
                     ),
                     .polyline(
-                        vertices: [p(0.40, 0.58), p(0.40, 0.83)],
-                        lineWidth: 0.025, color: .primary
+                        vertices: [p(0.24, 0.70), p(0.24, 0.84)],
+                        lineWidth: 0.022, color: .primary
                     ),
                     .polyline(
-                        vertices: [p(0.60, 0.58), p(0.60, 0.83)],
-                        lineWidth: 0.025, color: .primary
+                        vertices: [p(0.42, 0.70), p(0.42, 0.90)],
+                        lineWidth: 0.022, color: .primary
                     ),
                     .polyline(
-                        vertices: [p(0.80, 0.58), p(0.80, 0.83)],
-                        lineWidth: 0.025, color: .primary
+                        vertices: [p(0.60, 0.70), p(0.60, 0.86)],
+                        lineWidth: 0.022, color: .primary
+                    ),
+                    .polyline(
+                        vertices: [p(0.77, 0.70), p(0.77, 0.88)],
+                        lineWidth: 0.022, color: .primary
+                    ),
+                    .polyline(
+                        vertices: [p(0.35, 0.13), p(0.35, 0.22)],
+                        lineWidth: 0.018, color: .primary
+                    ),
+                    .polyline(
+                        vertices: [p(0.66, 0.12), p(0.66, 0.22)],
+                        lineWidth: 0.018, color: .primary
                     ),
                 ]
             ),
@@ -650,28 +769,29 @@ private extension LaunchVisualIdentityCatalog {
         LaunchTeamID.baylineRedshifts: IdentitySpec(
             displayName: "Bayline Redshifts",
             palette: palette("#842C4B", "#C87845", "#DFE5E2"),
+            emblemPalette: palette("#9A3154", "#D77B46", "#F4F2EA"),
             emblem: EmblemDefinition(
                 motif: .redshiftBars,
                 primitives: [
                     .roundedBar(
-                        frame: rect(0.08, 0.18, 0.78, 0.12), cornerRadius: 0.055,
-                        fill: .accent
-                    ),
-                    .roundedBar(
-                        frame: rect(0.18, 0.38, 0.68, 0.12), cornerRadius: 0.055,
+                        frame: rect(0.44, 0.70, 0.31, 0.10), cornerRadius: 0.045,
                         fill: .secondary
                     ),
                     .roundedBar(
-                        frame: rect(0.30, 0.58, 0.56, 0.12), cornerRadius: 0.055,
+                        frame: rect(0.34, 0.51, 0.42, 0.10), cornerRadius: 0.045,
                         fill: .primary
                     ),
                     .roundedBar(
-                        frame: rect(0.44, 0.78, 0.42, 0.10), cornerRadius: 0.045,
+                        frame: rect(0.25, 0.32, 0.51, 0.10), cornerRadius: 0.045,
                         fill: .secondary
                     ),
+                    .roundedBar(
+                        frame: rect(0.16, 0.13, 0.61, 0.10), cornerRadius: 0.045,
+                        fill: .accent
+                    ),
                     .polyline(
-                        vertices: [p(0.88, 0.13), p(0.88, 0.91)],
-                        lineWidth: 0.035, color: .accent
+                        vertices: [p(0.80, 0.10), p(0.80, 0.86)],
+                        lineWidth: 0.030, color: .accent
                     ),
                 ]
             ),
