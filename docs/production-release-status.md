@@ -1,6 +1,6 @@
 # Pocket Vector production release status
 
-Status date: 2026-07-18
+Status date: 2026-07-19
 
 This is the living delivery board for the first iOS release. Product scope and
 rules remain authoritative in
@@ -73,6 +73,21 @@ Debug simulator build, and unsigned generic-iOS Release archive passed with no
 open P0-P3 finding. The verified Debug build is installed and launched on the
 iPhone 17 Pro simulator for owner testing. Compact-iPhone, regular-iPhone, and
 iPad paused-panel and field visual acceptance remains pending.
+
+The latest Art head `bf3d8c8` (`Art: implement approved team emblems`) is merged
+with full ancestry at `e796ce0` (`Merge latest Art direction`). It supplies
+eight distinct normalized emblem definitions and palettes, updates seven
+midfield-branding layers while retaining High Mesa, and includes compact-iPhone,
+regular-iPhone, iPad, and field-registration QA composites. The latest Technical
+head `80e0e41` (`Implement scorebug reaction HUD`) is merged with full ancestry
+at `475e3af` (`Merge latest Technical direction`). The scorebug now owns
+semantic one- or two-line play reactions with compact/regular/iPad geometry,
+reduced-motion presentation, restartable lifetime, and deduplicated VoiceOver
+announcements. Deterministic regeneration, 72 focused tests, the exact 832-test
+simulator suite, an unsigned generic-iOS Release archive, and independent review
+passed with no open P0-P3 finding. Art's committed emblem evidence passed PM
+inspection; integrated-device Art approval of the score-reaction presentation
+remains pending before visual release acceptance.
 
 Technical gameplay handoff `955a63e` is integrated patch-equivalently at
 `d5131cf` (`Expose explicit paused gameplay controls`). The PM bridge at
@@ -206,7 +221,8 @@ final codesigned entitlement payload; that remains a release-candidate gate.
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Paused gameplay presentation                    | In progress         | Refined Art panel and Technical/PM snapshot, Resume, and confirmed-exit actions are integrated and pass combined tests; compact-iPhone, regular-iPhone, and iPad landscape visual approval remains |
 | Layered team-field assets                       | In progress         | Registered neutral, universal-marking, and eight-team paint layers are bundled and actively rendered in exact order; multi-device gameplay visual approval remains |
-| Eight-team presentation system                  | Complete            | Eight motifs, 16 jersey palettes, two footballs, wordmarks, end zones, HUD palettes, raster recoloring, and preload readiness ship     |
+| Scorebug reaction presentation                  | In progress         | Semantic one/two-line reactions, responsive geometry, reduced motion, lifecycle, and VoiceOver behavior pass automated gates; integrated-device Art visual approval remains |
+| Eight-team presentation system                  | Complete            | Eight approved emblems and palettes, 16 jersey palettes, two footballs, wordmarks, end zones, field branding, raster recoloring, and preload readiness ship |
 | Live Apple and advertising services             | In progress         | Cloud claim/hydration and online-only StoreKit composition are implemented and fail closed without complete configuration; permanent IDs, products, records, production schema, Game Center retention, authenticated ad transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
 | TestFlight release candidate                    | Queued              | Device, accessibility, sandbox, sync, replay, crash, and economy gates pass                                                           |
@@ -315,6 +331,11 @@ or runtime ownership boundaries.
 | 2026-07-18 | `3ed7598` | Exact combined full simulator suite | 827 total: 826 passed, 0 failed, 1 existing conditional case-alias skip on iPhone 17 Pro; result bundle `/tmp/PocketVector-Combined-3ed7598-full.xcresult` |
 | 2026-07-18 | `3ed7598` | Combined unsigned generic-iOS Release archive | Passed at `/tmp/pocket-vector-combined-archive-3ed7598.ozYLrE/PocketVector.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit condition, valid privacy manifest, exact 76-asset package, and no bundled source art, tools, or documentation |
 | 2026-07-18 | `3ed7598` | Owner simulator build | Clean Debug simulator build passed and was installed without erasing app data on iPhone 17 Pro; `com.pocketvector.game` launched successfully for owner gameplay testing |
+| 2026-07-19 | `475e3af` | Latest full Art and Technical branch integration | Art head `bf3d8c8` merged at `e796ce0`, then Technical head `80e0e41` merged at `475e3af`; both submitted heads are ancestors and their final owned trees exactly match the submissions |
+| 2026-07-19 | `475e3af` | Emblem and score-reaction focused gate | 72 passed, 0 failed, 0 skipped on iPhone 17 Pro; deterministic generation reproduced all 19 field assets with no diff; independent review found no open P0-P3 finding |
+| 2026-07-19 | `475e3af` | Exact combined full simulator suite | 832 total: 831 passed, 0 failed, 1 existing conditional case-alias skip on iPhone 17 Pro; result bundle `/tmp/PocketVector-Emblems-ReactionHUD-475e3af-full.xcresult` |
+| 2026-07-19 | `475e3af` | Integrated Art evidence review | Compact-iPhone, regular-iPhone, iPad, and field-registration emblem composites passed PM inspection; integrated-device Art approval of the Technical score-reaction presentation remains pending |
+| 2026-07-19 | `475e3af` | Unsigned generic-iOS Release archive | Passed at `/tmp/pocket-vector-team-brand-archive-475e3af.8JFlyF/PocketVector.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit condition, valid privacy manifest, exact 76-asset package including seven changed branding files, and no QA/source/tool/doc content |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -439,13 +460,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the exact audited combined Art/Technical gameplay integration; multi-device paused-panel/field visual approval and full release audit remain |
+| Known P0/P1 defects                  |      0 | 0 open in the exact audited emblem/score-reaction integration; integrated-device Art approval of score reactions, multi-device paused-panel/field approval, and full release audit remain |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud history, initial publication, hydration, online-only catalog debit/ownership, and StoreKit durable delivery pass internal tests; external sandbox/device gates remain |
-| Clean-checkout archive               |   Pass | Unsigned archive for exact integrated implementation commit `3ed7598` passed; final codesigned entitlement/export proof remains |
+| Clean-checkout archive               |   Pass | Unsigned archive for exact integrated implementation commit `475e3af` passed; final codesigned entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner

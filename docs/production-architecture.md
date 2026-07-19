@@ -2,15 +2,15 @@
 
 Status: implementation contract for version 1
 
-Last updated: 2026-07-18
+Last updated: 2026-07-19
 
-Implementation baseline: `3ed7598`, the combined Art and Technical gameplay
-presentation integration, including the active layered team-field renderer,
-refined paused-run controls, explicit gameplay-presentation bridge, online-only
-commerce composition, canonical V4 cloud-profile seed, and StoreKit,
-player-scoped Game Center, and rewarded-ad foundations. Gameplay renders the
-registered neutral base, selected-team paint, and universal markings before
-placing actors and the HUD above the field stack.
+Implementation baseline: `475e3af`, the approved team-emblem and scorebug-
+reaction integration, including the active layered team-field renderer, refined
+paused-run controls, explicit gameplay-presentation bridge, online-only commerce
+composition, canonical V4 cloud-profile seed, and StoreKit, player-scoped Game
+Center, and rewarded-ad foundations. Gameplay renders the registered neutral
+base, selected-team emblem paint, and universal markings before placing actors
+and the scorebug-attached reaction HUD above the field stack.
 
 This document translates the approved release charter into ownership and data
 boundaries. It is deliberately narrower than a feature specification: it says
