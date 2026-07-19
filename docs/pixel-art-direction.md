@@ -33,9 +33,13 @@ transparent canvas with a bottom-center anchor at `[192, 496]`.
   without mirroring the jersey number.
 - Official: two wave phases; left frames mirror right frames.
 
-Nearest-neighbor processing and lossless WebP encoding are required. Runtime
-uniform recoloring must preserve transparent padding, skin details, authored
-shading, helmet structure, and pose silhouettes.
+Nearest-neighbor processing and lossless WebP encoding are required. Approved
+team-specific uniform sets author jersey, pants, helmet, trim, and sock colors
+directly into the source art and must be loaded without runtime recoloring,
+tinting, or semantic masks. Transparent padding, skin details, authored
+shading, helmet structure, and pose silhouettes remain independent materials.
+The shared generic set is a transitional fallback only for teams whose baked
+sets have not yet been authored.
 
 ## Field and ball
 

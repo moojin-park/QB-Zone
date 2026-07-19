@@ -8,11 +8,12 @@ are intentionally kept outside that bundle.
 ## Inventory contract
 
 `ios/PocketVector/Resources/GameAssets/native-assets.json` declares the exact
-runtime inventory and its source provenance. The manifest contains 76 assets:
+runtime inventory and its source provenance. The manifest contains 144 assets:
 
 - 3 native control PNGs;
 - 16 WAV audio files;
-- 38 lossless character WebPs;
+- 106 lossless character WebPs: 38 shared/fallback frames and 68 baked Nova
+  City Comets primary/alternate uniform frames;
 - 1 compatibility stadium field PNG;
 - 1 neutral stadium/turf PNG;
 - 1 universal field-markings PNG;
@@ -32,6 +33,13 @@ ios/AssetSources/PixelCharacters/qb-strip.png
 ios/AssetSources/PixelCharacters/receiver-strip.png
 ios/AssetSources/PixelCharacters/defender-strip.png
 ios/AssetSources/PixelCharacters/official-strip.png
+```
+
+Approved baked Nova City Comets source strips:
+
+```text
+ios/AssetSources/PixelCharacters/teams/nova_city_comets/primary/{qb,receiver,defender}-strip.png
+ios/AssetSources/PixelCharacters/teams/nova_city_comets/alternate/{qb,receiver,defender}-strip.png
 ```
 
 The processor validates nonempty equal-width slots, shared per-role scale,
@@ -54,6 +62,35 @@ python3 ios/Tools/process-pixel-character-strips.py \
 
 Regenerate the checked-in WebPs by removing `--dry-run` and adding `--force`.
 Review every binary diff before committing.
+
+Team-specific baked sets use the same processor in `--uniform-only` mode. That
+mode emits exactly 34 QB, receiver, and defender frames and intentionally omits
+the four universal official frames. Generate each set into its catalog-backed
+asset prefix:
+
+```bash
+python3 ios/Tools/process-pixel-character-strips.py \
+  --qb-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/primary/qb-strip.png \
+  --receiver-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/primary/receiver-strip.png \
+  --defender-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/primary/defender-strip.png \
+  --uniform-only \
+  --output-dir ios/PocketVector/Resources/GameAssets/characters/teams/nova_city_comets/primary \
+  --force
+
+python3 ios/Tools/process-pixel-character-strips.py \
+  --qb-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/alternate/qb-strip.png \
+  --receiver-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/alternate/receiver-strip.png \
+  --defender-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/alternate/defender-strip.png \
+  --uniform-only \
+  --output-dir ios/PocketVector/Resources/GameAssets/characters/teams/nova_city_comets/alternate \
+  --force
+```
+
+Both directories contain lossless 384 x 512 WebPs anchored at `[192, 496]`.
+They preserve fully authored team materials and must be loaded without runtime
+uniform projection. The shared 38-frame set remains as the transitional
+fallback for teams whose baked sets have not yet been authored. Technical owns
+team/jersey routing and the projection-bypass behavior.
 
 ## Stadium field
 

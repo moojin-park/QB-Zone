@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Normalize transparent pixel-art strips into Pocket Vector runtime sprites.
 
-The four input images must each contain one horizontal row of equal-width
-slots. Receiver and official frames face right and are mirrored for the opposite
+The input images must each contain one horizontal row of equal-width slots.
+Receiver and official frames face right and are mirrored for the opposite
 direction. Defenders stay square to the quarterback, so both runtime directions
 reuse the same front-facing art instead of reversing the visible jersey number.
+Uniform-only team sets omit the official strip and its four runtime frames.
 
 Pillow with WebP support is required for processing, but ``--help`` and output
 collision checks work without importing Pillow.
@@ -100,8 +101,8 @@ class OutputFrame:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Convert four transparent horizontal pixel-art strips into the "
-            "38 Pocket Vector character WebPs."
+            "Convert transparent horizontal pixel-art strips into Pocket "
+            "Vector character WebPs (38 by default, or 34 uniform-only)."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
@@ -111,6 +112,12 @@ Input slot order:
                  carry-3, carry-4, touchdown; facing right
   Defender (5): run-1, run-2, run-3, run-4, interception; square/front-facing
   Official (2): wave-1, wave-2; facing right
+
+Modes:
+  Default:      QB + receiver + defender + official = 38 runtime WebPs;
+                --official-strip is required.
+  Uniform-only: QB + receiver + defender = 34 runtime WebPs; official frames
+                are omitted and --official-strip is not loaded.
 
 Each strip uses equal-width slots, and every slot must contain at least one
 non-transparent pixel. If needed, fewer than one slot-count of fully transparent
@@ -129,7 +136,8 @@ Example:
     --dry-run
 
 Remove --dry-run to write. Existing runtime files are replaced only with
---force.
+--force. Add --uniform-only for baked team-uniform sets that share the global
+official artwork.
 """,
     )
     parser.add_argument(
@@ -152,9 +160,19 @@ Remove --dry-run to write. Existing runtime files are replaced only with
     )
     parser.add_argument(
         "--official-strip",
-        required=True,
         type=Path,
-        help="transparent 2-slot right-facing sideline-official strip",
+        help=(
+            "transparent 2-slot right-facing sideline-official strip "
+            "(required unless --uniform-only; ignored in uniform-only mode)"
+        ),
+    )
+    parser.add_argument(
+        "--uniform-only",
+        action="store_true",
+        help=(
+            "emit only the 34 QB/receiver/defender WebPs for a baked team set; "
+            "omit official frames and do not load --official-strip"
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -170,18 +188,20 @@ Remove --dry-run to write. Existing runtime files are replaced only with
     parser.add_argument(
         "--force",
         action="store_true",
-        help="replace the 38 runtime WebPs if they exist",
+        help="replace generated runtime WebPs if they exist",
     )
     return parser
 
 
-def runtime_filenames() -> tuple[str, ...]:
+def runtime_filenames(uniform_only: bool = False) -> tuple[str, ...]:
     filenames = [f"qb-{file_pose}.webp" for file_pose, _ in QB_POSES]
-    for role, poses in (
+    role_poses = [
         ("receiver", RECEIVER_POSES),
         ("defender", DEFENDER_POSES),
-        ("official", OFFICIAL_POSES),
-    ):
+    ]
+    if not uniform_only:
+        role_poses.append(("official", OFFICIAL_POSES))
+    for role, poses in role_poses:
         for file_pose, _ in poses:
             filenames.extend(
                 (
@@ -211,8 +231,8 @@ def validate_paths(inputs: Sequence[RoleInput], output_dir: Path) -> None:
         raise PipelineError(f"Output path is not a directory: {output_dir}")
 
 
-def existing_targets(output_dir: Path) -> list[Path]:
-    names = runtime_filenames()
+def existing_targets(output_dir: Path, uniform_only: bool = False) -> list[Path]:
+    names = runtime_filenames(uniform_only)
     return [
         output_dir / name
         for name in names
@@ -409,7 +429,10 @@ def verify_palette(source_frames: Iterable[Any], outputs: Iterable[Any]) -> None
 
 
 def prepare_outputs(
-    loaded_roles: Sequence[LoadedRole], image_module: Any, image_ops: Any
+    loaded_roles: Sequence[LoadedRole],
+    image_module: Any,
+    image_ops: Any,
+    uniform_only: bool = False,
 ) -> tuple[list[OutputFrame], list[tuple[str, str]]]:
     by_role = {loaded.role: loaded for loaded in loaded_roles}
     outputs: list[OutputFrame] = []
@@ -430,7 +453,10 @@ def prepare_outputs(
             )
         )
 
-    for role in ("receiver", "defender", "official"):
+    directional_roles = ["receiver", "defender"]
+    if not uniform_only:
+        directional_roles.append("official")
+    for role in directional_roles:
         loaded = by_role[role]
         right_images = [
             normalize_frame(frame, loaded.scale, image_module)
@@ -468,7 +494,7 @@ def prepare_outputs(
             if role in ("receiver", "official"):
                 mirror_pairs.append((left_filename, right_filename))
 
-    expected = runtime_filenames()
+    expected = runtime_filenames(uniform_only)
     actual = tuple(frame.filename for frame in outputs)
     if actual != expected:
         raise PipelineError(
@@ -545,6 +571,7 @@ def write_outputs(
     output_dir: Path,
     encoded: dict[str, bytes],
     force: bool,
+    uniform_only: bool = False,
 ) -> None:
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -555,11 +582,11 @@ def write_outputs(
         temp_dir = Path(temp_name)
         for filename, payload in encoded.items():
             (temp_dir / filename).write_bytes(payload)
-        conflicts = existing_targets(output_dir)
+        conflicts = existing_targets(output_dir, uniform_only)
         if conflicts and not force:
             raise PipelineError(overwrite_message(conflicts))
 
-        for filename in runtime_filenames():
+        for filename in runtime_filenames(uniform_only):
             os.replace(temp_dir / filename, output_dir / filename)
 
 
@@ -579,9 +606,12 @@ def print_summary(
     output_dir: Path,
     conflict_count: int,
     dry_run: bool,
+    uniform_only: bool,
 ) -> None:
     status = "Dry run complete" if dry_run else "Generated sprite set"
-    print(f"{status}: 38 lossless WebPs")
+    output_count = len(runtime_filenames(uniform_only))
+    mode = "uniform-only" if uniform_only else "complete"
+    print(f"{status}: {output_count} lossless WebPs ({mode} set)")
     print(
         f"Canvas: {CANVAS_WIDTH}x{CANVAS_HEIGHT}; "
         f"anchor: [{ANCHOR_X}, {ANCHOR_Y}]; safe padding: {SAFE_PADDING}px"
@@ -598,11 +628,15 @@ def print_summary(
             f"shared scale {loaded.scale:.8f}{trim_note}"
         )
     print(f"Output: {output_dir}")
-    print(
+    verified = (
         "Verified: non-empty slots, nearest-neighbor palette preservation, "
         "384x512 transparency, lossless pixel round-trip, ten receiver mirror "
-        "pairs, two official mirror pairs, and square defender direction pairs."
+        "pairs, and square defender direction pairs"
     )
+    if uniform_only:
+        print(f"{verified}; official frames omitted.")
+    else:
+        print(f"{verified}, plus two official mirror pairs.")
     if dry_run:
         if conflict_count:
             print(
@@ -614,7 +648,7 @@ def print_summary(
 
 def run(args: argparse.Namespace) -> None:
     output_dir = resolve_path(args.output_dir)
-    inputs = (
+    inputs = [
         RoleInput(
             "quarterback",
             resolve_path(args.qb_strip),
@@ -630,33 +664,43 @@ def run(args: argparse.Namespace) -> None:
             resolve_path(args.defender_strip),
             DEFENDER_POSES,
         ),
-        RoleInput(
-            "official",
-            resolve_path(args.official_strip),
-            OFFICIAL_POSES,
-        ),
-    )
+    ]
+    if not args.uniform_only:
+        if args.official_strip is None:
+            raise PipelineError(
+                "--official-strip is required for the default 38-frame set; "
+                "provide the transparent 2-slot official strip or use "
+                "--uniform-only for a 34-frame baked team set"
+            )
+        inputs.append(
+            RoleInput(
+                "official",
+                resolve_path(args.official_strip),
+                OFFICIAL_POSES,
+            )
+        )
     validate_paths(inputs, output_dir)
 
-    conflicts = existing_targets(output_dir)
+    conflicts = existing_targets(output_dir, args.uniform_only)
     if conflicts and not args.force and not args.dry_run:
         raise PipelineError(overwrite_message(conflicts))
 
     image_module, image_ops, _ = require_pillow()
     loaded_roles = tuple(load_role(role_input, image_module) for role_input in inputs)
     outputs, mirror_pairs = prepare_outputs(
-        loaded_roles, image_module, image_ops
+        loaded_roles, image_module, image_ops, args.uniform_only
     )
     encoded, decoded = encode_and_verify(
         outputs, mirror_pairs, image_module, image_ops
     )
     if not args.dry_run:
-        write_outputs(output_dir, encoded, args.force)
+        write_outputs(output_dir, encoded, args.force, args.uniform_only)
     print_summary(
         loaded_roles,
         output_dir,
         conflict_count=len(conflicts),
         dry_run=args.dry_run,
+        uniform_only=args.uniform_only,
     )
 
 
