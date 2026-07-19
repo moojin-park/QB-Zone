@@ -148,27 +148,7 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
                 ChampionshipBackdrop()
 
                 VStack(spacing: compactHeight ? 7 : 10) {
-                    HStack(spacing: 10) {
-                        Button(action: onBack) {
-                            HStack(spacing: compactHeight ? 5 : 7) {
-                                ChampionshipPixelIcon(
-                                    name: "SubmenuBackIcon",
-                                    size: compactHeight ? 28 : (padLayout ? 40 : 32)
-                                )
-                                Text("BACK")
-                                    .font(.system(
-                                        compactHeight ? .subheadline : (padLayout ? .title3 : .headline),
-                                        design: .monospaced,
-                                        weight: .black
-                                    ))
-                                    .tracking(0.5)
-                            }
-                        }
-                        .buttonStyle(ChampionshipBackButtonStyle(compact: compactHeight))
-                        .accessibilityHint("Returns to the previous screen")
-                        .accessibilitySortPriority(3)
-                        .frame(width: sideWidth, alignment: .leading)
-
+                    ZStack {
                         ChampionshipTitleMarquee(
                             title: title,
                             subtitle: subtitle,
@@ -177,10 +157,36 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
                         )
                         .frame(width: titleWidth, height: headerHeight)
 
-                        headerAccessory
-                            .frame(width: sideWidth, alignment: .trailing)
-                            .scaleEffect(padLayout ? 1.12 : 1, anchor: .trailing)
+                        HStack(spacing: 0) {
+                            Button(action: onBack) {
+                                HStack(spacing: compactHeight ? 5 : 7) {
+                                    ChampionshipPixelIcon(
+                                        name: "SubmenuBackIcon",
+                                        size: compactHeight ? 28 : (padLayout ? 40 : 32)
+                                    )
+                                    Text("BACK")
+                                        .font(.system(
+                                            compactHeight ? .subheadline : (padLayout ? .title3 : .headline),
+                                            design: .monospaced,
+                                            weight: .black
+                                        ))
+                                        .tracking(0.5)
+                                }
+                            }
+                            .buttonStyle(ChampionshipBackButtonStyle(compact: compactHeight))
+                            .accessibilityHint("Returns to the previous screen")
+                            .accessibilitySortPriority(3)
+                            .frame(width: sideWidth, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Color.clear
+                                .frame(width: sideWidth, height: headerHeight)
+                                .overlay(alignment: .trailing) {
+                                    headerAccessory
+                                }
+                        }
                     }
+                    .frame(maxWidth: .infinity)
                     .frame(height: headerHeight)
 
                     content

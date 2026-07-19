@@ -112,6 +112,14 @@ so compact iPhone intentionally scrolls beyond the six-card sample mock.
    `/tmp/pocket-vector-submenus-theme3-20260719/regular/choose-offense-final-upright.png`
    and
    `/tmp/pocket-vector-submenus-theme3-20260719/ipad/team-locker-final-landscape-v3.png`.
+5. Centered-title follow-up: the original `HStack` centered Back, the marquee,
+   and any accessory as one bundle, allowing accessory-free screens to shift
+   the marquee right of the viewport center. The marquee now occupies an
+   independent centered layer while Back and the reserved accessory region sit
+   in a separate edge-control layer. Focused before/after evidence:
+   `/tmp/pocket-vector-submenu-title-center-20260719/screenshots/header-before-after.png`.
+   Source-to-final full-view evidence:
+   `/tmp/pocket-vector-submenu-title-center-20260719/design-qa/source-vs-centered-title.png`.
 
 ## Follow-up Polish
 
@@ -133,5 +141,9 @@ so compact iPhone intentionally scrolls beyond the six-card sample mock.
   `/tmp/pocket-vector-submenus-theme3-20260719/final-after-locker-focused.xcresult`.
 - The unsigned Release archive passed at
   `/tmp/pocket-vector-submenus-theme3-20260719/PocketVector-submenus-final.xcarchive`.
+- The centered-title follow-up passed on compact iPhone, regular iPhone, and
+  iPad with marquee centers at the exact viewport centers and no title/control
+  overlap. Focused tests passed at
+  `/tmp/pocket-vector-submenu-title-center-20260719/title-center-tests.xcresult`.
 
 final result: passed
