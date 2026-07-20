@@ -9,6 +9,10 @@ enum TutorialPage: Int, CaseIterable {
     case passing
 
     var number: Int { rawValue + 1 }
+
+    var previous: TutorialPage? {
+        TutorialPage(rawValue: rawValue - 1)
+    }
 }
 
 @MainActor
@@ -363,69 +367,152 @@ struct TutorialView: View {
         }
     }
 
+    @ViewBuilder
     private func transport(
         compact: Bool,
         expanded: Bool,
         accessibleType: Bool
     ) -> some View {
+        let previousWidth: CGFloat = compact ? 132 : (expanded ? 240 : 190)
         let replayWidth: CGFloat = compact ? 150 : (expanded ? 260 : 210)
         let completionWidth: CGFloat = compact ? 190 : (expanded ? 310 : 270)
-        let actionLayout = accessibleType && compact
-            ? AnyLayout(VStackLayout(spacing: 8))
-            : AnyLayout(HStackLayout(spacing: compact ? 8 : 12))
 
-        return actionLayout {
-            Button(action: replayDemo) {
-                HStack(spacing: compact ? 6 : 9) {
-                    if !accessibleType {
-                        ChampionshipPixelIcon(
-                            name: "SubmenuPlayIcon",
-                            size: compact ? 22 : (expanded ? 34 : 28)
-                        )
-                    }
-                    Text("REPLAY")
-                        .lineLimit(1)
+        if accessibleType {
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    previousButton(
+                        compact: compact,
+                        expanded: expanded,
+                        accessibleType: true
+                    )
+                    .frame(maxWidth: .infinity)
+
+                    replayButton(
+                        compact: compact,
+                        expanded: expanded,
+                        accessibleType: true
+                    )
+                    .frame(maxWidth: .infinity)
                 }
+
+                completionButton(
+                    compact: compact,
+                    expanded: expanded,
+                    accessibleType: true
+                )
                 .frame(maxWidth: .infinity)
             }
-            .buttonStyle(ChampionshipSecondaryButtonStyle())
-            .frame(width: accessibleType ? nil : replayWidth)
-            .frame(maxWidth: accessibleType ? .infinity : nil)
-            .disabled(!mediaIsReady)
-            .accessibilityLabel("Replay passing demonstration")
-            .accessibilityHint("Plays the complete tutorial animation from the beginning")
+            .frame(maxWidth: .infinity)
+        } else {
+            HStack(spacing: compact ? 8 : 12) {
+                previousButton(
+                    compact: compact,
+                    expanded: expanded,
+                    accessibleType: false
+                )
+                .frame(width: previousWidth)
 
-            if !accessibleType {
+                replayButton(
+                    compact: compact,
+                    expanded: expanded,
+                    accessibleType: false
+                )
+                .frame(width: replayWidth)
+
                 TutorialProgressLights(activeStage: playbackStage)
                     .frame(maxWidth: .infinity)
-            }
 
-            Button {
-                Task { await coordinator.completeTutorial() }
-            } label: {
-                HStack(spacing: compact ? 6 : 9) {
-                    Text(completionTitle.uppercased())
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                    if !accessibleType {
-                        ChampionshipPixelIcon(
-                            name: completionTitle == "Start Run"
-                                ? "SubmenuPlayIcon"
-                                : "SubmenuForwardIcon",
-                            size: compact ? 22 : (expanded ? 34 : 28)
-                        )
-                    }
-                }
-                .frame(maxWidth: .infinity)
+                completionButton(
+                    compact: compact,
+                    expanded: expanded,
+                    accessibleType: false
+                )
+                .frame(width: completionWidth)
             }
-            .buttonStyle(ChampionshipPrimaryButtonStyle(compact: compact))
-            .frame(width: accessibleType ? nil : completionWidth)
-            .frame(maxWidth: accessibleType ? .infinity : nil)
-            .accessibilityHint(completionHint)
-            .disabled(coordinator.isRequestInFlight)
+            .frame(maxWidth: expanded ? 1_180 : 980)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: accessibleType ? .infinity : (expanded ? 1_080 : 980))
-        .frame(maxWidth: .infinity)
+    }
+
+    private func previousButton(
+        compact: Bool,
+        expanded: Bool,
+        accessibleType: Bool
+    ) -> some View {
+        Button(action: showRules) {
+            HStack(spacing: compact ? 6 : 9) {
+                if !accessibleType {
+                    ChampionshipPixelIcon(
+                        name: "SubmenuBackIcon",
+                        size: compact ? 22 : (expanded ? 34 : 28)
+                    )
+                }
+                Text("PREVIOUS")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(ChampionshipSecondaryButtonStyle())
+        .accessibilityHint("Returns to the tutorial rules")
+    }
+
+    private func replayButton(
+        compact: Bool,
+        expanded: Bool,
+        accessibleType: Bool
+    ) -> some View {
+        Button(action: replayDemo) {
+            HStack(spacing: compact ? 6 : 9) {
+                if !accessibleType {
+                    ChampionshipPixelIcon(
+                        name: "SubmenuPlayIcon",
+                        size: compact ? 22 : (expanded ? 34 : 28)
+                    )
+                }
+                Text("REPLAY")
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(ChampionshipSecondaryButtonStyle())
+        .disabled(!mediaIsReady)
+        .accessibilityLabel("Replay passing demonstration")
+        .accessibilityHint("Plays the complete tutorial animation from the beginning")
+    }
+
+    private func completionButton(
+        compact: Bool,
+        expanded: Bool,
+        accessibleType: Bool
+    ) -> some View {
+        Button {
+            Task { await coordinator.completeTutorial() }
+        } label: {
+            HStack(spacing: compact ? 6 : 9) {
+                Text(completionTitle.uppercased())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                if !accessibleType {
+                    ChampionshipPixelIcon(
+                        name: completionTitle == "Start Run"
+                            ? "SubmenuPlayIcon"
+                            : "SubmenuForwardIcon",
+                        size: compact ? 22 : (expanded ? 34 : 28)
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(ChampionshipPrimaryButtonStyle(compact: compact))
+        .accessibilityHint(completionHint)
+        .disabled(coordinator.isRequestInFlight)
+    }
+
+    private func showRules() {
+        guard let previousPage = page.previous else { return }
+        player.pause()
+        page = previousPage
     }
 
     private func prepareMediaIfNeeded() {
@@ -510,7 +597,7 @@ private enum TutorialStage: Int, CaseIterable, Identifiable {
     }
 }
 
-private enum TutorialRule: Int, CaseIterable, Identifiable {
+enum TutorialRule: Int, CaseIterable, Identifiable {
     case clock
     case scoring
     case adrenaline
@@ -546,7 +633,7 @@ private enum TutorialRule: Int, CaseIterable, Identifiable {
         case .clock:
             "Score as many points as you can before the game clock reaches zero."
         case .scoring:
-            "Completions and touchdowns add points. Every interception costs 250 points."
+            "Completions and touchdowns add points. An interception is a −250-point penalty, but your score cannot fall below zero."
         case .adrenaline:
             "Completions fill Adrenaline for a touchdown bonus. The TD multiplier resets only after an incompletion or interception."
         }
@@ -560,21 +647,32 @@ private enum TutorialRule: Int, CaseIterable, Identifiable {
 private struct TutorialPageBadge: View {
     let page: TutorialPage
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
         HStack(spacing: 7) {
-            ForEach(TutorialPage.allCases.indices, id: \.self) { index in
-                Circle()
-                    .fill(
-                        index == page.rawValue
-                            ? PocketVectorTheme.championshipStatus
-                            : PocketVectorTheme.championshipGraphite
-                    )
-                    .frame(width: 7, height: 7)
+            if !dynamicTypeSize.isAccessibilitySize {
+                ForEach(TutorialPage.allCases.indices, id: \.self) { index in
+                    Circle()
+                        .fill(
+                            index == page.rawValue
+                                ? PocketVectorTheme.championshipStatus
+                                : PocketVectorTheme.championshipGraphite
+                        )
+                        .frame(width: 7, height: 7)
+                }
             }
-            Text("\(page.number) OF 2")
-                .font(.system(size: 12, weight: .black, design: .monospaced))
+
+            Text(
+                dynamicTypeSize.isAccessibilitySize
+                    ? "\(page.number)/2"
+                    : "\(page.number) OF 2"
+            )
+                .font(.system(.caption2, design: .monospaced, weight: .black))
                 .tracking(0.6)
                 .foregroundStyle(PocketVectorTheme.championshipGlacier)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: true)
         }
         .padding(.horizontal, 12)
         .frame(minHeight: 44)

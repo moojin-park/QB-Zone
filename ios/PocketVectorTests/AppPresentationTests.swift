@@ -93,6 +93,18 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: repairedURL), expectedData)
     }
 
+    func testTutorialScoringGuidanceDefinesPenaltyAndScoreFloor() {
+        XCTAssertEqual(
+            TutorialRule.scoring.guidance,
+            "Completions and touchdowns add points. An interception is a −250-point penalty, but your score cannot fall below zero."
+        )
+    }
+
+    func testTutorialPassingPageHasRulesAsPreviousPage() {
+        XCTAssertEqual(TutorialPage.passing.previous, .gameRules)
+        XCTAssertNil(TutorialPage.gameRules.previous)
+    }
+
     func testTeamPresentationUsesAllEightApprovedTeamsAndLockedPrices() throws {
         let catalog = LaunchCatalog.approved
         let state = AppCoordinatorState.launchDefault(catalog: catalog)
