@@ -130,6 +130,20 @@ content area. Regular-iPhone and iPad Accessibility 5 Tutorial and Results
 captures passed. No archive was required because this revision changes no
 resource, capability, app-composition, or Release configuration path.
 
+Art follow-up `46c4b96` is merged with full ancestry at `df690b8` (`Merge
+compact accessibility Art fixes`). Compact Accessibility 5 now keeps complete
+shared-header subtitles readable across Choose Your Offense, Team & Locker,
+Coin Store, Achievements, Settings, Tutorial, and Results, while preserving
+reachable content and actions. Results displays the complete `MAIN MENU` and
+`PLAY AGAIN` labels. The 61-test focused gate and exact 847-test simulator
+suite passed with no failure and the single existing filesystem skip. PM
+inspection of the 40-capture shared-header matrix passed compact Accessibility
+5 plus regular-iPhone and iPad standard regressions. The iPad Accessibility 5
+Results stat labels wrap awkwardly but remain complete and reachable; this is an
+accepted P3. No archive was required because the follow-up changes no resource,
+capability, app-composition, or Release configuration path. The tutorial,
+Results, and shared-header accessibility presentation is release-accepted.
+
 The same Art merge adds 544 baked team-and-jersey character frames and expands
 the exact native inventory from 76 to 620 assets. All 16 team/uniform sets pass
 the deterministic 34-frame validator. The complete Technical branch through
@@ -274,7 +288,7 @@ final codesigned entitlement payload; that remains a release-candidate gate.
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
 | Account-independent service foundations         | Complete            | Cloud transport/checkpoint, typed genesis/publication/hydration, canonical V4 seed, player-scoped Game Center delivery, StoreKit runtime, and challenge-only rewarded-ad verification/recovery foundations pass; none implies live composition |
 | Production app shell and menus                  | Complete            | Art-approved High Mesa main menu plus championship-styled offense selection, locker, store, achievements, and Settings ship; Privacy and Support remains Settings-routed |
-| Tutorial and results presentation               | In progress         | Two-page Rules/Passing tutorial and championship results screen are integrated; automated, standard-size, regular-iPhone AX5, and iPad AX5 gates pass, but compact AX5 Results truncates Play Again and shared-header reflow still harms Team & Locker |
+| Tutorial and results presentation               | Complete            | Two-page Rules/Passing tutorial, championship Results, and shared-header reflow pass compact/regular/iPad standard and Accessibility 5 gates; one accepted P3 remains for awkward iPad AX5 stat-label wrapping |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Paused gameplay presentation                    | In progress         | Refined Art panel and Technical/PM snapshot, Resume, and confirmed-exit actions are integrated and pass combined tests; compact-iPhone, regular-iPhone, and iPad landscape visual approval remains |
@@ -411,6 +425,10 @@ or runtime ownership boundaries.
 | 2026-07-20 | `29a8b5d` | Combined tutorial/scoring focused gate | 142 passed, 0 failed, 0 skipped across presentation, tutorial, app/gameplay coordinators, game core, gameplay session, economy/achievement, and launch visual identity tests; result bundle `/tmp/PocketVector-ArtScoring-29a8b5d-focused.xcresult` |
 | 2026-07-20 | `29a8b5d` | Exact integrated full simulator suite | 846 total: 845 passed, 0 failed, 1 existing conditional case-alias skip on a case-sensitive filesystem; result bundle `/tmp/PocketVector-ArtScoring-29a8b5d-full.xcresult` |
 | 2026-07-20 | `29a8b5d` | Revised multi-device visual gate | Standard and Accessibility 5 Rules, Passing, and Results captures passed on regular iPhone and iPad; compact Rules and Passing actions are reachable. Compact Accessibility 5 Results still truncates `PLAY AGAIN`, and live Team & Locker inspection truncates its subtitle while the shared header consumes most of the content area, so visual acceptance and a new shared baseline are withheld. Evidence: `/tmp/PocketVector-ArtScoring-29a8b5d-compact-ax5-results.png` and `/tmp/PocketVector-ArtScoring-29a8b5d-compact-ax5-locker.png` |
+| 2026-07-20 | `df690b8` | Compact Accessibility 5 Art integration | Art head `46c4b96` merged with full ancestry; all changed paths are Art-owned UI or corresponding presentation tests; merge preview, ownership review, and diff hygiene passed with no P0-P2 finding |
+| 2026-07-20 | `df690b8` | Shared-header and Results focused gate | 61 passed, 0 failed, 0 skipped across AppPresentation, LaunchVisualIdentity, AppCoordinator, and TutorialPrivacyCoordinator tests; result bundle `/tmp/PocketVector-Art-46c4b96-df690b8-focused.xcresult` |
+| 2026-07-20 | `df690b8` | Exact integrated full simulator suite | 847 total: 846 passed, 0 failed, 1 existing conditional case-alias skip on a case-sensitive filesystem; result bundle `/tmp/PocketVector-Art-46c4b96-df690b8-full.xcresult` |
+| 2026-07-20 | `df690b8` | Shared-header multi-device visual gate | Forty integrated captures passed compact/regular/iPad Accessibility 5 and regular/iPad standard inspection across Choose Offense, Team & Locker, Coin Store, Achievements, Settings, Tutorial Rules/Passing, and Results. Compact subtitles and full Results actions are readable and reachable. Accepted P3: iPad AX5 Results stat labels wrap awkwardly. Evidence directory `/tmp/PocketVector-Art-46c4b96-df690b8-attachments.KNLjzU` |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or

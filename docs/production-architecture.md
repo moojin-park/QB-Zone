@@ -4,10 +4,10 @@ Status: implementation contract for version 1
 
 Last updated: 2026-07-20
 
-Current integrated implementation: `29a8b5d`, the revised Art branch through
-`6516be6` followed by the revised Technical scoring commit `bd47ac2`. It is not
-yet a declared shared baseline because compact Accessibility 5 Results and the
-shared submenu header still have visual defects. The implementation includes
+Accepted implementation baseline: `df690b8`, the revised Art branch through
+`46c4b96` over the revised Technical scoring commit `bd47ac2`. Compact,
+regular-iPhone, and iPad shared-header, Tutorial, and Results presentation gates
+are accepted through Accessibility 5. The implementation includes
 the approved championship redesign of Choose Your Offense, Team & Locker,
 Achievements, Coin Store, and Settings; the centered-title correction; the
 active layered team-field renderer and baked team-uniform routing; refined
