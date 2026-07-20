@@ -104,6 +104,30 @@ private struct SyntheticUniformTexturePreparer: UniformTexturePreparing {
     }
 }
 
+private actor FallbackOnlyUniformTexturePreparer: UniformTexturePreparing {
+    private var fallbackPaths: [String?] = []
+
+    func prepare(
+        _ requests: [UniformTexturePreparationRequest]
+    ) async -> [PreparedUniformTexture] {
+        fallbackPaths += requests.map(\.developmentFallbackRelativePath)
+        return requests.compactMap { request in
+            guard request.developmentFallbackRelativePath != nil else { return nil }
+            return PreparedUniformTexture(
+                cacheKey: request.cacheKey,
+                width: 1,
+                height: 1,
+                bytesPerRow: 4,
+                rgbaData: Data([255, 0, 0, 255])
+            )
+        }
+    }
+
+    func recordedFallbackPaths() -> [String?] {
+        fallbackPaths
+    }
+}
+
 @MainActor
 private final class FirstTextureGatePreloader: UniformTexturePreloading {
     private let firstStarted: VisualLifecycleReceipt
@@ -451,6 +475,25 @@ final class LaunchVisualIdentityTests: XCTestCase {
                 )
                 XCTAssertEqual(configuration.defenseJerseyID, expectedJersey.id)
 
+                let uniformAssetRoots = try XCTUnwrap(
+                    RunGameplayUniformAssetRoots(
+                        configuration: configuration,
+                        catalog: catalog
+                    )
+                )
+                XCTAssertEqual(uniformAssetRoots.offense.teamID, offenseTeam.id)
+                XCTAssertEqual(uniformAssetRoots.offense.jerseyID, offenseJersey.id)
+                XCTAssertEqual(
+                    uniformAssetRoots.offense.relativePath,
+                    "characters/teams/\(offenseTeam.id.rawValue)/\(offenseJersey.kind.rawValue)"
+                )
+                XCTAssertEqual(uniformAssetRoots.defense.teamID, defense.id)
+                XCTAssertEqual(uniformAssetRoots.defense.jerseyID, expectedJersey.id)
+                XCTAssertEqual(
+                    uniformAssetRoots.defense.relativePath,
+                    "characters/teams/\(defense.id.rawValue)/\(expectedJersey.kind.rawValue)"
+                )
+
                 let resolved = try XCTUnwrap(visuals.runIdentity(for: configuration))
                 XCTAssertEqual(
                     resolved.defenseUniform,
@@ -466,196 +509,291 @@ final class LaunchVisualIdentityTests: XCTestCase {
         }
     }
 
-    func testSharedUniformPixelsProjectToExactJerseySlotsWithoutTintingSkin() throws {
-        let visuals = LaunchVisualIdentityCatalog.approved
-        let team = try XCTUnwrap(LaunchCatalog.approved.team(id: LaunchTeamID.novaCityComets))
-        let primary = try XCTUnwrap(
-            visuals.uniform(teamID: team.id, jerseyID: team.primaryJersey.id, role: .offense)
-        )
-        let alternate = try XCTUnwrap(
-            visuals.uniform(teamID: team.id, jerseyID: team.alternateJersey.id, role: .offense)
-        )
-        let authoredRed = UniformPixel(red: 210, green: 35, blue: 38, alpha: 255)
-        let primaryBody = UniformTextureProjection.project(
-            authoredRed,
-            normalizedX: 0.5,
-            normalizedY: 0.45,
-            role: .offense,
-            palette: primary
-        )
-        let alternateBody = UniformTextureProjection.project(
-            authoredRed,
-            normalizedX: 0.5,
-            normalizedY: 0.45,
-            role: .offense,
-            palette: alternate
-        )
-        XCTAssertNotEqual(primaryBody, authoredRed)
-        XCTAssertNotEqual(primaryBody, alternateBody)
+    @MainActor
+    func testAllSixteenLaunchJerseysResolveEveryBakedGameplayFrame() throws {
+        let catalog = LaunchCatalog.approved
+        let genericFramePaths = TextureLibrary.offenseUniformPaths
+            + TextureLibrary.defenseUniformPaths
+        var assetRoots = Set<GameplayJerseyAssetRoot>()
+        var cacheKeys = Set<UniformTextureCacheKey>()
 
-        let authoredBlue = UniformPixel(red: 28, green: 112, blue: 220, alpha: 255)
-        let defense = try XCTUnwrap(
-            visuals.uniform(
-                teamID: LaunchTeamID.highMesaHelions,
-                jerseyID: JerseyID("jersey.high_mesa_helions.primary"),
-                role: .defense
-            )
-        )
-        let defenseBody = UniformTextureProjection.project(
-            authoredBlue,
-            normalizedX: 0.5,
-            normalizedY: 0.45,
-            role: .defense,
-            palette: defense
-        )
-        let defenseHelmet = UniformTextureProjection.project(
-            authoredBlue,
-            normalizedX: 0.5,
-            normalizedY: 0.35,
-            role: .defense,
-            palette: defense
-        )
-        XCTAssertNotEqual(defenseBody, authoredBlue)
-        XCTAssertNotEqual(defenseHelmet, authoredBlue)
-        XCTAssertNotEqual(defenseHelmet, defenseBody)
+        XCTAssertEqual(catalog.teams.count, 8)
+        XCTAssertEqual(genericFramePaths.count, 34)
+        for team in catalog.teams {
+            for jersey in team.jerseys {
+                let approvedJersey = try XCTUnwrap(catalog.jersey(id: jersey.id))
+                XCTAssertEqual(approvedJersey, jersey)
 
-        let skin = UniformPixel(red: 176, green: 100, blue: 56, alpha: 255)
-        XCTAssertEqual(
-            UniformTextureProjection.project(
-                skin,
-                normalizedX: 0.5,
-                normalizedY: 0.45,
-                role: .offense,
-                palette: primary
-            ),
-            skin
-        )
+                let root = try XCTUnwrap(
+                    GameplayJerseyAssetRoot(
+                        teamID: team.id,
+                        jerseyID: approvedJersey.id,
+                        catalog: catalog
+                    )
+                )
+                XCTAssertEqual(
+                    root.relativePath,
+                    "characters/teams/\(team.id.rawValue)/\(jersey.kind.rawValue)"
+                )
+                assetRoots.insert(root)
 
-        let neutralSkinHighlight = UniformPixel(red: 220, green: 198, blue: 190, alpha: 255)
-        XCTAssertEqual(
-            UniformTextureProjection.project(
-                neutralSkinHighlight,
-                normalizedX: 0.22,
-                normalizedY: 0.43,
-                role: .offense,
-                palette: primary
-            ),
-            neutralSkinHighlight
-        )
+                for genericFramePath in genericFramePaths {
+                    let bakedFramePath = try XCTUnwrap(
+                        root.framePath(for: genericFramePath)
+                    )
+                    XCTAssertNotNil(
+                        GameAssetResources.url(for: bakedFramePath),
+                        bakedFramePath
+                    )
+                    XCTAssertEqual(
+                        BakedUniformRasterPreprocessor.pixelSize(
+                            relativePath: bakedFramePath
+                        ),
+                        CGSize(
+                            width: BakedUniformRasterPreprocessor.framePixelWidth,
+                            height: BakedUniformRasterPreprocessor.framePixelHeight
+                        ),
+                        bakedFramePath
+                    )
+                    cacheKeys.insert(
+                        UniformTextureCacheKey(
+                            assetRoot: root,
+                            genericFramePath: genericFramePath
+                        )
+                    )
+                }
 
-        let eyeWhite = UniformPixel(red: 248, green: 246, blue: 240, alpha: 255)
-        XCTAssertEqual(
-            UniformTextureProjection.project(
-                eyeWhite,
-                normalizedX: 0.5,
-                normalizedY: 0.25,
-                role: .offense,
-                palette: primary
-            ),
-            eyeWhite
-        )
-        XCTAssertNotEqual(
-            UniformTextureProjection.project(
-                eyeWhite,
-                normalizedX: 0.5,
-                normalizedY: 0.45,
-                role: .offense,
-                palette: primary
-            ),
-            eyeWhite,
-            "The same authored neutral is a number/name slot below the protected face region"
-        )
+            }
+        }
 
-        let antialiasedRedEdge = UniformPixel(red: 128, green: 0, blue: 0, alpha: 128)
-        let projectedEdge = UniformTextureProjection.project(
-            antialiasedRedEdge,
-            normalizedX: 0.5,
-            normalizedY: 0.45,
-            role: .offense,
-            palette: primary
-        )
-        XCTAssertNotEqual(projectedEdge, antialiasedRedEdge)
-        XCTAssertEqual(projectedEdge.alpha, antialiasedRedEdge.alpha)
-        XCTAssertLessThanOrEqual(projectedEdge.red, projectedEdge.alpha)
-        XCTAssertLessThanOrEqual(projectedEdge.green, projectedEdge.alpha)
-        XCTAssertLessThanOrEqual(projectedEdge.blue, projectedEdge.alpha)
+        XCTAssertEqual(assetRoots.count, 16)
+        XCTAssertEqual(cacheKeys.count, 16 * 34)
     }
 
-    func testShippedRasterUsesAuthoredTopToBottomUniformSlots() throws {
-        let relativePath = "characters/qb-idle.webp"
-        let source = try XCTUnwrap(
-            UniformRasterPreprocessor.loadRaster(relativePath: relativePath)
+    @MainActor
+    func testAllSixteenLaunchJerseysUseSeparateNearestNeighborCacheEntries() async throws {
+        let catalog = LaunchCatalog.approved
+        let preloader = RecordingUniformTexturePreloader()
+        let library = TextureLibrary(
+            uniformTexturePreparer: SyntheticUniformTexturePreparer(),
+            uniformTexturePreloader: preloader
         )
-        XCTAssertEqual(source.width, 384)
-        XCTAssertEqual(source.height, 512)
+        let genericFramePath = "characters/qb-idle.webp"
+        var cachedTextureIdentities = Set<ObjectIdentifier>()
 
+        for team in catalog.teams {
+            let defense = try XCTUnwrap(catalog.teams.first { $0.id != team.id })
+            for jersey in team.jerseys {
+                let configuration = RunConfiguration(
+                    runID: RunID(),
+                    randomSeed: 11,
+                    offenseTeamID: team.id,
+                    offenseJerseyID: jersey.id,
+                    defenseTeamID: defense.id,
+                    defenseJerseyID: defense.primaryJersey.id,
+                    footballID: LaunchFootballID.standard,
+                    economyVersion: EconomyConfiguration.currentVersion,
+                    startedAt: Date(timeIntervalSince1970: 1)
+                )
+                let roots = try XCTUnwrap(
+                    RunGameplayUniformAssetRoots(
+                        configuration: configuration,
+                        catalog: catalog
+                    )
+                )
+                let result = await library.prewarmRunUniformTextures(
+                    uniformAssetRoots: roots
+                )
+                XCTAssertTrue(result.isComplete)
+
+                let texture = try XCTUnwrap(
+                    library.uniformTexture(
+                        genericFramePath,
+                        assetRoot: roots.offense
+                    )
+                )
+                XCTAssertEqual(texture.filteringMode, .nearest)
+                cachedTextureIdentities.insert(ObjectIdentifier(texture))
+                XCTAssertTrue(
+                    texture === library.uniformTexture(
+                        genericFramePath,
+                        assetRoot: roots.offense
+                    )
+                )
+            }
+        }
+
+        XCTAssertEqual(cachedTextureIdentities.count, 16)
+        XCTAssertEqual(
+            preloader.invocationCount,
+            16 * (TextureLibrary.offenseUniformPaths.count
+                + TextureLibrary.defenseUniformPaths.count)
+        )
+    }
+
+    func testRunUniformAssetRootsRejectCrossTeamJerseys() throws {
+        let catalog = LaunchCatalog.approved
+        let offense = try XCTUnwrap(catalog.team(id: LaunchTeamID.novaCityComets))
+        let defense = try XCTUnwrap(catalog.team(id: LaunchTeamID.highMesaHelions))
+        let valid = RunConfiguration(
+            runID: RunID(),
+            randomSeed: 7,
+            offenseTeamID: offense.id,
+            offenseJerseyID: offense.alternateJersey.id,
+            defenseTeamID: defense.id,
+            defenseJerseyID: defense.primaryJersey.id,
+            footballID: LaunchFootballID.standard,
+            economyVersion: EconomyConfiguration.currentVersion,
+            startedAt: Date(timeIntervalSince1970: 1)
+        )
+        XCTAssertNotNil(
+            RunGameplayUniformAssetRoots(configuration: valid, catalog: catalog)
+        )
+
+        let mismatched = RunConfiguration(
+            runID: valid.runID,
+            randomSeed: valid.randomSeed,
+            offenseTeamID: valid.offenseTeamID,
+            offenseJerseyID: defense.alternateJersey.id,
+            defenseTeamID: valid.defenseTeamID,
+            defenseJerseyID: valid.defenseJerseyID,
+            footballID: valid.footballID,
+            economyVersion: valid.economyVersion,
+            startedAt: valid.startedAt
+        )
+        XCTAssertNil(
+            RunGameplayUniformAssetRoots(configuration: mismatched, catalog: catalog)
+        )
+
+        let sameTeam = RunConfiguration(
+            runID: valid.runID,
+            randomSeed: valid.randomSeed,
+            offenseTeamID: valid.offenseTeamID,
+            offenseJerseyID: valid.offenseJerseyID,
+            defenseTeamID: valid.offenseTeamID,
+            defenseJerseyID: offense.primaryJersey.id,
+            footballID: valid.footballID,
+            economyVersion: valid.economyVersion,
+            startedAt: valid.startedAt
+        )
+        XCTAssertNil(
+            RunGameplayUniformAssetRoots(configuration: sameTeam, catalog: catalog)
+        )
+    }
+
+    func testBakedUniformPreparationPreservesDecodedRGBAWithoutProjection() throws {
         let team = try XCTUnwrap(
             LaunchCatalog.approved.team(id: LaunchTeamID.novaCityComets)
         )
-        let palette = try XCTUnwrap(
-            LaunchVisualIdentityCatalog.approved.uniform(
+        let root = try XCTUnwrap(
+            GameplayJerseyAssetRoot(
                 teamID: team.id,
-                jerseyID: team.primaryJersey.id,
-                role: .offense
+                jerseyID: team.primaryJersey.id
             )
         )
-        let projected = UniformRasterPreprocessor.projectedRaster(
-            source,
-            palette: palette,
-            role: .offense
+        let genericFramePath = "characters/qb-idle.webp"
+        let bakedFramePath = try XCTUnwrap(root.framePath(for: genericFramePath))
+        let decoded = try XCTUnwrap(
+            BakedUniformRasterPreprocessor.loadRaster(relativePath: bakedFramePath)
         )
-
-        let helmetX = 165
-        let helmetY = 120
-        let helmetSource = try XCTUnwrap(source.pixel(x: helmetX, y: helmetY))
-        XCTAssertGreaterThan(helmetSource.red, helmetSource.green)
-        let helmetExpected = UniformTextureProjection.project(
-            helmetSource,
-            normalizedX: CGFloat(helmetX) / CGFloat(source.width - 1),
-            normalizedY: CGFloat(helmetY) / CGFloat(source.height - 1),
-            role: .offense,
-            palette: palette
-        )
-        let helmetActual = try XCTUnwrap(projected.pixel(x: helmetX, y: helmetY))
-        XCTAssertEqual(helmetActual, helmetExpected)
-        XCTAssertNotEqual(helmetActual, helmetSource)
-        XCTAssertNotEqual(
-            helmetActual,
-            UniformTextureProjection.project(
-                helmetSource,
-                normalizedX: CGFloat(helmetX) / CGFloat(source.width - 1),
-                normalizedY: 1 - CGFloat(helmetY) / CGFloat(source.height - 1),
-                role: .offense,
-                palette: palette
-            ),
-            "An inverted scanline would incorrectly assign this authored helmet to a lower slot"
-        )
-
-        let sockX = 135
-        let sockY = 400
-        let sockSource = try XCTUnwrap(source.pixel(x: sockX, y: sockY))
-        XCTAssertGreaterThan(sockSource.red, sockSource.green)
-        let sockActual = try XCTUnwrap(projected.pixel(x: sockX, y: sockY))
-        XCTAssertEqual(
-            sockActual,
-            UniformTextureProjection.project(
-                sockSource,
-                normalizedX: CGFloat(sockX) / CGFloat(source.width - 1),
-                normalizedY: CGFloat(sockY) / CGFloat(source.height - 1),
-                role: .offense,
-                palette: palette
+        let prepared = try XCTUnwrap(
+            BakedUniformRasterPreprocessor.prepare(
+                UniformTexturePreparationRequest(
+                    relativePath: bakedFramePath,
+                    developmentFallbackRelativePath: nil,
+                    cacheKey: UniformTextureCacheKey(
+                        assetRoot: root,
+                        genericFramePath: genericFramePath
+                    )
+                )
             )
         )
-        XCTAssertNotEqual(sockActual, sockSource)
 
-        let skinX = 104
-        let skinY = 250
-        let skinSource = try XCTUnwrap(source.pixel(x: skinX, y: skinY))
-        XCTAssertEqual(
-            try XCTUnwrap(projected.pixel(x: skinX, y: skinY)),
-            skinSource,
-            "A known shipped skin highlight must survive real-raster palette projection"
+        XCTAssertEqual(prepared.width, decoded.width)
+        XCTAssertEqual(prepared.height, decoded.height)
+        XCTAssertEqual(prepared.bytesPerRow, decoded.bytesPerRow)
+        XCTAssertEqual(prepared.rgbaData, Data(decoded.bytes))
+    }
+
+    func testGenericUniformFallbackRequiresExplicitDevelopmentRequest() throws {
+        let team = try XCTUnwrap(
+            LaunchCatalog.approved.team(id: LaunchTeamID.novaCityComets)
         )
+        let root = try XCTUnwrap(
+            GameplayJerseyAssetRoot(
+                teamID: team.id,
+                jerseyID: team.primaryJersey.id
+            )
+        )
+        let cacheKey = UniformTextureCacheKey(
+            assetRoot: root,
+            genericFramePath: "characters/qb-idle.webp"
+        )
+        let missingBakedPath = "characters/teams/missing/primary/qb-idle.webp"
+
+        XCTAssertNil(
+            BakedUniformRasterPreprocessor.prepare(
+                UniformTexturePreparationRequest(
+                    relativePath: missingBakedPath,
+                    developmentFallbackRelativePath: nil,
+                    cacheKey: cacheKey
+                )
+            )
+        )
+        XCTAssertNotNil(
+            BakedUniformRasterPreprocessor.prepare(
+                UniformTexturePreparationRequest(
+                    relativePath: missingBakedPath,
+                    developmentFallbackRelativePath: "characters/qb-idle.webp",
+                    cacheKey: cacheKey
+                )
+            )
+        )
+    }
+
+    @MainActor
+    func testTextureLibraryDefaultDisablesGenericFallback() async throws {
+        let roots = try launchUniformAssetRoots()
+        let defaultPreparer = FallbackOnlyUniformTexturePreparer()
+        let explicitPreparer = FallbackOnlyUniformTexturePreparer()
+
+        let defaultLibrary = TextureLibrary(
+            uniformTexturePreparer: defaultPreparer,
+            uniformTexturePreloader: RecordingUniformTexturePreloader()
+        )
+        let defaultResult = await defaultLibrary.prewarmRunUniformTextures(
+            uniformAssetRoots: roots
+        )
+        XCTAssertFalse(defaultResult.isComplete)
+        XCTAssertEqual(defaultResult.preparedCount, 0)
+        XCTAssertNil(
+            defaultLibrary.uniformTexture(
+                "characters/qb-idle.webp",
+                assetRoot: roots.offense
+            )
+        )
+        let defaultFallbacks = await defaultPreparer.recordedFallbackPaths()
+        XCTAssertEqual(defaultFallbacks.count, 34)
+        XCTAssertTrue(defaultFallbacks.allSatisfy { $0 == nil })
+
+        let developmentLibrary = TextureLibrary(
+            uniformTexturePreparer: explicitPreparer,
+            uniformTexturePreloader: RecordingUniformTexturePreloader(),
+            gameplayUniformFallbackPolicy: .developmentGeneric
+        )
+        let developmentResult = await developmentLibrary.prewarmRunUniformTextures(
+            uniformAssetRoots: roots
+        )
+        XCTAssertTrue(developmentResult.isComplete)
+        XCTAssertNotNil(
+            developmentLibrary.uniformTexture(
+                "characters/qb-idle.webp",
+                assetRoot: roots.offense
+            )
+        )
+        let explicitFallbacks = await explicitPreparer.recordedFallbackPaths()
+        XCTAssertEqual(explicitFallbacks.count, 34)
+        XCTAssertTrue(explicitFallbacks.allSatisfy { $0 != nil })
     }
 
     func testPausedGameplayResumeIssuesOneRequestPerPausedEpoch() {
@@ -830,7 +968,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
 
     @MainActor
     func testRunVisualReadinessCombinesUniformAndFieldPreloads() async throws {
-        let palettes = try launchUniformPalettes()
+        let uniformAssetRoots = try launchUniformAssetRoots()
         let preloader = RecordingUniformTexturePreloader()
         let library = TextureLibrary(
             uniformTexturePreparer: SyntheticUniformTexturePreparer(),
@@ -839,8 +977,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
         let stack = GameplayFieldLayerStack(offenseTeamID: LaunchTeamID.novaCityComets)
 
         let result = await library.prewarmRunVisualTextures(
-            offensePalette: palettes.offense,
-            defensePalette: palettes.defense,
+            uniformAssetRoots: uniformAssetRoots,
             fieldLayerStack: stack
         )
 
@@ -854,8 +991,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
         XCTAssertEqual(preloader.invocationCount, 38)
 
         let cached = await library.prewarmRunVisualTextures(
-            offensePalette: palettes.offense,
-            defensePalette: palettes.defense,
+            uniformAssetRoots: uniformAssetRoots,
             fieldLayerStack: stack
         )
         XCTAssertTrue(cached.isComplete)
@@ -986,27 +1122,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
         XCTAssertEqual(Set(TextureLibrary.offenseUniformPaths).count, 24)
         XCTAssertEqual(Set(TextureLibrary.defenseUniformPaths).count, 10)
 
-        let visuals = LaunchVisualIdentityCatalog.approved
-        let offenseTeam = try XCTUnwrap(
-            LaunchCatalog.approved.team(id: LaunchTeamID.novaCityComets)
-        )
-        let defenseTeam = try XCTUnwrap(
-            LaunchCatalog.approved.team(id: LaunchTeamID.highMesaHelions)
-        )
-        let offense = try XCTUnwrap(
-            visuals.uniform(
-                teamID: offenseTeam.id,
-                jerseyID: offenseTeam.alternateJersey.id,
-                role: .offense
-            )
-        )
-        let defense = try XCTUnwrap(
-            visuals.uniform(
-                teamID: defenseTeam.id,
-                jerseyID: defenseTeam.primaryJersey.id,
-                role: .defense
-            )
-        )
+        let uniformAssetRoots = try launchUniformAssetRoots(offenseAlternate: true)
 
         let library = TextureLibrary()
         let heartbeat = Task { @MainActor in
@@ -1014,8 +1130,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
             return ProcessInfo.processInfo.systemUptime
         }
         let result = await library.prewarmRunUniformTextures(
-            offensePalette: offense,
-            defensePalette: defense
+            uniformAssetRoots: uniformAssetRoots
         )
         let completionTime = ProcessInfo.processInfo.systemUptime
         let heartbeatTime = await heartbeat.value
@@ -1049,8 +1164,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
         add(firstPassTiming)
 
         let cachedResult = await library.prewarmRunUniformTextures(
-            offensePalette: offense,
-            defensePalette: defense
+            uniformAssetRoots: uniformAssetRoots
         )
         XCTAssertTrue(cachedResult.isComplete)
         XCTAssertEqual(cachedResult.preloadedCount, 34)
@@ -1067,30 +1181,12 @@ final class LaunchVisualIdentityTests: XCTestCase {
 
     @MainActor
     func testTexturePrewarmAwaitsInjectedSpriteKitPreloadCompletion() async throws {
-        let visuals = LaunchVisualIdentityCatalog.approved
-        let catalog = LaunchCatalog.approved
-        let offenseTeam = try XCTUnwrap(catalog.team(id: LaunchTeamID.novaCityComets))
-        let defenseTeam = try XCTUnwrap(catalog.team(id: LaunchTeamID.highMesaHelions))
-        let offense = try XCTUnwrap(
-            visuals.uniform(
-                teamID: offenseTeam.id,
-                jerseyID: offenseTeam.primaryJersey.id,
-                role: .offense
-            )
-        )
-        let defense = try XCTUnwrap(
-            visuals.uniform(
-                teamID: defenseTeam.id,
-                jerseyID: defenseTeam.primaryJersey.id,
-                role: .defense
-            )
-        )
+        let uniformAssetRoots = try launchUniformAssetRoots()
         let preloader = RecordingUniformTexturePreloader()
         let library = TextureLibrary(uniformTexturePreloader: preloader)
 
         let result = await library.prewarmRunUniformTextures(
-            offensePalette: offense,
-            defensePalette: defense
+            uniformAssetRoots: uniformAssetRoots
         )
 
         XCTAssertEqual(preloader.invocationCount, 34)
@@ -1102,7 +1198,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
 
     @MainActor
     func testCancelledPrewarmAfterPreparationDoesNotInstallOrPreload() async throws {
-        let palettes = try launchUniformPalettes()
+        let uniformAssetRoots = try launchUniformAssetRoots()
         let preparationStarted = VisualLifecycleReceipt("Uniform preparation started")
         let cancellationObserved = VisualLifecycleReceipt(
             "Uniform preparation observed task cancellation"
@@ -1119,8 +1215,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
 
         let task = Task { @MainActor in
             await library.prewarmRunUniformTextures(
-                offensePalette: palettes.offense,
-                defensePalette: palettes.defense
+                uniformAssetRoots: uniformAssetRoots
             )
         }
         await fulfillment(of: [preparationStarted.expectation], timeout: 5)
@@ -1139,8 +1234,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
             TextureLibrary.offenseUniformPaths.allSatisfy { path in
                 library.uniformTexture(
                     path,
-                    palette: palettes.offense,
-                    role: .offense
+                    assetRoot: uniformAssetRoots.offense
                 ) == nil
             }
         )
@@ -1148,8 +1242,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
             TextureLibrary.defenseUniformPaths.allSatisfy { path in
                 library.uniformTexture(
                     path,
-                    palette: palettes.defense,
-                    role: .defense
+                    assetRoot: uniformAssetRoots.defense
                 ) == nil
             }
         )
@@ -1157,7 +1250,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
 
     @MainActor
     func testCancellationDuringPreloadStopsRemainingUploadsAndSerializesRetry() async throws {
-        let palettes = try launchUniformPalettes()
+        let uniformAssetRoots = try launchUniformAssetRoots()
         let firstTextureStarted = VisualLifecycleReceipt("First texture preload started")
         let preloader = FirstTextureGatePreloader(firstStarted: firstTextureStarted)
         let library = TextureLibrary(
@@ -1167,8 +1260,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
 
         let cancelledTask = Task { @MainActor in
             await library.prewarmRunUniformTextures(
-                offensePalette: palettes.offense,
-                defensePalette: palettes.defense
+                uniformAssetRoots: uniformAssetRoots
             )
         }
         await fulfillment(of: [firstTextureStarted.expectation], timeout: 5)
@@ -1178,8 +1270,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
         let retryTask = Task { @MainActor in
             retryEntered.record()
             return await library.prewarmRunUniformTextures(
-                offensePalette: palettes.offense,
-                defensePalette: palettes.defense
+                uniformAssetRoots: uniformAssetRoots
             )
         }
         await fulfillment(of: [retryEntered.expectation], timeout: 5)
@@ -1196,8 +1287,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
         XCTAssertEqual(preloader.maximumConcurrentInvocationCount, 1)
 
         let cachedResult = await library.prewarmRunUniformTextures(
-            offensePalette: palettes.offense,
-            defensePalette: palettes.defense
+            uniformAssetRoots: uniformAssetRoots
         )
         XCTAssertTrue(cachedResult.isComplete)
         XCTAssertEqual(cachedResult.preprocessingDurationMilliseconds, 0)
@@ -1208,7 +1298,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
 
     @MainActor
     func testGameSceneTeardownCancelsPrewarmWithoutRetainingScene() async throws {
-        let palettes = try launchUniformPalettes()
+        let uniformAssetRoots = try launchUniformAssetRoots()
         let preparationStarted = VisualLifecycleReceipt("Scene uniform preparation started")
         let cancellationObserved = VisualLifecycleReceipt(
             "Scene uniform preparation observed cancellation"
@@ -1248,8 +1338,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
         // A live retry is event-driven proof that the cancelled scene task
         // released TextureLibrary's serialized prewarm turn without uploading.
         let retryResult = await library.prewarmRunUniformTextures(
-            offensePalette: palettes.offense,
-            defensePalette: palettes.defense
+            uniformAssetRoots: uniformAssetRoots
         )
         XCTAssertTrue(retryResult.isComplete)
         XCTAssertEqual(preloader.invocationCount, 34)
@@ -1339,29 +1428,27 @@ final class LaunchVisualIdentityTests: XCTestCase {
         scene.willMove(from: view)
     }
 
-    private func launchUniformPalettes() throws -> (
-        offense: UniformSpritePalette,
-        defense: UniformSpritePalette
-    ) {
-        let visuals = LaunchVisualIdentityCatalog.approved
+    private func launchUniformAssetRoots(
+        offenseAlternate: Bool = false
+    ) throws -> RunGameplayUniformAssetRoots {
         let catalog = LaunchCatalog.approved
         let offenseTeam = try XCTUnwrap(catalog.team(id: LaunchTeamID.novaCityComets))
         let defenseTeam = try XCTUnwrap(catalog.team(id: LaunchTeamID.highMesaHelions))
-        return (
-            offense: try XCTUnwrap(
-                visuals.uniform(
-                    teamID: offenseTeam.id,
-                    jerseyID: offenseTeam.primaryJersey.id,
-                    role: .offense
-                )
-            ),
-            defense: try XCTUnwrap(
-                visuals.uniform(
-                    teamID: defenseTeam.id,
-                    jerseyID: defenseTeam.primaryJersey.id,
-                    role: .defense
-                )
-            )
+        let configuration = RunConfiguration(
+            runID: RunID(),
+            randomSeed: 29,
+            offenseTeamID: offenseTeam.id,
+            offenseJerseyID: offenseAlternate
+                ? offenseTeam.alternateJersey.id
+                : offenseTeam.primaryJersey.id,
+            defenseTeamID: defenseTeam.id,
+            defenseJerseyID: defenseTeam.primaryJersey.id,
+            footballID: LaunchFootballID.standard,
+            economyVersion: EconomyConfiguration.currentVersion,
+            startedAt: Date(timeIntervalSince1970: 1)
+        )
+        return try XCTUnwrap(
+            RunGameplayUniformAssetRoots(configuration: configuration, catalog: catalog)
         )
     }
 
