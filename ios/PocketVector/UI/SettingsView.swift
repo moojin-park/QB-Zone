@@ -115,7 +115,7 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(ChampionshipSecondaryButtonStyle())
-            .accessibilityHint("Opens the four-step gameplay tutorial")
+            .accessibilityHint("Opens the three-step gameplay tutorial")
 
             Text(tutorialStatusText)
                 .font(.caption)

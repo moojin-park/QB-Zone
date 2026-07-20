@@ -107,6 +107,7 @@ struct BalanceBadge: View {
 struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
     let title: String
     let subtitle: String?
+    let showsBackButton: Bool
     let onBack: () -> Void
     @ViewBuilder let headerAccessory: HeaderAccessory
     @ViewBuilder let content: Content
@@ -114,12 +115,14 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
     init(
         title: String,
         subtitle: String? = nil,
+        showsBackButton: Bool = true,
         onBack: @escaping () -> Void,
         @ViewBuilder headerAccessory: () -> HeaderAccessory,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.subtitle = subtitle
+        self.showsBackButton = showsBackButton
         self.onBack = onBack
         self.headerAccessory = headerAccessory()
         self.content = content()
@@ -158,24 +161,32 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
                         .frame(width: titleWidth, height: headerHeight)
 
                         HStack(spacing: 0) {
-                            Button(action: onBack) {
-                                HStack(spacing: compactHeight ? 5 : 7) {
-                                    ChampionshipPixelIcon(
-                                        name: "SubmenuBackIcon",
-                                        size: compactHeight ? 28 : (padLayout ? 40 : 32)
-                                    )
-                                    Text("BACK")
-                                        .font(.system(
-                                            compactHeight ? .subheadline : (padLayout ? .title3 : .headline),
-                                            design: .monospaced,
-                                            weight: .black
-                                        ))
-                                        .tracking(0.5)
+                            Group {
+                                if showsBackButton {
+                                    Button(action: onBack) {
+                                        HStack(spacing: compactHeight ? 5 : 7) {
+                                            ChampionshipPixelIcon(
+                                                name: "SubmenuBackIcon",
+                                                size: compactHeight ? 28 : (padLayout ? 40 : 32)
+                                            )
+                                            Text("BACK")
+                                                .font(.system(
+                                                    compactHeight ? .subheadline : (padLayout ? .title3 : .headline),
+                                                    design: .monospaced,
+                                                    weight: .black
+                                                ))
+                                                .tracking(0.5)
+                                        }
+                                    }
+                                    .buttonStyle(ChampionshipBackButtonStyle(compact: compactHeight))
+                                    .accessibilityHint("Returns to the previous screen")
+                                    .accessibilitySortPriority(3)
+                                } else {
+                                    Color.clear
+                                        .frame(height: headerHeight)
+                                        .accessibilityHidden(true)
                                 }
                             }
-                            .buttonStyle(ChampionshipBackButtonStyle(compact: compactHeight))
-                            .accessibilityHint("Returns to the previous screen")
-                            .accessibilitySortPriority(3)
                             .frame(width: sideWidth, alignment: .leading)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -205,12 +216,14 @@ extension ChampionshipSubmenuScreen where HeaderAccessory == EmptyView {
     init(
         title: String,
         subtitle: String? = nil,
+        showsBackButton: Bool = true,
         onBack: @escaping () -> Void,
         @ViewBuilder content: () -> Content
     ) {
         self.init(
             title: title,
             subtitle: subtitle,
+            showsBackButton: showsBackButton,
             onBack: onBack,
             headerAccessory: { EmptyView() },
             content: content
@@ -235,7 +248,7 @@ private struct ChampionshipTitleMarquee: View {
                     .foregroundStyle(PocketVectorTheme.championshipGlacier)
             }
             .font(.system(
-                size: expanded ? 46 : 34,
+                size: expanded ? 46 : (compact ? 28 : 34),
                 weight: .black,
                 design: .monospaced
             ))
