@@ -1,53 +1,102 @@
+import AVFoundation
+import Combine
 import SwiftUI
+import UIKit
 
 @MainActor
 struct TutorialView: View {
     @Bindable var coordinator: AppCoordinator
-    @Environment(\.accessibilityReduceMotion) private var systemReducedMotion
-    @State private var selectedStep = 0
 
-    private let steps = TutorialStep.launch
+    @Environment(\.accessibilityReduceMotion) private var systemReducedMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
+
+    @State private var player = AVPlayer()
+    @State private var mediaIsReady = false
+    @State private var playbackStage = 0
+    @State private var hasAutoplayed = false
+
+    private let playbackClock = Timer.publish(
+        every: 0.10,
+        on: .main,
+        in: .common
+    )
+    .autoconnect()
+
+    private let stages = TutorialStage.allCases
 
     var body: some View {
-        PocketVectorScreen(
+        ChampionshipSubmenuScreen(
             title: "How to Play",
-            subtitle: "Step \(selectedStep + 1) of \(steps.count)",
-            onBack: coordinator.cancelTutorial
+            onBack: coordinator.cancelTutorial,
+            headerAccessory: {
+                TutorialStepBadge()
+            }
         ) {
-            VStack(spacing: 12) {
-                ProgressView(value: Double(selectedStep + 1), total: Double(steps.count))
-                    .tint(PocketVectorTheme.cyan)
-                    .padding(.horizontal)
-                    .accessibilityLabel("Tutorial progress")
-                    .accessibilityValue("Step \(selectedStep + 1) of \(steps.count)")
+            GeometryReader { proxy in
+                let compact = proxy.size.height < 330
+                let padLayout = proxy.size.width / max(proxy.size.height, 1) < 1.65
+                let accessibleType = dynamicTypeSize.isAccessibilitySize
+                let horizontalInset: CGFloat = compact ? 2 : (padLayout ? 18 : 8)
+                let verticalInset: CGFloat = compact ? 0 : (padLayout ? 18 : 4)
+                let stackSpacing: CGFloat = compact ? 6 : (padLayout ? 12 : 9)
+                let contentWidth = min(
+                    max(0, proxy.size.width - (horizontalInset * 2)),
+                    padLayout ? 1_280 : 1_240
+                )
+                let filmHeight: CGFloat = compact
+                    ? 160
+                    : (padLayout ? min(520, proxy.size.height * 0.63) : min(330, proxy.size.height * 0.66))
 
                 ScrollView {
-                    TutorialStepCard(step: steps[selectedStep])
-                        .id(steps[selectedStep].id)
-                        .frame(maxWidth: 760)
-                        .padding(.horizontal)
-                        .padding(.bottom, 8)
-                        .frame(maxWidth: .infinity)
+                    VStack(spacing: stackSpacing) {
+                        filmstrip(
+                            width: contentWidth,
+                            height: filmHeight,
+                            compact: compact,
+                            expanded: padLayout,
+                            accessibleType: accessibleType
+                        )
+
+                        TutorialInstructionRail(compact: compact)
+
+                        transport(compact: compact, expanded: padLayout)
+                    }
+                    .frame(width: contentWidth)
+                    .frame(
+                        minHeight: accessibleType ? nil : proxy.size.height - (verticalInset * 2),
+                        alignment: .center
+                    )
+                    .padding(.horizontal, horizontalInset)
+                    .padding(.vertical, verticalInset)
+                    .frame(maxWidth: .infinity)
                 }
                 .scrollBounceBehavior(.basedOnSize)
-
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) {
-                        leadingControl
-                        Spacer(minLength: 8)
-                        trailingControl
-                    }
-                    VStack(spacing: 8) {
-                        trailingControl
-                            .frame(maxWidth: .infinity)
-                        leadingControl
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .font(.headline)
-                .padding(.horizontal)
-                .padding(.bottom, 10)
             }
+        }
+        .task {
+            prepareMediaIfNeeded()
+        }
+        .onReceive(playbackClock) { _ in
+            updatePlaybackStage()
+        }
+        .onChange(of: reducesMotion) { _, reduced in
+            if reduced {
+                player.pause()
+                player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+                playbackStage = 0
+            } else if mediaIsReady, !hasAutoplayed {
+                hasAutoplayed = true
+                replayDemo()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                player.pause()
+            }
+        }
+        .onDisappear {
+            player.pause()
         }
     }
 
@@ -56,13 +105,6 @@ struct TutorialView: View {
             return "Start Run"
         }
         return "Finish Review"
-    }
-
-    private var completionIcon: String {
-        if case .tutorial(.beforeRun) = coordinator.currentDestination {
-            return "play.fill"
-        }
-        return "checkmark"
     }
 
     private var completionHint: String {
@@ -76,160 +118,466 @@ struct TutorialView: View {
         systemReducedMotion || coordinator.state.settings.reducedMotion
     }
 
-    private func move(to step: Int) {
-        let update = {
-            selectedStep = min(max(0, step), steps.count - 1)
-        }
-        if reducesMotion {
-            update()
+    @ViewBuilder
+    private func filmstrip(
+        width: CGFloat,
+        height: CGFloat,
+        compact: Bool,
+        expanded: Bool,
+        accessibleType: Bool
+    ) -> some View {
+        if accessibleType {
+            VStack(spacing: expanded ? 14 : 10) {
+                ForEach(stages) { stage in
+                    filmFrame(
+                        stage,
+                        width: width,
+                        height: expanded ? 330 : 220,
+                        compact: false,
+                        expanded: expanded
+                    )
+                }
+            }
         } else {
-            withAnimation(.easeInOut(duration: 0.16), update)
+            let spacing: CGFloat = compact ? 6 : (expanded ? 14 : 10)
+            let frameWidth = max(0, (width - (spacing * 2)) / 3)
+
+            HStack(spacing: spacing) {
+                ForEach(stages) { stage in
+                    filmFrame(
+                        stage,
+                        width: frameWidth,
+                        height: height,
+                        compact: compact,
+                        expanded: expanded
+                    )
+                }
+            }
+            .frame(height: height)
         }
     }
 
-    @ViewBuilder
-    private var leadingControl: some View {
-        if selectedStep > 0 {
-            Button {
-                move(to: selectedStep - 1)
-            } label: {
-                Label("Previous", systemImage: "chevron.left")
+    private func filmFrame(
+        _ stage: TutorialStage,
+        width: CGFloat,
+        height: CGFloat,
+        compact: Bool,
+        expanded: Bool
+    ) -> some View {
+        TutorialFilmFrame(
+            stage: stage,
+            isActive: playbackStage == stage.index,
+            width: width,
+            height: height,
+            compact: compact,
+            expanded: expanded
+        ) {
+            if stage == .throwToIt {
+                ZStack {
+                    tutorialImage(named: stage.posterAssetName)
+                    if mediaIsReady {
+                        TutorialPlayerSurface(player: player)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+            } else {
+                tutorialImage(named: stage.posterAssetName)
             }
-            .buttonStyle(.bordered)
-            .tint(PocketVectorTheme.cyan)
         }
     }
 
-    @ViewBuilder
-    private var trailingControl: some View {
-        if selectedStep < steps.count - 1 {
-            Button {
-                move(to: selectedStep + 1)
-            } label: {
-                Label("Next", systemImage: "chevron.right")
-                    .labelStyle(.titleAndIcon)
+    private func tutorialImage(named name: String) -> some View {
+        TutorialGameplayPoster(name: name)
+            .accessibilityHidden(true)
+    }
+
+    private func transport(compact: Bool, expanded: Bool) -> some View {
+        let replayWidth: CGFloat = compact ? 150 : (expanded ? 260 : 210)
+        let completionWidth: CGFloat = compact ? 190 : (expanded ? 310 : 270)
+
+        return HStack(spacing: compact ? 8 : 12) {
+            Button(action: replayDemo) {
+                HStack(spacing: compact ? 6 : 9) {
+                    ChampionshipPixelIcon(
+                        name: "SubmenuPlayIcon",
+                        size: compact ? 22 : (expanded ? 34 : 28)
+                    )
+                    Text("REPLAY")
+                }
+                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(PocketVectorTheme.cyan)
-            .foregroundStyle(PocketVectorTheme.void)
-        } else {
+            .buttonStyle(ChampionshipSecondaryButtonStyle())
+            .frame(width: replayWidth)
+            .disabled(!mediaIsReady)
+            .accessibilityLabel("Replay passing demonstration")
+            .accessibilityHint("Plays the complete tutorial animation from the beginning")
+
+            TutorialProgressLights(activeStage: playbackStage)
+                .frame(maxWidth: .infinity)
+
             Button {
                 Task { await coordinator.completeTutorial() }
             } label: {
-                Label(completionTitle, systemImage: completionIcon)
+                HStack(spacing: compact ? 6 : 9) {
+                    Text(completionTitle.uppercased())
+                    ChampionshipPixelIcon(
+                        name: completionTitle == "Start Run"
+                            ? "SubmenuPlayIcon"
+                            : "SubmenuForwardIcon",
+                        size: compact ? 22 : (expanded ? 34 : 28)
+                    )
+                }
+                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(PocketVectorTheme.cyan)
-            .foregroundStyle(PocketVectorTheme.void)
+            .buttonStyle(ChampionshipPrimaryButtonStyle(compact: compact))
+            .frame(width: completionWidth)
             .accessibilityHint(completionHint)
             .disabled(coordinator.isRequestInFlight)
         }
+        .frame(maxWidth: expanded ? 1_080 : 980)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func prepareMediaIfNeeded() {
+        guard player.currentItem == nil else { return }
+        guard let dataAsset = NSDataAsset(name: "TutorialRunUnder") else { return }
+
+        do {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("PocketVectorTutorial", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            let mediaURL = directory.appendingPathComponent("tutorial-pass-run-under-v1.mp4")
+            let existingSize = try? mediaURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            if existingSize != dataAsset.data.count {
+                try dataAsset.data.write(to: mediaURL, options: .atomic)
+            }
+
+            let item = AVPlayerItem(url: mediaURL)
+            player.replaceCurrentItem(with: item)
+            player.actionAtItemEnd = .pause
+            player.isMuted = true
+            mediaIsReady = true
+
+            if reducesMotion {
+                player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+            } else {
+                hasAutoplayed = true
+                replayDemo()
+            }
+        } catch {
+            mediaIsReady = false
+        }
+    }
+
+    private func replayDemo() {
+        guard mediaIsReady else { return }
+        playbackStage = 0
+        player.pause()
+        player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+        player.play()
+    }
+
+    private func updatePlaybackStage() {
+        guard mediaIsReady else { return }
+        let elapsed = player.currentTime().seconds
+        guard elapsed.isFinite else { return }
+
+        if elapsed < 1.45 {
+            playbackStage = 0
+        } else if elapsed < 2.45 {
+            playbackStage = 1
+        } else {
+            playbackStage = 2
+        }
     }
 }
 
-private struct TutorialStepCard: View {
-    let step: TutorialStep
+private enum TutorialStage: Int, CaseIterable, Identifiable {
+    case pickASpot
+    case throwToIt
+    case avoidDefenders
+
+    var id: Int { rawValue }
+    var index: Int { rawValue }
+    var number: Int { rawValue + 1 }
+
+    var title: String {
+        switch self {
+        case .pickASpot: "Pick a spot"
+        case .throwToIt: "Throw to it"
+        case .avoidDefenders: "Avoid the defenders"
+        }
+    }
+
+    var posterAssetName: String {
+        switch self {
+        case .pickASpot: "TutorialPickSpot"
+        case .throwToIt: "TutorialThrowToIt"
+        case .avoidDefenders: "TutorialAvoidDefenders"
+        }
+    }
+}
+
+private struct TutorialStepBadge: View {
+    var body: some View {
+        HStack(spacing: 7) {
+            ForEach(0 ..< 3, id: \.self) { _ in
+                Circle()
+                    .fill(PocketVectorTheme.championshipStatus)
+                    .frame(width: 7, height: 7)
+            }
+            Text("3 STEPS")
+                .font(.system(.caption, design: .monospaced, weight: .black))
+                .tracking(0.6)
+                .foregroundStyle(PocketVectorTheme.championshipGlacier)
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 44)
+        .background(
+            PocketVectorTheme.championshipVoid.opacity(0.96),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(PocketVectorTheme.championshipSilver.opacity(0.86), lineWidth: 1.5)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Three tutorial steps")
+    }
+}
+
+private struct TutorialFilmFrame<Media: View>: View {
+    let stage: TutorialStage
+    let isActive: Bool
+    let width: CGFloat
+    let height: CGFloat
+    let compact: Bool
+    let expanded: Bool
+    @ViewBuilder let media: Media
+
+    @ScaledMetric(relativeTo: .headline) private var regularTitleSize: CGFloat = 14
+    @ScaledMetric(relativeTo: .title3) private var expandedTitleSize: CGFloat = 20
+    @ScaledMetric(relativeTo: .headline) private var regularNumberSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .title3) private var expandedNumberSize: CGFloat = 23
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .center, spacing: 14) {
-                Image(systemName: step.systemImage)
-                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                    .foregroundStyle(PocketVectorTheme.cyan)
-                    .frame(width: 54, height: 54)
-                    .background(PocketVectorTheme.raisedSurface, in: RoundedRectangle(cornerRadius: 12))
-                    .accessibilityHidden(true)
+        let titleSize = compact ? 10 : (expanded ? expandedTitleSize : regularTitleSize)
+        let numberSize = compact ? 13 : (expanded ? expandedNumberSize : regularNumberSize)
+        let numberBoxSize = compact ? 25 : max(expanded ? 42 : 32, numberSize * 1.8)
+        let headerHeight = compact ? 34 : max(expanded ? 54 : 42, numberBoxSize + 12)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(step.eyebrow.uppercased())
-                        .font(.caption.weight(.black))
-                        .tracking(0.8)
-                        .foregroundStyle(PocketVectorTheme.cyan)
-                    Text(step.title)
-                        .font(.title.weight(.black))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            Text(step.summary)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(PocketVectorTheme.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(step.points, id: \.self) { point in
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Image(systemName: "circle.fill")
-                            .font(.system(size: 7))
-                            .foregroundStyle(PocketVectorTheme.gold)
-                            .accessibilityHidden(true)
-                        Text(point)
-                            .font(.body)
-                            .foregroundStyle(PocketVectorTheme.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: 0) {
+            HStack(spacing: compact ? 5 : (expanded ? 10 : 7)) {
+                Text(stage.number.formatted())
+                    .font(.system(
+                        size: numberSize,
+                        weight: .black,
+                        design: .monospaced
+                    ))
+                    .foregroundStyle(PocketVectorTheme.championshipStatus)
+                    .frame(
+                        width: numberBoxSize,
+                        height: numberBoxSize
+                    )
+                    .overlay {
+                        Rectangle()
+                            .stroke(PocketVectorTheme.championshipStatus, lineWidth: 2)
                     }
-                }
+
+                Text(stage.title.uppercased())
+                    .font(.system(
+                        size: titleSize,
+                        weight: .black,
+                        design: .monospaced
+                    ))
+                    .tracking(compact ? -0.6 : 0.2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.54)
+                    .foregroundStyle(PocketVectorTheme.championshipGlacier)
+
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, compact ? 6 : (expanded ? 13 : 9))
+            .frame(height: headerHeight)
+            .background(PocketVectorTheme.championshipVoid.opacity(0.98))
+
+            media
+                .frame(width: width, height: max(0, height - headerHeight))
+                .clipped()
+                .overlay {
+                    LinearGradient(
+                        colors: [.clear, PocketVectorTheme.championshipVoid.opacity(0.12)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .allowsHitTesting(false)
+                }
         }
-        .padding(22)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .pocketVectorPanel()
-        .accessibilityElement(children: .combine)
+        .frame(width: width, height: height)
+        .championshipPanel(isSelected: isActive)
+        .animation(.easeInOut(duration: 0.15), value: isActive)
+        .accessibilityHidden(true)
     }
 }
 
-private struct TutorialStep: Identifiable, Sendable {
-    let id: String
-    let eyebrow: String
-    let title: String
-    let systemImage: String
-    let summary: String
-    let points: [String]
+private struct TutorialInstructionRail: View {
+    let compact: Bool
 
-    static let launch: [TutorialStep] = [
-        TutorialStep(
-            id: "throw",
-            eyebrow: "The gesture",
-            title: "Swipe Upfield to Throw",
-            systemImage: "hand.draw.fill",
-            summary: "Touch the quarterback, drag upfield, and release where you want the football to arrive.",
-            points: [
-                "Aim ahead of a moving receiver instead of at where the receiver started.",
-                "A quick release produces a flatter, faster pass; a slower swipe creates a higher lob.",
-            ]
-        ),
-        TutorialStep(
-            id: "lanes",
-            eyebrow: "Read the field",
-            title: "Find Space in Four Lanes",
-            systemImage: "point.3.connected.trianglepath.dotted",
-            summary: "Receivers cross the field at four depths while defenders patrol between them.",
-            points: [
-                "Lead a receiver horizontally and release before the passing window closes.",
-                "The farthest lane is the end zone. A catch there scores a touchdown.",
-            ]
-        ),
-        TutorialStep(
-            id: "score",
-            eyebrow: "Build a big run",
-            title: "Score Before Time Expires",
-            systemImage: "timer",
-            summary: "You have 60 seconds of gameplay time to complete passes and stack points.",
-            points: [
-                "Short, medium, and deep completions build the Adrenaline / TD Bonus meter.",
-                "Fill the meter, then land a touchdown to cash the bonus. A miss or interception resets the meter.",
-            ]
-        ),
-        TutorialStep(
-            id: "controls",
-            eyebrow: "Play your way",
-            title: "Pause, Mute, and Adjust",
-            systemImage: "slider.horizontal.3",
-            summary: "Use the HUD controls to pause or mute without changing the rules of the run.",
-            points: [
-                "Music, sound effects, and Reduced Motion can be adjusted in Settings.",
-                "Pocket Vector also respects the device’s Reduce Motion preference.",
-            ]
-        ),
-    ]
+    var body: some View {
+        Text(
+            "Start on the quarterback, drag to open grass away from defenders, "
+                + "then release. The receiver runs under the throw."
+        )
+        .font(.system(
+            compact ? .caption2 : .subheadline,
+            design: .monospaced,
+            weight: .bold
+        ))
+        .foregroundStyle(PocketVectorTheme.championshipGlacier)
+        .multilineTextAlignment(.center)
+        .lineLimit(compact ? 2 : 2)
+        .minimumScaleFactor(0.72)
+        .padding(.horizontal, compact ? 10 : 18)
+        .frame(maxWidth: 1_040)
+        .frame(minHeight: compact ? 36 : 48)
+        .championshipPanel()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Passing demonstration")
+        .accessibilityValue(
+            "Step 1, Pick a spot. Step 2, Throw to it. Step 3, Avoid the defenders. "
+                + "Start on the quarterback, drag to open grass away from defenders, "
+                + "then release. The receiver runs under the throw."
+        )
+    }
+}
+
+private struct TutorialProgressLights: View {
+    let activeStage: Int
+
+    var body: some View {
+        HStack(spacing: 11) {
+            ForEach(0 ..< 3, id: \.self) { index in
+                Circle()
+                    .fill(
+                        index == activeStage
+                            ? PocketVectorTheme.championshipStatus
+                            : PocketVectorTheme.championshipGraphite
+                    )
+                    .frame(width: index == activeStage ? 14 : 11, height: index == activeStage ? 14 : 11)
+                    .overlay {
+                        Circle()
+                            .stroke(
+                                index == activeStage
+                                    ? PocketVectorTheme.championshipGlacier
+                                    : PocketVectorTheme.championshipSteel,
+                                lineWidth: 1.5
+                            )
+                    }
+                    .shadow(
+                        color: index == activeStage
+                            ? PocketVectorTheme.championshipStatus.opacity(0.7)
+                            : .clear,
+                        radius: 4
+                    )
+            }
+        }
+        .frame(minWidth: 76, minHeight: 44)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct TutorialPlayerSurface: UIViewRepresentable {
+    let player: AVPlayer
+
+    func makeUIView(context: Context) -> TutorialPlayerView {
+        let view = TutorialPlayerView()
+        view.playerLayer.player = player
+        view.playerLayer.videoGravity = .resizeAspect
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = false
+        return view
+    }
+
+    func updateUIView(_ uiView: TutorialPlayerView, context: Context) {
+        uiView.playerLayer.player = player
+    }
+}
+
+private struct TutorialGameplayPoster: View {
+    let name: String
+
+    private let sourceAspectRatio: CGFloat = 4 / 3
+
+    var body: some View {
+        GeometryReader { proxy in
+            let targetAspectRatio = proxy.size.width / max(proxy.size.height, 1)
+            let renderSize: CGSize = if targetAspectRatio >= sourceAspectRatio {
+                CGSize(
+                    width: proxy.size.width,
+                    height: proxy.size.width / sourceAspectRatio
+                )
+            } else {
+                CGSize(
+                    width: proxy.size.height * sourceAspectRatio,
+                    height: proxy.size.height
+                )
+            }
+
+            Image(name)
+                .resizable()
+                .interpolation(.none)
+                .frame(width: renderSize.width, height: renderSize.height)
+                .position(
+                    x: proxy.size.width / 2,
+                    y: proxy.size.height - (renderSize.height / 2)
+                )
+        }
+        .clipped()
+    }
+}
+
+private final class TutorialPlayerView: UIView {
+    let playerLayer = AVPlayerLayer()
+    private let sourceAspectRatio: CGFloat = 4 / 3
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        layer.addSublayer(playerLayer)
+        layer.masksToBounds = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        layer.addSublayer(playerLayer)
+        layer.masksToBounds = true
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, bounds.height > 0 else { return }
+
+        let targetAspectRatio = bounds.width / bounds.height
+        if targetAspectRatio >= sourceAspectRatio {
+            let renderHeight = bounds.width / sourceAspectRatio
+            playerLayer.frame = CGRect(
+                x: 0,
+                y: bounds.height - renderHeight,
+                width: bounds.width,
+                height: renderHeight
+            )
+        } else {
+            let renderWidth = bounds.height * sourceAspectRatio
+            playerLayer.frame = CGRect(
+                x: (bounds.width - renderWidth) / 2,
+                y: 0,
+                width: renderWidth,
+                height: bounds.height
+            )
+        }
+    }
 }
