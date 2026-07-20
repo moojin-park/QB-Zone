@@ -10,12 +10,13 @@ tracks execution, evidence, dependencies, and owner decisions.
 ## Current outcome
 
 The native foundation, launch rules, durable local repository, production app
-shell, first-run tutorial, fail-closed release information, eight-team shipping
-visuals, retained production runtime, and Apple-only diagnostics composition
-are complete. Typed first-zone Cloud replica genesis is versioned at `a584b65`
-(`Add typed cloud replica genesis`), and the repository hydration mutation
-barrier is versioned at `1a8036e` (`Add hydration mutation barrier`). The typed
-ordinary publication boundary immediately beneath them is `20e1cbc` (`Add
+shell, first-run tutorial, fail-closed release information, eight-team emblems
+and field visuals, retained production runtime, and Apple-only diagnostics
+composition are complete. Typed first-zone Cloud replica genesis is versioned
+at `a584b65` (`Add typed cloud replica genesis`), and the repository hydration
+mutation barrier is versioned at `1a8036e` (`Add hydration mutation barrier`).
+The typed ordinary publication boundary immediately beneath them is `20e1cbc`
+(`Add
 typed cloud replica publication`). The account-neutral, one-way canonical V4
 cloud-profile seed is versioned at `c5d6710` (`Add canonical V4 cloud profile
 seed`).
@@ -88,6 +89,25 @@ simulator suite, an unsigned generic-iOS Release archive, and independent review
 passed with no open P0-P3 finding. Art's committed emblem evidence passed PM
 inspection; integrated-device Art approval of the score-reaction presentation
 remains pending before visual release acceptance.
+
+The complete latest Art branch through `8f804ab` is merged with full ancestry at
+`17792f2` (`Merge latest Art direction`). The approved championship submenu
+redesign is present across Choose Your Offense, Team & Locker, Achievements,
+Coin Store, and Settings, including the centered-title correction. Privacy and
+Support remains available through Settings only. Compact-iPhone, regular-iPhone,
+and iPad evidence passed PM inspection with no additional P0-P3 submenu finding;
+the two documented P3 frame/crop choices remain accepted.
+
+The same Art merge adds 544 baked team-and-jersey character frames and expands
+the exact native inventory from 76 to 620 assets. All 16 team/uniform sets pass
+the deterministic 34-frame validator, but an independent integration audit
+found one P1 release blocker: gameplay still loads the shared character paths
+and applies runtime palette projection, so the approved baked uniforms are
+bundled but dormant. Art asset acceptance does not constitute live gameplay-
+uniform acceptance; Technical routing and projection-bypass work is required.
+The exact 43-test Art integration gate and 832-test simulator suite passed, and
+a fresh unsigned generic-iOS archive passed its 620-resource and compiled-
+submenu audit.
 
 Technical gameplay handoff `955a63e` is integrated patch-equivalently at
 `d5131cf` (`Expose explicit paused gameplay controls`). The PM bridge at
@@ -216,13 +236,13 @@ final codesigned entitlement payload; that remains a release-candidate gate.
 | Domain, catalog, economy, and achievement rules | Complete            | Eight teams, inventory, matchup, clash, reward, coin-pack, and eight-achievement rules pass exhaustive tests                          |
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
 | Account-independent service foundations         | Complete            | Cloud transport/checkpoint, typed genesis/publication/hydration, canonical V4 seed, player-scoped Game Center delivery, StoreKit runtime, and challenge-only rewarded-ad verification/recovery foundations pass; none implies live composition |
-| Production app shell and menus                  | Complete            | Art-approved High Mesa main menu, teams, locker, store, leaderboard, achievements, settings-routed privacy/support, tutorial, gameplay, and results ship |
+| Production app shell and menus                  | Complete            | Art-approved High Mesa main menu plus championship-styled offense selection, locker, store, achievements, and Settings ship; Privacy and Support remains Settings-routed |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Paused gameplay presentation                    | In progress         | Refined Art panel and Technical/PM snapshot, Resume, and confirmed-exit actions are integrated and pass combined tests; compact-iPhone, regular-iPhone, and iPad landscape visual approval remains |
 | Layered team-field assets                       | In progress         | Registered neutral, universal-marking, and eight-team paint layers are bundled and actively rendered in exact order; multi-device gameplay visual approval remains |
 | Scorebug reaction presentation                  | In progress         | Semantic one/two-line reactions, responsive geometry, reduced motion, lifecycle, and VoiceOver behavior pass automated gates; integrated-device Art visual approval remains |
-| Eight-team presentation system                  | Complete            | Eight approved emblems and palettes, 16 jersey palettes, two footballs, wordmarks, end zones, field branding, raster recoloring, and preload readiness ship |
+| Eight-team presentation system                  | In progress         | Eight approved emblems, fields, and baked primary/alternate character sets are bundled; Technical team/jersey routing and projection bypass remain before live-uniform acceptance |
 | Live Apple and advertising services             | In progress         | Cloud claim/hydration and online-only StoreKit composition are implemented and fail closed without complete configuration; permanent IDs, products, records, production schema, Game Center retention, authenticated ad transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
 | TestFlight release candidate                    | Queued              | Device, accessibility, sandbox, sync, replay, crash, and economy gates pass                                                           |
@@ -336,6 +356,11 @@ or runtime ownership boundaries.
 | 2026-07-19 | `475e3af` | Exact combined full simulator suite | 832 total: 831 passed, 0 failed, 1 existing conditional case-alias skip on iPhone 17 Pro; result bundle `/tmp/PocketVector-Emblems-ReactionHUD-475e3af-full.xcresult` |
 | 2026-07-19 | `475e3af` | Integrated Art evidence review | Compact-iPhone, regular-iPhone, iPad, and field-registration emblem composites passed PM inspection; integrated-device Art approval of the Technical score-reaction presentation remains pending |
 | 2026-07-19 | `475e3af` | Unsigned generic-iOS Release archive | Passed at `/tmp/pocket-vector-team-brand-archive-475e3af.8JFlyF/PocketVector.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit condition, valid privacy manifest, exact 76-asset package including seven changed branding files, and no QA/source/tool/doc content |
+| 2026-07-19 | `17792f2` | Latest full Art branch integration | Art head `8f804ab` merged with full ancestry; all five championship submenus and the centered-title follow-up are present; deterministic submenu regeneration and all 16 baked-uniform validators produced no diff |
+| 2026-07-19 | `17792f2` | Submenu, identity, coordinator, and manifest gate | 43 passed, 0 failed, 0 skipped on iPad Pro 13-inch; exact 620-asset manifest test passed; result bundle `/tmp/PocketVector-Art-Focused-iPad-17792f2.xcresult` |
+| 2026-07-19 | `17792f2` | Exact integrated full simulator suite | 832 total: 831 passed, 0 failed, 1 existing conditional case-alias skip on iPad Pro 13-inch; result bundle `/tmp/PocketVector-Art-Full-17792f2.xcresult` |
+| 2026-07-19 | `17792f2` | Integrated Art visual and independent review | Compact-iPhone, regular-iPhone, and iPad submenu evidence passed PM inspection with no submenu P0-P3 finding; independent runtime audit found one P1 because baked team uniforms remain dormant pending Technical routing |
+| 2026-07-19 | `17792f2` | Unsigned generic-iOS Release archive | Passed at `/tmp/pocket-vector-art-release-17792f2.sNZWsP/PocketVector.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production CloudKit, valid privacy manifest, exact 620-asset package, all 20 submenu renditions in `Assets.car`, and no QA/source/tool/doc content |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -460,13 +485,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the exact audited emblem/score-reaction integration; integrated-device Art approval of score reactions, multi-device paused-panel/field approval, and full release audit remain |
+| Known P0/P1 defects                  |      0 | 1 open: baked team uniforms are bundled but gameplay still uses shared projected sprites; submenu integration has no open P0-P3 finding |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud history, initial publication, hydration, online-only catalog debit/ownership, and StoreKit durable delivery pass internal tests; external sandbox/device gates remain |
-| Clean-checkout archive               |   Pass | Unsigned archive for exact integrated implementation commit `475e3af` passed; final codesigned entitlement/export proof remains |
+| Clean-checkout archive               |   Pass | Unsigned archive for exact Art integration commit `17792f2` passed; final codesigned entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
