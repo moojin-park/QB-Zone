@@ -111,6 +111,25 @@ three-step tutorial also no longer covers several subjects promised by the
 Technical-owned four-step gameplay documentation; that contract must be
 reconciled before this presentation is accepted.
 
+The revised Art branch through `6516be6` is merged with full ancestry at
+`371b876` (`Merge revised Art accessibility and tutorial`), followed by the
+revised Technical scoring commit `bd47ac2` at `29a8b5d` (`Merge revised
+gameplay scoring mechanics`). The integrated tutorial now has Rules and Passing
+pages, semantic Dynamic Type header reflow, compact page badges, pinned
+accessibility actions, Previous navigation, reduced-motion gating, and
+SHA-256-validated tutorial media caching. Gameplay applies a fixed 250-point
+interception penalty with a zero score floor, preserves the touchdown
+multiplier through completions, resets it after incompletions or interceptions,
+keeps the consecutive-touchdown statistic separate, and reports the applied
+interception deduction in the HUD and VoiceOver feedback. The 142-test combined
+focus and exact 846-test simulator suite passed with no failure and the single
+existing filesystem skip. Visual release acceptance remains withheld: compact
+Accessibility 5 Results truncates `PLAY AGAIN`, and the shared header reflow
+truncates the Team & Locker subtitle while consuming most of the compact
+content area. Regular-iPhone and iPad Accessibility 5 Tutorial and Results
+captures passed. No archive was required because this revision changes no
+resource, capability, app-composition, or Release configuration path.
+
 The same Art merge adds 544 baked team-and-jersey character frames and expands
 the exact native inventory from 76 to 620 assets. All 16 team/uniform sets pass
 the deterministic 34-frame validator. The complete Technical branch through
@@ -255,7 +274,7 @@ final codesigned entitlement payload; that remains a release-candidate gate.
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
 | Account-independent service foundations         | Complete            | Cloud transport/checkpoint, typed genesis/publication/hydration, canonical V4 seed, player-scoped Game Center delivery, StoreKit runtime, and challenge-only rewarded-ad verification/recovery foundations pass; none implies live composition |
 | Production app shell and menus                  | Complete            | Art-approved High Mesa main menu plus championship-styled offense selection, locker, store, achievements, and Settings ship; Privacy and Support remains Settings-routed |
-| Tutorial and results presentation               | In progress         | Three-panel tutorial and championship results screen are integrated and pass automated and standard-size visual gates; compact-landscape Accessibility XXXL layout and tutorial-content contract remain open |
+| Tutorial and results presentation               | In progress         | Two-page Rules/Passing tutorial and championship results screen are integrated; automated, standard-size, regular-iPhone AX5, and iPad AX5 gates pass, but compact AX5 Results truncates Play Again and shared-header reflow still harms Team & Locker |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Paused gameplay presentation                    | In progress         | Refined Art panel and Technical/PM snapshot, Resume, and confirmed-exit actions are integrated and pass combined tests; compact-iPhone, regular-iPhone, and iPad landscape visual approval remains |
@@ -388,6 +407,10 @@ or runtime ownership boundaries.
 | 2026-07-20 | `d0dee1a` | Exact integrated full simulator suite | 836 total: 835 passed, 0 failed, 1 existing conditional case-alias filesystem skip; result bundle `/tmp/PocketVector-Art-TutorialResults-d0dee1a-full.xcresult` |
 | 2026-07-20 | `d0dee1a` | Unsigned generic-iOS Release archive | Passed at `/tmp/PocketVector-Art-TutorialResults-d0dee1a-Release.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production app metadata, privacy manifest, exact 620-file GameAssets package, and all four new compiled tutorial assets verified; no source-art, tool, or documentation leakage |
 | 2026-07-20 | `d0dee1a` | Tutorial/results multi-device visual gate | Standard-size tutorial passed compact iPhone, regular iPhone, and iPad; standard-size results passed compact iPhone; playback, saved reduced motion, and accessibility labels/hints passed. Accessibility XXXL failed on compact landscape because tutorial and results content clips/truncates and results actions leave the visible frame; visual acceptance withheld. Evidence: `/tmp/PocketVector-Art-TutorialResults-d0dee1a-compact-tutorial.png`, `/tmp/PocketVector-Art-TutorialResults-d0dee1a-regular-tutorial.png`, `/tmp/PocketVector-Art-TutorialResults-d0dee1a-ipad-tutorial.png`, `/tmp/PocketVector-Art-TutorialResults-d0dee1a-compact-results.png`, and `/tmp/PocketVector-Art-TutorialResults-d0dee1a-compact-results-axxxl.png` |
+| 2026-07-20 | `29a8b5d` | Revised Art then Technical integration | Art head `6516be6` merged with full ancestry at `371b876`, then rewritten Technical head `bd47ac2` merged at `29a8b5d`; both worktrees were clean, both deltas were domain-pure, merge previews were conflict-free, and independent audits found no P0/P1 code issue |
+| 2026-07-20 | `29a8b5d` | Combined tutorial/scoring focused gate | 142 passed, 0 failed, 0 skipped across presentation, tutorial, app/gameplay coordinators, game core, gameplay session, economy/achievement, and launch visual identity tests; result bundle `/tmp/PocketVector-ArtScoring-29a8b5d-focused.xcresult` |
+| 2026-07-20 | `29a8b5d` | Exact integrated full simulator suite | 846 total: 845 passed, 0 failed, 1 existing conditional case-alias skip on a case-sensitive filesystem; result bundle `/tmp/PocketVector-ArtScoring-29a8b5d-full.xcresult` |
+| 2026-07-20 | `29a8b5d` | Revised multi-device visual gate | Standard and Accessibility 5 Rules, Passing, and Results captures passed on regular iPhone and iPad; compact Rules and Passing actions are reachable. Compact Accessibility 5 Results still truncates `PLAY AGAIN`, and live Team & Locker inspection truncates its subtitle while the shared header consumes most of the content area, so visual acceptance and a new shared baseline are withheld. Evidence: `/tmp/PocketVector-ArtScoring-29a8b5d-compact-ax5-results.png` and `/tmp/PocketVector-ArtScoring-29a8b5d-compact-ax5-locker.png` |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
