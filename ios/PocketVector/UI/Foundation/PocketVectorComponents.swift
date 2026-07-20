@@ -112,6 +112,8 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
     @ViewBuilder let headerAccessory: HeaderAccessory
     @ViewBuilder let content: Content
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     init(
         title: String,
         subtitle: String? = nil,
@@ -132,6 +134,7 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
         GeometryReader { proxy in
             let compactHeight = proxy.size.height < 430
             let padLayout = proxy.size.width / max(proxy.size.height, 1) < 1.65
+            let accessibilityLayout = dynamicTypeSize.isAccessibilitySize
             let horizontalPadding: CGFloat = compactHeight ? 12 : (padLayout ? 22 : 18)
             let headerHeight: CGFloat = compactHeight ? 72 : (padLayout ? 132 : 88)
             let innerWidth = proxy.size.width - (horizontalPadding * 2)
@@ -146,59 +149,100 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
                     innerWidth - (sideWidth * 2) - 20
                 )
             )
+            let accessibleTitleWidth = min(
+                innerWidth,
+                padLayout ? 720 : 560
+            )
+            let accessibleTitleHeight: CGFloat = {
+                if compactHeight {
+                    return subtitle == nil ? 72 : 132
+                }
+                return subtitle == nil ? 132 : 180
+            }()
 
             ZStack {
                 ChampionshipBackdrop()
 
                 VStack(spacing: compactHeight ? 7 : 10) {
-                    ZStack {
-                        ChampionshipTitleMarquee(
-                            title: title,
-                            subtitle: subtitle,
-                            compact: compactHeight,
-                            expanded: padLayout
-                        )
-                        .frame(width: titleWidth, height: headerHeight)
+                    if accessibilityLayout {
+                        VStack(spacing: compactHeight ? 6 : 10) {
+                            if showsBackButton {
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 12) {
+                                        backButton(
+                                            compactHeight: compactHeight,
+                                            padLayout: padLayout
+                                        )
 
-                        HStack(spacing: 0) {
-                            Group {
-                                if showsBackButton {
-                                    Button(action: onBack) {
-                                        HStack(spacing: compactHeight ? 5 : 7) {
-                                            ChampionshipPixelIcon(
-                                                name: "SubmenuBackIcon",
-                                                size: compactHeight ? 28 : (padLayout ? 40 : 32)
-                                            )
-                                            Text("BACK")
-                                                .font(.system(
-                                                    compactHeight ? .subheadline : (padLayout ? .title3 : .headline),
-                                                    design: .monospaced,
-                                                    weight: .black
-                                                ))
-                                                .tracking(0.5)
-                                        }
+                                        Spacer(minLength: 12)
+
+                                        headerAccessory
+                                            .fixedSize(horizontal: true, vertical: true)
                                     }
-                                    .buttonStyle(ChampionshipBackButtonStyle(compact: compactHeight))
-                                    .accessibilityHint("Returns to the previous screen")
-                                    .accessibilitySortPriority(3)
-                                } else {
-                                    Color.clear
-                                        .frame(height: headerHeight)
-                                        .accessibilityHidden(true)
-                                }
-                            }
-                            .frame(width: sideWidth, alignment: .leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                            Color.clear
-                                .frame(width: sideWidth, height: headerHeight)
-                                .overlay(alignment: .trailing) {
-                                    headerAccessory
+                                    VStack(spacing: 6) {
+                                        HStack {
+                                            backButton(
+                                                compactHeight: compactHeight,
+                                                padLayout: padLayout
+                                            )
+                                            Spacer(minLength: 0)
+                                        }
+
+                                        headerAccessory
+                                            .frame(maxWidth: .infinity, alignment: .trailing)
+                                    }
                                 }
+                                .frame(minHeight: compactHeight ? 58 : (padLayout ? 76 : 64))
+                            }
+
+                            ChampionshipTitleMarquee(
+                                title: title,
+                                subtitle: subtitle,
+                                compact: compactHeight,
+                                expanded: padLayout,
+                                accessibleType: true
+                            )
+                            .frame(width: accessibleTitleWidth, height: accessibleTitleHeight)
                         }
+                        .frame(maxWidth: .infinity)
+                    } else {
+                        ZStack {
+                            ChampionshipTitleMarquee(
+                                title: title,
+                                subtitle: subtitle,
+                                compact: compactHeight,
+                                expanded: padLayout,
+                                accessibleType: false
+                            )
+                            .frame(width: titleWidth, height: headerHeight)
+
+                            HStack(spacing: 0) {
+                                Group {
+                                    if showsBackButton {
+                                        backButton(
+                                            compactHeight: compactHeight,
+                                            padLayout: padLayout
+                                        )
+                                    } else {
+                                        Color.clear
+                                            .frame(height: headerHeight)
+                                            .accessibilityHidden(true)
+                                    }
+                                }
+                                .frame(width: sideWidth, alignment: .leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                                Color.clear
+                                    .frame(width: sideWidth, height: headerHeight)
+                                    .overlay(alignment: .trailing) {
+                                        headerAccessory
+                                    }
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: headerHeight)
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: headerHeight)
 
                     content
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -209,6 +253,29 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
             }
         }
         .foregroundStyle(PocketVectorTheme.championshipGlacier)
+    }
+
+    private func backButton(compactHeight: Bool, padLayout: Bool) -> some View {
+        Button(action: onBack) {
+            HStack(spacing: compactHeight ? 5 : 7) {
+                ChampionshipPixelIcon(
+                    name: "SubmenuBackIcon",
+                    size: compactHeight ? 28 : (padLayout ? 40 : 32)
+                )
+                Text("BACK")
+                    .font(.system(
+                        compactHeight ? .subheadline : (padLayout ? .title3 : .headline),
+                        design: .monospaced,
+                        weight: .black
+                    ))
+                    .tracking(0.5)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: true)
+            }
+        }
+        .buttonStyle(ChampionshipBackButtonStyle(compact: compactHeight))
+        .accessibilityHint("Returns to the previous screen")
+        .accessibilitySortPriority(3)
     }
 }
 
@@ -236,6 +303,7 @@ private struct ChampionshipTitleMarquee: View {
     let subtitle: String?
     let compact: Bool
     let expanded: Bool
+    let accessibleType: Bool
 
     var body: some View {
         VStack(spacing: compact ? 1 : 3) {
@@ -264,8 +332,10 @@ private struct ChampionshipTitleMarquee: View {
                         weight: .bold
                     ))
                     .foregroundStyle(PocketVectorTheme.championshipSilver)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(accessibleType ? 3 : 1)
+                    .minimumScaleFactor(accessibleType ? 1 : 0.72)
+                    .fixedSize(horizontal: false, vertical: accessibleType)
             }
         }
         .padding(.horizontal, compact ? 14 : (expanded ? 28 : 22))

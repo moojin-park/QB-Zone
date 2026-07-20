@@ -1,9 +1,110 @@
 import Foundation
+import SwiftUI
+import UIKit
 import XCTest
 
 @testable import PocketVector
 
 final class AppPresentationTests: XCTestCase {
+    @MainActor
+    func testCaptureTutorialAndResultsLayoutMatrix() async throws {
+        let tutorialCoordinator = AppCoordinator()
+        await tutorialCoordinator.bootstrap()
+        tutorialCoordinator.showTutorialReview()
+
+        let resultsCoordinator = AppCoordinator()
+        let results = try makeRunResultsPresentation()
+        let viewports: [(name: String, size: CGSize)] = [
+            ("compact-iphone-landscape", CGSize(width: 667, height: 375)),
+            ("regular-iphone-landscape", CGSize(width: 874, height: 402)),
+            ("ipad-landscape", CGSize(width: 1_376, height: 1_032)),
+        ]
+        let textSizes: [(name: String, size: DynamicTypeSize)] = [
+            ("standard", .large),
+            ("accessibility5", .accessibility5),
+        ]
+
+        for viewport in viewports {
+            for textSize in textSizes {
+                capture(
+                    AnyView(
+                        ZStack {
+                            PocketVectorBackdrop()
+                            TutorialView(
+                                coordinator: tutorialCoordinator,
+                                initialPage: .gameRules
+                            )
+                        }
+                        .dynamicTypeSize(textSize.size)
+                    ),
+                    size: viewport.size,
+                    name: "tutorial-rules-\(viewport.name)-\(textSize.name)"
+                )
+                capture(
+                    AnyView(
+                        ZStack {
+                            PocketVectorBackdrop()
+                            TutorialView(
+                                coordinator: tutorialCoordinator,
+                                initialPage: .passing
+                            )
+                        }
+                        .dynamicTypeSize(textSize.size)
+                    ),
+                    size: viewport.size,
+                    name: "tutorial-passing-\(viewport.name)-\(textSize.name)"
+                )
+                capture(
+                    AnyView(
+                        ZStack {
+                            PocketVectorBackdrop()
+                            RunResultsView(results: results, coordinator: resultsCoordinator)
+                        }
+                        .dynamicTypeSize(textSize.size)
+                    ),
+                    size: viewport.size,
+                    name: "results-\(viewport.name)-\(textSize.name)"
+                )
+            }
+        }
+    }
+
+    func testTutorialMediaCacheRejectsSameSizeCorruption() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PocketVectorTutorialCacheTests")
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let expectedData = Data(repeating: 0xA5, count: 64)
+        let mediaURL = try TutorialMediaCache.validatedURL(
+            for: expectedData,
+            directory: directory
+        )
+        XCTAssertTrue(TutorialMediaCache.fileMatches(at: mediaURL, expectedData: expectedData))
+
+        try Data(repeating: 0x5A, count: expectedData.count)
+            .write(to: mediaURL, options: .atomic)
+        XCTAssertFalse(TutorialMediaCache.fileMatches(at: mediaURL, expectedData: expectedData))
+
+        let repairedURL = try TutorialMediaCache.validatedURL(
+            for: expectedData,
+            directory: directory
+        )
+        XCTAssertEqual(try Data(contentsOf: repairedURL), expectedData)
+    }
+
+    func testTutorialScoringGuidanceDefinesPenaltyAndScoreFloor() {
+        XCTAssertEqual(
+            TutorialRule.scoring.guidance,
+            "Completions and touchdowns add points. An interception is a −250-point penalty, but your score cannot fall below zero."
+        )
+    }
+
+    func testTutorialPassingPageHasRulesAsPreviousPage() {
+        XCTAssertEqual(TutorialPage.passing.previous, .gameRules)
+        XCTAssertNil(TutorialPage.gameRules.previous)
+    }
+
     func testTeamPresentationUsesAllEightApprovedTeamsAndLockedPrices() throws {
         let catalog = LaunchCatalog.approved
         let state = AppCoordinatorState.launchDefault(catalog: catalog)
@@ -74,5 +175,66 @@ final class AppPresentationTests: XCTestCase {
             ["$0.99", "$2.99", "$5.99", "$9.99"]
         )
         XCTAssertEqual(AppPresentation.coinText(6_500), "6,500")
+    }
+
+    @MainActor
+    private func capture(_ view: AnyView, size: CGSize, name: String) {
+        let host = UIHostingController(rootView: view)
+        host.view.frame = CGRect(origin: .zero, size: size)
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        }
+        XCTAssertEqual(image.size, size)
+        let attachment = XCTAttachment(image: image)
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private func makeRunResultsPresentation() throws -> RunResultsPresentation {
+        let catalog = LaunchCatalog.approved
+        let offense = try XCTUnwrap(catalog.team(id: LaunchTeamID.novaCityComets))
+        let defense = try XCTUnwrap(catalog.team(id: LaunchTeamID.highMesaHelions))
+        let configuration = RunConfiguration(
+            runID: RunID(),
+            randomSeed: 29,
+            offenseTeamID: offense.id,
+            offenseJerseyID: offense.primaryJersey.id,
+            defenseTeamID: defense.id,
+            defenseJerseyID: defense.primaryJersey.id,
+            footballID: LaunchFootballID.standard,
+            economyVersion: EconomyConfiguration.currentVersion,
+            startedAt: Date(timeIntervalSince1970: 1)
+        )
+        let completedRun = CompletedRun(
+            configuration: configuration,
+            endedAt: Date(timeIntervalSince1970: 61),
+            elapsedGameplayMilliseconds: 60_000,
+            finishReason: .timerExpired,
+            score: 12_500,
+            statistics: RunStatisticsSnapshot(
+                attempts: 14,
+                completions: 7,
+                touchdowns: 3,
+                incompletions: 3,
+                interceptions: 1,
+                longestTouchdownStreak: 2
+            ),
+            completedLaneIDs: [],
+            bonusTouchdownCount: 1
+        )
+        return RunResultsPresentation(
+            completedRun: completedRun,
+            earnedCoins: 320,
+            pendingCoins: 0,
+            personalBest: 12_500,
+            isNewPersonalBest: true,
+            rewardedAdOffer: .progress(validRuns: 2, requiredRuns: 5)
+        )
     }
 }
