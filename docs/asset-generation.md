@@ -8,11 +8,12 @@ are intentionally kept outside that bundle.
 ## Inventory contract
 
 `ios/PocketVector/Resources/GameAssets/native-assets.json` declares the exact
-runtime inventory and its source provenance. The manifest contains 76 assets:
+runtime inventory and its source provenance. The manifest contains 620 assets:
 
 - 3 native control PNGs;
 - 16 WAV audio files;
-- 38 lossless character WebPs;
+- 582 lossless character WebPs: 38 shared/fallback frames and 544 baked
+  primary/alternate uniform frames for all eight launch teams;
 - 1 compatibility stadium field PNG;
 - 1 neutral stadium/turf PNG;
 - 1 universal field-markings PNG;
@@ -34,6 +35,16 @@ ios/AssetSources/PixelCharacters/defender-strip.png
 ios/AssetSources/PixelCharacters/official-strip.png
 ```
 
+Approved baked launch-team source strips:
+
+```text
+ios/AssetSources/PixelCharacters/teams/<team-id>/primary/{qb,receiver,defender}-strip.png
+ios/AssetSources/PixelCharacters/teams/<team-id>/alternate/{qb,receiver,defender}-strip.png
+```
+
+The eight valid `<team-id>` values and their palettes are documented in
+`ios/AssetSources/PixelCharacters/teams/README.md`.
+
 The processor validates nonempty equal-width slots, shared per-role scale,
 nearest-neighbor palette preservation, transparent padding, lossless WebP
 round trips, mirror pairs, and square defender direction pairs. It writes the
@@ -54,6 +65,37 @@ python3 ios/Tools/process-pixel-character-strips.py \
 
 Regenerate the checked-in WebPs by removing `--dry-run` and adding `--force`.
 Review every binary diff before committing.
+
+Team-specific baked sets use the same processor in `--uniform-only` mode. That
+mode emits exactly 34 QB, receiver, and defender frames and intentionally omits
+the four universal official frames. Generate every primary and alternate set
+into its catalog-backed asset prefix. Nova City is shown as the concrete
+example:
+
+```bash
+python3 ios/Tools/process-pixel-character-strips.py \
+  --qb-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/primary/qb-strip.png \
+  --receiver-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/primary/receiver-strip.png \
+  --defender-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/primary/defender-strip.png \
+  --uniform-only \
+  --output-dir ios/PocketVector/Resources/GameAssets/characters/teams/nova_city_comets/primary \
+  --force
+
+python3 ios/Tools/process-pixel-character-strips.py \
+  --qb-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/alternate/qb-strip.png \
+  --receiver-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/alternate/receiver-strip.png \
+  --defender-strip ios/AssetSources/PixelCharacters/teams/nova_city_comets/alternate/defender-strip.png \
+  --uniform-only \
+  --output-dir ios/PocketVector/Resources/GameAssets/characters/teams/nova_city_comets/alternate \
+  --force
+```
+
+All 16 team/uniform directories contain lossless 384 x 512 WebPs anchored at
+`[192, 496]`. Together they add 544 baked frames and approximately 25.14 MiB to
+the checked-in resource bundle. They preserve fully authored team materials
+and must be loaded without runtime uniform projection. The shared 38-frame set
+remains an emergency/development fallback rather than launch-team presentation.
+Technical owns team/jersey routing and the projection-bypass behavior.
 
 ## Stadium field
 
@@ -229,6 +271,44 @@ are normalized to 144 px, Coin to 96 px, and Personal Best to 660 x 381 px;
 these sizes cover the largest device-pixel slot without shipping multi-megabyte
 utility textures. Menu assets are validated through asset-catalog compilation
 and are not part of the exact `native-assets.json` inventory.
+
+## Championship submenu assets
+
+Editable masters for the neutral stadium plate, shared controls, eight
+achievement medals, and Settings icons live under:
+
+```text
+ios/AssetSources/Submenus/
+```
+
+The exact main-menu coin remains the only currency artwork and is consumed
+directly as `MenuCoinIcon`; the submenu generator does not duplicate or alter
+it. Team emblems, jersey previews, and football previews remain data-driven and
+are not baked into the neutral submenu assets.
+
+Runtime outputs are universal lossless PNG imagesets under:
+
+```text
+ios/PocketVector/Resources/Assets.xcassets/SubmenuStadiumBackdrop.imageset/
+ios/PocketVector/Resources/Assets.xcassets/Submenu*Icon.imageset/
+ios/PocketVector/Resources/Assets.xcassets/Achievement*Icon.imageset/
+ios/PocketVector/Resources/Assets.xcassets/Settings*Icon.imageset/
+```
+
+The backdrop is normalized to 2532 x 1170. Shared control icons are 144 px;
+achievement medals are 384 px; Settings panel icons are 192 px and row icons
+are 144 px. Nearest-neighbor reduction preserves the authored pixel edges and
+all outputs are stripped to deterministic 8-bit sRGB PNGs.
+
+Requirements: Node.js and ImageMagick.
+
+```bash
+node ios/Tools/generate-submenu-assets.mjs
+```
+
+These asset-catalog resources are outside `native-assets.json`. Validate them
+through JSON checks, asset-catalog compilation, simulator builds, and visual
+inspection on compact iPhone, regular iPhone, and iPad landscape.
 
 ## HUD control icons
 

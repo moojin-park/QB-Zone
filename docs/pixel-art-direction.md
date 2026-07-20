@@ -33,9 +33,14 @@ transparent canvas with a bottom-center anchor at `[192, 496]`.
   without mirroring the jersey number.
 - Official: two wave phases; left frames mirror right frames.
 
-Nearest-neighbor processing and lossless WebP encoding are required. Runtime
-uniform recoloring must preserve transparent padding, skin details, authored
-shading, helmet structure, and pose silhouettes.
+Nearest-neighbor processing and lossless WebP encoding are required. Approved
+team-specific uniform sets author jersey, pants, helmet, trim, and sock colors
+directly into the source art and must be loaded without runtime recoloring,
+tinting, or semantic masks. Transparent padding, skin details, authored
+shading, helmet structure, and pose silhouettes remain independent materials.
+All eight launch teams have primary and alternate baked sets. The shared
+generic set is an emergency/development fallback only and is not approved as
+the launch presentation for any team.
 
 ## Field and ball
 
@@ -121,6 +126,36 @@ required for iPad; do not letterbox the phone plate over a blurred enlargement.
   control has a concise label and the Play control includes an action hint.
 - Prefer nearest-neighbor scaling for character sprites and high-contrast text
   over fine pixel detail when the compact layout must compress.
+
+## Championship submenus
+
+Achievements, Coin Store, Team & Locker, Settings, and Choose Your Offense use
+one neutral championship-jumbotron system. The fixed shell is near-black navy,
+graphite, brushed steel, silver, and glacier white. Thin cool-cyan illumination
+is a status detail only; it does not fill primary controls or recolor the shell.
+The large Start Run and purchase controls earn hierarchy through scale, depth,
+white illumination, and a multi-step steel bezel rather than a launch-team hue.
+
+- No selected-team palette enters the background, title marquee, Back control,
+  navigation, generic icon, panel border, or primary action.
+- Team colors remain inside team emblems, jersey and football artwork, and the
+  three identity swatches shown on team cards.
+- Gold is reserved for the exact main-menu coin, prices, achievement points,
+  completed rewards, and other genuine reward states.
+- Every currency surface reuses `MenuCoinIcon` without tint, masking, redraw,
+  or team-color treatment. Visible prices use the coin mark plus the number;
+  VoiceOver continues to announce the word “coins.”
+- Selected content uses a glacier-white/silver outer border, semantic text or
+  icon, and only a thin cyan inner light so selection never depends on color.
+- The eight achievement medals and Settings controls use authored raster pixel
+  art. Back, disclosure, lock, selected, and play controls use the shared
+  authored submenu icon set instead of generic system symbols.
+- Native toggles and sliders retain their behavior, accessibility, and hit
+  testing. Their surrounding equipment bays and active lights receive the
+  Championship treatment.
+- Interactive targets remain at least 44 points, titles remain live SwiftUI
+  text, and compact-iPhone, regular-iPhone, and iPad landscape layouts keep all
+  headers, balances, scrolling content, and primary actions inside safe areas.
 
 ## Source and runtime boundaries
 

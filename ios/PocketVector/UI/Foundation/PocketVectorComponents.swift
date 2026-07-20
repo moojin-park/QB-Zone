@@ -66,19 +66,34 @@ struct BalanceBadge: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: "circle.hexagongrid.fill")
-                .foregroundStyle(PocketVectorTheme.gold)
+            Image("MenuCoinIcon")
+                .resizable()
+                .interpolation(.none)
+                .scaledToFit()
+                .frame(width: 24, height: 24)
+                .accessibilityHidden(true)
             Text(AppPresentation.coinText(confirmedCoins))
-                .font(.headline.monospacedDigit())
+                .font(.system(.headline, design: .monospaced, weight: .black).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
             if pendingCoins > 0 {
-                Text("+\(AppPresentation.coinText(pendingCoins)) pending")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(PocketVectorTheme.warning)
+                Text("+\(AppPresentation.coinText(pendingCoins)) PENDING")
+                    .font(.system(.caption2, design: .monospaced, weight: .bold))
+                    .foregroundStyle(PocketVectorTheme.gold)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.64)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(PocketVectorTheme.raisedSurface, in: Capsule())
+        .padding(.horizontal, 10)
+        .frame(minHeight: 44)
+        .background(
+            PocketVectorTheme.championshipVoid.opacity(0.97),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(PocketVectorTheme.championshipSilver.opacity(0.86), lineWidth: 1.5)
+        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Coin balance")
         .accessibilityValue(
@@ -86,6 +101,317 @@ struct BalanceBadge: View {
                 ? "\(confirmedCoins) available, \(pendingCoins) pending"
                 : "\(confirmedCoins) available"
         )
+    }
+}
+
+struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
+    let title: String
+    let subtitle: String?
+    let onBack: () -> Void
+    @ViewBuilder let headerAccessory: HeaderAccessory
+    @ViewBuilder let content: Content
+
+    init(
+        title: String,
+        subtitle: String? = nil,
+        onBack: @escaping () -> Void,
+        @ViewBuilder headerAccessory: () -> HeaderAccessory,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.onBack = onBack
+        self.headerAccessory = headerAccessory()
+        self.content = content()
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let compactHeight = proxy.size.height < 430
+            let padLayout = proxy.size.width / max(proxy.size.height, 1) < 1.65
+            let horizontalPadding: CGFloat = compactHeight ? 12 : (padLayout ? 22 : 18)
+            let headerHeight: CGFloat = compactHeight ? 72 : (padLayout ? 132 : 88)
+            let innerWidth = proxy.size.width - (horizontalPadding * 2)
+            let sideWidth = compactHeight
+                ? min(max(proxy.size.width * 0.23, 176), 220)
+                : min(max(proxy.size.width * 0.18, 210), padLayout ? 280 : 250)
+            let titleWidth = max(
+                240,
+                min(
+                    proxy.size.width * (padLayout ? 0.62 : 0.58),
+                    padLayout ? 720 : 760,
+                    innerWidth - (sideWidth * 2) - 20
+                )
+            )
+
+            ZStack {
+                ChampionshipBackdrop()
+
+                VStack(spacing: compactHeight ? 7 : 10) {
+                    ZStack {
+                        ChampionshipTitleMarquee(
+                            title: title,
+                            subtitle: subtitle,
+                            compact: compactHeight,
+                            expanded: padLayout
+                        )
+                        .frame(width: titleWidth, height: headerHeight)
+
+                        HStack(spacing: 0) {
+                            Button(action: onBack) {
+                                HStack(spacing: compactHeight ? 5 : 7) {
+                                    ChampionshipPixelIcon(
+                                        name: "SubmenuBackIcon",
+                                        size: compactHeight ? 28 : (padLayout ? 40 : 32)
+                                    )
+                                    Text("BACK")
+                                        .font(.system(
+                                            compactHeight ? .subheadline : (padLayout ? .title3 : .headline),
+                                            design: .monospaced,
+                                            weight: .black
+                                        ))
+                                        .tracking(0.5)
+                                }
+                            }
+                            .buttonStyle(ChampionshipBackButtonStyle(compact: compactHeight))
+                            .accessibilityHint("Returns to the previous screen")
+                            .accessibilitySortPriority(3)
+                            .frame(width: sideWidth, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Color.clear
+                                .frame(width: sideWidth, height: headerHeight)
+                                .overlay(alignment: .trailing) {
+                                    headerAccessory
+                                }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: headerHeight)
+
+                    content
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding(.horizontal, horizontalPadding)
+                .padding(.top, compactHeight ? 6 : 10)
+                .padding(.bottom, compactHeight ? 7 : 11)
+            }
+        }
+        .foregroundStyle(PocketVectorTheme.championshipGlacier)
+    }
+}
+
+extension ChampionshipSubmenuScreen where HeaderAccessory == EmptyView {
+    init(
+        title: String,
+        subtitle: String? = nil,
+        onBack: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.init(
+            title: title,
+            subtitle: subtitle,
+            onBack: onBack,
+            headerAccessory: { EmptyView() },
+            content: content
+        )
+    }
+}
+
+private struct ChampionshipTitleMarquee: View {
+    let title: String
+    let subtitle: String?
+    let compact: Bool
+    let expanded: Bool
+
+    var body: some View {
+        VStack(spacing: compact ? 1 : 3) {
+            ZStack {
+                Text(title.uppercased())
+                    .foregroundStyle(.black.opacity(0.85))
+                    .offset(x: 2, y: 3)
+                    .accessibilityHidden(true)
+                Text(title.uppercased())
+                    .foregroundStyle(PocketVectorTheme.championshipGlacier)
+            }
+            .font(.system(
+                size: expanded ? 46 : 34,
+                weight: .black,
+                design: .monospaced
+            ))
+            .tracking(compact ? -1.0 : (expanded ? -0.3 : -0.6))
+            .lineLimit(1)
+            .minimumScaleFactor(0.62)
+
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(
+                        compact ? .caption2 : (expanded ? .subheadline : .caption),
+                        design: .monospaced,
+                        weight: .bold
+                    ))
+                    .foregroundStyle(PocketVectorTheme.championshipSilver)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+        }
+        .padding(.horizontal, compact ? 14 : (expanded ? 28 : 22))
+        .padding(.vertical, compact ? 7 : (expanded ? 14 : 10))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .championshipPanel()
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(PocketVectorTheme.championshipGlacier.opacity(0.78))
+                .frame(height: 1)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 5)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+        .accessibilitySortPriority(2)
+    }
+}
+
+struct ChampionshipPixelIcon: View {
+    let name: String
+    var size: CGFloat
+
+    var body: some View {
+        Image(name)
+            .resizable()
+            .interpolation(.none)
+            .scaledToFit()
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
+struct CoinAmount: View {
+    let amount: Int64
+    var iconSize: CGFloat = 22
+    var font: Font = .subheadline.weight(.black).monospacedDigit()
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image("MenuCoinIcon")
+                .resizable()
+                .interpolation(.none)
+                .scaledToFit()
+                .frame(width: iconSize, height: iconSize)
+                .accessibilityHidden(true)
+            Text(AppPresentation.coinText(amount))
+                .font(font)
+                .foregroundStyle(PocketVectorTheme.gold)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(amount) coins")
+    }
+}
+
+struct ChampionshipSectionTitle: View {
+    let title: String
+    let iconName: String?
+
+    init(_ title: String, iconName: String? = nil) {
+        self.title = title
+        self.iconName = iconName
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            if let iconName {
+                ChampionshipPixelIcon(name: iconName, size: 30)
+            }
+            Text(title.uppercased())
+                .font(.system(.headline, design: .monospaced, weight: .black))
+                .tracking(0.8)
+                .foregroundStyle(PocketVectorTheme.championshipGlacier)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private struct ChampionshipBackButtonStyle: ButtonStyle {
+    let compact: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(PocketVectorTheme.championshipGlacier)
+            .padding(.horizontal, compact ? 9 : 12)
+            .frame(minHeight: compact ? 44 : 48)
+            .background(
+                PocketVectorTheme.championshipVoid.opacity(
+                    configuration.isPressed ? 0.72 : 0.96
+                ),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(PocketVectorTheme.championshipSilver, lineWidth: 1.5)
+            }
+            .shadow(color: .black.opacity(0.7), radius: 2, x: 0, y: 2)
+    }
+}
+
+struct ChampionshipPrimaryButtonStyle: ButtonStyle {
+    var compact: Bool = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(
+                compact ? .headline : .title3,
+                design: .monospaced,
+                weight: .black
+            ))
+            .tracking(0.6)
+            .foregroundStyle(PocketVectorTheme.championshipGlacier)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: compact ? 48 : 54)
+            .padding(.horizontal, compact ? 12 : 18)
+            .background(
+                LinearGradient(
+                    colors: configuration.isPressed
+                        ? [PocketVectorTheme.championshipGraphite, PocketVectorTheme.championshipVoid]
+                        : [PocketVectorTheme.championshipNavy, PocketVectorTheme.championshipVoid],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                in: RoundedRectangle(cornerRadius: 9)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(PocketVectorTheme.championshipGlacier, lineWidth: 2)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(PocketVectorTheme.championshipStatus.opacity(0.72), lineWidth: 1)
+                    .padding(4)
+            }
+            .shadow(
+                color: PocketVectorTheme.championshipStatus.opacity(configuration.isPressed ? 0.20 : 0.42),
+                radius: configuration.isPressed ? 2 : 5
+            )
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+    }
+}
+
+struct ChampionshipSecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(.subheadline, design: .monospaced, weight: .bold))
+            .foregroundStyle(PocketVectorTheme.championshipGlacier)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 46)
+            .background(
+                PocketVectorTheme.championshipGraphite.opacity(
+                    configuration.isPressed ? 0.72 : 0.96
+                ),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(PocketVectorTheme.championshipSilver.opacity(0.82), lineWidth: 1.5)
+            }
     }
 }
 

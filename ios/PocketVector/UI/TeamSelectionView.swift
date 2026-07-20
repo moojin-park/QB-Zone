@@ -2,35 +2,54 @@ import SwiftUI
 
 @MainActor
 struct TeamSelectionView: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     @Bindable var coordinator: AppCoordinator
+
+    private var expandedLayout: Bool {
+        verticalSizeClass == .regular
+    }
 
     private var cards: [TeamCardPresentation] {
         AppPresentation.teams(catalog: coordinator.catalog, state: coordinator.state)
     }
 
+    private var selectedJersey: JerseyDescriptor? {
+        guard let team = coordinator.selectedTeam else { return nil }
+        guard let jerseyID = coordinator.state.selection.selectedJerseyByTeam[team.id] else {
+            return team.primaryJersey
+        }
+        return coordinator.catalog.jersey(id: jerseyID) ?? team.primaryJersey
+    }
+
     var body: some View {
-        PocketVectorScreen(
+        ChampionshipSubmenuScreen(
             title: "Choose Your Offense",
             subtitle: "The defense is randomized from the other seven teams.",
-            onBack: coordinator.goBack
+            onBack: coordinator.goBack,
+            headerAccessory: {
+                BalanceBadge(
+                    confirmedCoins: coordinator.state.confirmedCoins,
+                    pendingCoins: coordinator.state.pendingCoins
+                )
+            }
         ) {
             VStack(spacing: 10) {
                 HStack {
-                    BalanceBadge(
-                        confirmedCoins: coordinator.state.confirmedCoins,
-                        pendingCoins: coordinator.state.pendingCoins
-                    )
                     Spacer()
-                    Text("4 free · 4 coin unlocks")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(PocketVectorTheme.textSecondary)
+                    Text("4 FREE  •  4 UNLOCKS")
+                        .font(.system(.caption2, design: .monospaced, weight: .bold))
+                        .tracking(0.7)
+                        .foregroundStyle(PocketVectorTheme.championshipSilver)
                 }
                 .padding(.horizontal)
 
                 ScrollView {
                     LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 220, maximum: 360), spacing: 12)],
-                        spacing: 12
+                        columns: expandedLayout
+                            ? [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)]
+                            : [GridItem(.adaptive(minimum: 220, maximum: 360), spacing: 12)],
+                        spacing: expandedLayout ? 16 : 12
                     ) {
                         ForEach(cards) { card in
                             TeamSelectionCard(card: card) {
@@ -41,19 +60,31 @@ struct TeamSelectionView: View {
                     .padding(.horizontal)
                     .padding(.bottom, 8)
                 }
+                .frame(maxHeight: expandedLayout ? 540 : .infinity)
 
                 HStack(spacing: 12) {
                     if let team = coordinator.selectedTeam {
                         HStack(spacing: 10) {
-                            TeamMark(team: team, size: 42)
+                            TeamMark(team: team, size: expandedLayout ? 56 : 42)
+                            if let selectedJersey {
+                                JerseyPreview(jersey: selectedJersey)
+                                    .frame(
+                                        width: expandedLayout ? 64 : 48,
+                                        height: expandedLayout ? 56 : 42
+                                    )
+                            }
                             VStack(alignment: .leading, spacing: 1) {
                                 Text("OFFENSE")
                                     .font(.caption2.weight(.bold))
                                     .foregroundStyle(PocketVectorTheme.textSecondary)
                                 Text(team.displayName)
-                                    .font(.headline)
+                                    .font(expandedLayout ? .title3 : .headline)
                                     .lineLimit(1)
                             }
+
+                            Text("EQUIPPED")
+                                .font(.system(.caption2, design: .monospaced, weight: .black))
+                                .foregroundStyle(PocketVectorTheme.success)
                         }
                         .accessibilityElement(children: .combine)
                     }
@@ -63,15 +94,20 @@ struct TeamSelectionView: View {
                     Button {
                         _ = coordinator.startRun()
                     } label: {
-                        Label("Start Run", systemImage: "play.fill")
-                            .frame(minWidth: 150)
+                        HStack(spacing: 9) {
+                            ChampionshipPixelIcon(name: "SubmenuPlayIcon", size: 28)
+                            Text("START RUN")
+                        }
+                            .frame(minWidth: expandedLayout ? 190 : 150)
                     }
-                    .buttonStyle(PrimaryActionButtonStyle())
+                    .buttonStyle(ChampionshipPrimaryButtonStyle(compact: !expandedLayout))
                     .fixedSize(horizontal: true, vertical: false)
                     .accessibilityHint("Starts gameplay with the selected offense")
                 }
+                .padding(expandedLayout ? 14 : 10)
+                .championshipPanel()
                 .padding(.horizontal)
-                .padding(.bottom, 10)
+                .padding(.bottom, 8)
             }
         }
     }
@@ -88,14 +124,20 @@ struct TeamSelectionView: View {
 }
 
 private struct TeamSelectionCard: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     let card: TeamCardPresentation
     let action: () -> Void
 
+    private var compactLandscape: Bool {
+        verticalSizeClass == .compact
+    }
+
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 12) {
-                    TeamMark(team: card.team)
+            VStack(alignment: .leading, spacing: compactLandscape ? 6 : 10) {
+                HStack(alignment: .top, spacing: compactLandscape ? 9 : 12) {
+                    TeamMark(team: card.team, size: compactLandscape ? 50 : 68)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(card.team.displayName)
@@ -110,14 +152,9 @@ private struct TeamSelectionCard: View {
                     Spacer(minLength: 4)
 
                     if card.isSelected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(PocketVectorTheme.success)
-                            .accessibilityHidden(true)
+                        ChampionshipPixelIcon(name: "SubmenuSelectedIcon", size: 24)
                     } else if card.isLocked {
-                        Image(systemName: "lock.fill")
-                            .foregroundStyle(PocketVectorTheme.gold)
-                            .accessibilityHidden(true)
+                        ChampionshipPixelIcon(name: "SubmenuLockIcon", size: 24)
                     }
                 }
 
@@ -127,32 +164,26 @@ private struct TeamSelectionCard: View {
                     Circle().fill(Color(card.team.accentColor))
                     Spacer()
                     if let price = card.unlockItem?.price, card.isLocked {
-                        Text("\(AppPresentation.coinText(price)) coins")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(PocketVectorTheme.gold)
+                        CoinAmount(amount: price, iconSize: 20)
                     } else if !card.isSelected {
                         Text("Choose")
                             .font(.subheadline.weight(.bold))
-                            .foregroundStyle(PocketVectorTheme.cyan)
+                            .foregroundStyle(PocketVectorTheme.championshipSilver)
+                    } else {
+                        Text("Selected")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(PocketVectorTheme.success)
                     }
                 }
                 .frame(height: 22)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
-            .background(
-                card.isSelected
-                    ? PocketVectorTheme.raisedSurface
-                    : PocketVectorTheme.surface,
-                in: RoundedRectangle(cornerRadius: 16)
+            .padding(compactLandscape ? 10 : 18)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: compactLandscape ? 100 : 160,
+                alignment: .topLeading
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(
-                        card.isSelected ? PocketVectorTheme.cyan : PocketVectorTheme.border.opacity(0.6),
-                        lineWidth: card.isSelected ? 3 : 1
-                    )
-            }
+            .championshipPanel(isSelected: card.isSelected)
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)

@@ -2,37 +2,41 @@ import SwiftUI
 
 @MainActor
 struct SettingsView: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     @Bindable var coordinator: AppCoordinator
 
+    private var expandedLayout: Bool {
+        verticalSizeClass == .regular
+    }
+
     var body: some View {
-        PocketVectorScreen(
+        ChampionshipSubmenuScreen(
             title: "Settings",
             subtitle: "Adjust audio, motion, and tutorial preferences.",
             onBack: coordinator.goBack
         ) {
             ScrollView {
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: 16) {
-                        audioPanel
-                        playPanel
-                    }
-                    VStack(spacing: 16) {
-                        audioPanel
-                        playPanel
-                    }
+                HStack(alignment: .top, spacing: 12) {
+                    audioPanel
+                    playPanel
                 }
-                .frame(maxWidth: 980)
+                .frame(maxWidth: expandedLayout ? 1180 : 980)
                 .padding(.horizontal)
-                .padding(.bottom, 16)
+                .padding(.vertical, expandedLayout ? 64 : 0)
+                .padding(.bottom, expandedLayout ? 32 : 16)
                 .frame(maxWidth: .infinity)
             }
         }
     }
 
     private var audioPanel: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Label("Audio", systemImage: "speaker.wave.2.fill")
-                .font(.title2.weight(.bold))
+        VStack(alignment: .leading, spacing: expandedLayout ? 26 : 18) {
+            SettingsPanelHeader(
+                title: "Audio",
+                iconName: "SettingsAudioIcon",
+                expanded: expandedLayout
+            )
 
             Toggle(
                 "Mute all audio",
@@ -43,12 +47,13 @@ struct SettingsView: View {
                     }
                 )
             )
-            .tint(PocketVectorTheme.cyan)
+            .tint(PocketVectorTheme.championshipStatus)
 
             VolumeControl(
                 title: "Music",
-                systemImage: "music.note",
+                iconName: "SettingsMusicIcon",
                 value: coordinator.state.settings.musicVolume,
+                expanded: expandedLayout,
                 onCommit: { value in
                     Task { await coordinator.setMusicVolume(value) }
                 }
@@ -58,8 +63,9 @@ struct SettingsView: View {
 
             VolumeControl(
                 title: "Sound effects",
-                systemImage: "waveform",
+                iconName: "SettingsSFXIcon",
                 value: coordinator.state.settings.sfxVolume,
+                expanded: expandedLayout,
                 onCommit: { value in
                     Task { await coordinator.setSFXVolume(value) }
                 }
@@ -67,15 +73,22 @@ struct SettingsView: View {
             .disabled(coordinator.state.settings.isMuted)
             .opacity(coordinator.state.settings.isMuted ? 0.58 : 1)
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .pocketVectorPanel()
+        .padding(expandedLayout ? 26 : 18)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: expandedLayout ? 470 : nil,
+            alignment: .leading
+        )
+        .championshipPanel()
     }
 
     private var playPanel: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Label("Play", systemImage: "figure.run")
-                .font(.title2.weight(.bold))
+        VStack(alignment: .leading, spacing: expandedLayout ? 26 : 18) {
+            SettingsPanelHeader(
+                title: "Play",
+                iconName: "SettingsGameplayIcon",
+                expanded: expandedLayout
+            )
 
             Toggle(
                 "Reduce motion",
@@ -86,7 +99,7 @@ struct SettingsView: View {
                     }
                 )
             )
-            .tint(PocketVectorTheme.cyan)
+            .tint(PocketVectorTheme.championshipStatus)
             .accessibilityHint("Reduces animation in menus and gameplay")
 
             Divider()
@@ -95,11 +108,13 @@ struct SettingsView: View {
             Button {
                 coordinator.showTutorialReview()
             } label: {
-                Label("Review How to Play", systemImage: "hand.draw.fill")
+                HStack(spacing: 9) {
+                    ChampionshipPixelIcon(name: "SettingsTutorialIcon", size: 28)
+                    Text("REVIEW HOW TO PLAY")
+                }
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
-            .tint(PocketVectorTheme.cyan)
+            .buttonStyle(ChampionshipSecondaryButtonStyle())
             .accessibilityHint("Opens the four-step gameplay tutorial")
 
             Text(tutorialStatusText)
@@ -112,16 +127,22 @@ struct SettingsView: View {
             Button {
                 coordinator.showPrivacySupport()
             } label: {
-                Label("Privacy & Support", systemImage: "hand.raised.fill")
+                HStack(spacing: 9) {
+                    ChampionshipPixelIcon(name: "SettingsPrivacySupportIcon", size: 28)
+                    Text("PRIVACY & SUPPORT")
+                }
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
-            .tint(PocketVectorTheme.cyan)
+            .buttonStyle(ChampionshipSecondaryButtonStyle())
             .accessibilityHint("Shows support contacts and feature disclosures")
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .pocketVectorPanel()
+        .padding(expandedLayout ? 26 : 18)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: expandedLayout ? 470 : nil,
+            alignment: .leading
+        )
+        .championshipPanel()
     }
 
     private var tutorialStatusText: String {
@@ -133,20 +154,23 @@ struct SettingsView: View {
 
 private struct VolumeControl: View {
     let title: String
-    let systemImage: String
+    let iconName: String
     let value: Double
+    let expanded: Bool
     let onCommit: (Double) -> Void
     @State private var draftValue: Double
 
     init(
         title: String,
-        systemImage: String,
+        iconName: String,
         value: Double,
+        expanded: Bool,
         onCommit: @escaping (Double) -> Void
     ) {
         self.title = title
-        self.systemImage = systemImage
+        self.iconName = iconName
         self.value = value
+        self.expanded = expanded
         self.onCommit = onCommit
         _draftValue = State(initialValue: value)
     }
@@ -154,13 +178,16 @@ private struct VolumeControl: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
-                Label(title, systemImage: systemImage)
+                HStack(spacing: 7) {
+                    ChampionshipPixelIcon(name: iconName, size: expanded ? 36 : 28)
+                    Text(title)
+                }
                 Spacer()
                 Text("\(Int((draftValue * 100).rounded()))%")
                     .monospacedDigit()
                     .foregroundStyle(PocketVectorTheme.textSecondary)
             }
-            .font(.headline)
+            .font(expanded ? .title3 : .headline)
 
             Slider(
                 value: $draftValue,
@@ -172,12 +199,27 @@ private struct VolumeControl: View {
                     }
                 }
             )
-                .tint(PocketVectorTheme.cyan)
+                .tint(PocketVectorTheme.championshipStatus)
                 .accessibilityLabel(title)
                 .accessibilityValue("\(Int((draftValue * 100).rounded())) percent")
         }
         .onChange(of: value) { _, newValue in
             draftValue = newValue
+        }
+    }
+}
+
+private struct SettingsPanelHeader: View {
+    let title: String
+    let iconName: String
+    let expanded: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ChampionshipPixelIcon(name: iconName, size: expanded ? 56 : 42)
+            Text(title.uppercased())
+                .font(.system(expanded ? .title2 : .title3, design: .monospaced, weight: .black))
+                .tracking(0.7)
         }
     }
 }

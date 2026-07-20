@@ -1,0 +1,10 @@
+Neon Basin Eclipses receiver QA record
+Selected primary raw: receiver-primary-chroma.png
+Selected alternate raw: receiver-alternate-chroma.png
+Canonical output geometry: 3620 x 724 RGBA, 10 slots at 362 x 724
+Frame order: run-1, run-2, run-3, run-4, catch, carry-1, carry-2, carry-3, carry-4, touchdown
+Normalization: one shared nearest-neighbor scale across both variants and all 20 frames: 1.617076
+Locked baselines: 534 px for run-1; 551 px for all remaining frames
+Chroma background: #00FF00; removed with auto-key border, soft matte 12/220, and despill
+Visual QA: number 11, right-facing action, stable identity, material separation, neutral equipment, football progression, and no mapped-color mottling reviewed.
+Rejected output: receiver-primary-rejected-chroma.png — rejected because violet accent displaced silver on the shoulder panels and contaminated neutral gloves.

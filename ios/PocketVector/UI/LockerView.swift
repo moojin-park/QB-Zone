@@ -2,7 +2,13 @@ import SwiftUI
 
 @MainActor
 struct LockerView: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     @Bindable var coordinator: AppCoordinator
+
+    private var expandedLayout: Bool {
+        verticalSizeClass == .regular
+    }
 
     private var teamCards: [TeamCardPresentation] {
         AppPresentation.teams(catalog: coordinator.catalog, state: coordinator.state)
@@ -25,33 +31,56 @@ struct LockerView: View {
     }
 
     var body: some View {
-        PocketVectorScreen(
+        ChampionshipSubmenuScreen(
             title: "Team & Locker",
             subtitle: "Uniforms stay with their team. Footballs work with every offense.",
-            onBack: coordinator.goBack
+            onBack: coordinator.goBack,
+            headerAccessory: {
+                BalanceBadge(
+                    confirmedCoins: coordinator.state.confirmedCoins,
+                    pendingCoins: coordinator.state.pendingCoins
+                )
+            }
         ) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    HStack {
-                        Text("OFFENSE")
-                            .font(.headline.weight(.black))
-                        Spacer()
-                        BalanceBadge(
-                            confirmedCoins: coordinator.state.confirmedCoins,
-                            pendingCoins: coordinator.state.pendingCoins
-                        )
-                    }
+                    ChampionshipSectionTitle("Offense")
 
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 10) {
+                    if expandedLayout {
+                        LazyVGrid(
+                            columns: Array(
+                                repeating: GridItem(.flexible(), spacing: 10),
+                                count: 4
+                            ),
+                            spacing: 10
+                        ) {
                             ForEach(teamCards) { card in
                                 LockerTeamButton(card: card) {
                                     activateTeam(card)
                                 }
                             }
                         }
+                    } else {
+                        ScrollViewReader { proxy in
+                            ScrollView(.horizontal) {
+                                HStack(spacing: 10) {
+                                    ForEach(teamCards) { card in
+                                        LockerTeamButton(card: card) {
+                                            activateTeam(card)
+                                        }
+                                        .id(card.team.id)
+                                    }
+                                }
+                            }
+                            .scrollIndicators(.hidden)
+                            .onAppear {
+                                proxy.scrollTo(selectedTeam.id, anchor: .center)
+                            }
+                            .onChange(of: selectedTeam.id) { _, teamID in
+                                proxy.scrollTo(teamID, anchor: .center)
+                            }
+                        }
                     }
-                    .scrollIndicators(.hidden)
 
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .top, spacing: 16) {
@@ -65,7 +94,8 @@ struct LockerView: View {
                     }
                 }
                 .padding(.horizontal)
-                .padding(.bottom, 16)
+                .padding(.top, expandedLayout ? 20 : 0)
+                .padding(.bottom, expandedLayout ? 30 : 16)
             }
         }
     }
@@ -95,8 +125,12 @@ struct LockerView: View {
             }
         }
         .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .pocketVectorPanel()
+        .frame(
+            maxWidth: .infinity,
+            minHeight: expandedLayout ? 360 : nil,
+            alignment: .topLeading
+        )
+        .championshipPanel()
     }
 
     private var footballSection: some View {
@@ -122,8 +156,12 @@ struct LockerView: View {
             }
         }
         .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .pocketVectorPanel()
+        .frame(
+            maxWidth: .infinity,
+            minHeight: expandedLayout ? 360 : nil,
+            alignment: .topLeading
+        )
+        .championshipPanel()
     }
 
     private func activateTeam(_ card: TeamCardPresentation) {
@@ -138,22 +176,28 @@ struct LockerView: View {
 }
 
 private struct LockerTeamButton: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     let card: TeamCardPresentation
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 9) {
-                TeamMark(team: card.team, size: 42)
+            HStack(spacing: verticalSizeClass == .regular ? 13 : 9) {
+                TeamMark(team: card.team, size: verticalSizeClass == .regular ? 54 : 42)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(card.team.displayName)
-                        .font(.subheadline.weight(.bold))
+                        .font((verticalSizeClass == .regular ? Font.headline : .subheadline).weight(.bold))
                         .foregroundStyle(PocketVectorTheme.textPrimary)
                         .lineLimit(2)
+                        .minimumScaleFactor(0.82)
+                        .layoutPriority(1)
                     if card.isLocked, let price = card.unlockItem?.price {
-                        Text("\(AppPresentation.coinText(price)) coins")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(PocketVectorTheme.gold)
+                        CoinAmount(
+                            amount: price,
+                            iconSize: 17,
+                            font: .caption.weight(.semibold).monospacedDigit()
+                        )
                     } else {
                         Text(card.isSelected ? "Selected" : "Owned")
                             .font(.caption)
@@ -162,34 +206,41 @@ private struct LockerTeamButton: View {
                                     ? PocketVectorTheme.success
                                     : PocketVectorTheme.textSecondary
                             )
-                    }
+                        }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 if card.isLocked {
-                    Image(systemName: "lock.fill")
-                        .foregroundStyle(PocketVectorTheme.gold)
+                    ChampionshipPixelIcon(name: "SubmenuLockIcon", size: 22)
                 }
             }
-            .padding(10)
-            .frame(width: 196, alignment: .leading)
-            .frame(minHeight: 66)
-            .background(PocketVectorTheme.surface, in: RoundedRectangle(cornerRadius: 14))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(
-                        card.isSelected ? PocketVectorTheme.cyan : PocketVectorTheme.border.opacity(0.55),
-                        lineWidth: card.isSelected ? 3 : 1
-                    )
-            }
+            .padding(verticalSizeClass == .regular ? 14 : 10)
+            .frame(width: verticalSizeClass == .regular ? nil : 196, alignment: .leading)
+            .frame(maxWidth: verticalSizeClass == .regular ? .infinity : nil)
+            .frame(minHeight: verticalSizeClass == .regular ? 84 : 66)
+            .championshipPanel(isSelected: card.isSelected)
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(card.team.displayName)
+        .accessibilityValue(accessibilityValue)
         .accessibilityHint(card.isOwned ? "Selects this offense" : "Requests this team unlock")
         .accessibilityAddTraits(card.isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    private var accessibilityValue: String {
+        if card.isSelected {
+            return "Selected"
+        }
+        if card.isLocked, let price = card.unlockItem?.price {
+            return "Locked, \(price) coins"
+        }
+        return "Owned"
     }
 }
 
 private struct JerseyLockerCard: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     let card: JerseyCardPresentation
     let action: () -> Void
 
@@ -197,25 +248,12 @@ private struct JerseyLockerCard: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 10) {
                 JerseyPreview(jersey: card.jersey)
-                    .frame(height: 70)
+                    .frame(height: verticalSizeClass == .regular ? 176 : 70)
 
-                HStack {
-                    Text(card.jersey.displayName)
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(PocketVectorTheme.textPrimary)
-                    Spacer()
-                    status
-                }
+                cardFooter
             }
-            .padding(10)
-            .background(PocketVectorTheme.raisedSurface, in: RoundedRectangle(cornerRadius: 14))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(
-                        card.isEquipped ? PocketVectorTheme.cyan : .clear,
-                        lineWidth: 3
-                    )
-            }
+            .padding(verticalSizeClass == .regular ? 14 : 10)
+            .championshipPanel(isSelected: card.isEquipped)
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
@@ -226,13 +264,33 @@ private struct JerseyLockerCard: View {
     }
 
     @ViewBuilder
+    private var cardFooter: some View {
+        if verticalSizeClass == .regular {
+            VStack(alignment: .leading, spacing: 7) {
+                Text(card.jersey.displayName)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(PocketVectorTheme.textPrimary)
+                    .lineLimit(2)
+                status
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack {
+                Text(card.jersey.displayName)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(PocketVectorTheme.textPrimary)
+                Spacer()
+                status
+            }
+        }
+    }
+
+    @ViewBuilder
     private var status: some View {
         if card.isEquipped {
             StatusPill(text: "Equipped", color: PocketVectorTheme.success)
         } else if let price = card.unlockItem?.price, card.isLocked {
-            Text("\(AppPresentation.coinText(price))")
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(PocketVectorTheme.gold)
+            CoinAmount(amount: price, iconSize: 19)
         } else {
             Text("Equip")
                 .font(.subheadline.weight(.bold))
@@ -250,6 +308,8 @@ private struct JerseyLockerCard: View {
 }
 
 private struct FootballLockerCard: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     let card: FootballCardPresentation
     let action: () -> Void
 
@@ -257,34 +317,12 @@ private struct FootballLockerCard: View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 10) {
                 FootballPreview(footballID: card.football.id)
-                    .frame(height: 70)
+                    .frame(height: verticalSizeClass == .regular ? 176 : 70)
 
-                HStack {
-                    Text(card.football.displayName)
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(PocketVectorTheme.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.78)
-                    Spacer()
-                    if card.isEquipped {
-                        StatusPill(text: "Equipped", color: PocketVectorTheme.success)
-                    } else if let price = card.unlockItem?.price, card.isLocked {
-                        Text(AppPresentation.coinText(price))
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(PocketVectorTheme.gold)
-                    } else {
-                        Text("Equip")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(PocketVectorTheme.cyan)
-                    }
-                }
+                cardFooter
             }
-            .padding(10)
-            .background(PocketVectorTheme.raisedSurface, in: RoundedRectangle(cornerRadius: 14))
-            .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(card.isEquipped ? PocketVectorTheme.cyan : .clear, lineWidth: 3)
-            }
+            .padding(verticalSizeClass == .regular ? 14 : 10)
+            .championshipPanel(isSelected: card.isEquipped)
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
@@ -292,6 +330,44 @@ private struct FootballLockerCard: View {
         .accessibilityValue(accessibilityValue)
         .accessibilityHint(card.isOwned ? "Equips this football" : "Requests this football unlock")
         .accessibilityAddTraits(card.isEquipped ? [.isButton, .isSelected] : .isButton)
+    }
+
+    @ViewBuilder
+    private var cardFooter: some View {
+        if verticalSizeClass == .regular {
+            VStack(alignment: .leading, spacing: 7) {
+                footballName
+                footballStatus
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack {
+                footballName
+                Spacer()
+                footballStatus
+            }
+        }
+    }
+
+    private var footballName: some View {
+        Text(card.football.displayName)
+            .font(.headline.weight(.bold))
+            .foregroundStyle(PocketVectorTheme.textPrimary)
+            .lineLimit(verticalSizeClass == .regular ? 2 : 1)
+            .minimumScaleFactor(0.78)
+    }
+
+    @ViewBuilder
+    private var footballStatus: some View {
+        if card.isEquipped {
+            StatusPill(text: "Equipped", color: PocketVectorTheme.success)
+        } else if let price = card.unlockItem?.price, card.isLocked {
+            CoinAmount(amount: price, iconSize: 19)
+        } else {
+            Text("Equip")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(PocketVectorTheme.cyan)
+        }
     }
 
     private var accessibilityValue: String {
