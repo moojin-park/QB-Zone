@@ -4,21 +4,21 @@ Status: implementation contract for version 1
 
 Last updated: 2026-07-19
 
-Implementation baseline: `17792f2`, the complete Art branch through `8f804ab`
-merged into the shared release line based on `d7ac1ee`. It includes the approved
-championship redesign of Choose Your Offense, Team & Locker, Achievements, Coin
-Store, and Settings; the centered-title correction; the active layered team-
-field renderer; refined paused-run controls; the explicit gameplay-presentation
-bridge; and online-only commerce composition. Privacy and Support remains
-reachable through Settings and is not a main-menu control.
+Implementation baseline: `db02d4c`, the complete Technical branch through
+`fd74e2f` merged over the complete Art branch through `8f804ab`. It includes
+the approved championship redesign of Choose Your Offense, Team & Locker,
+Achievements, Coin Store, and Settings; the centered-title correction; the
+active layered team-field renderer and baked team-uniform routing; refined
+paused-run controls; the explicit gameplay-presentation bridge; and online-only
+commerce composition. Privacy and Support remains reachable through Settings
+and is not a main-menu control.
 
-The shipping GameAssets inventory now contains 620 declared assets, including
-544 baked character frames for all eight launch teams and both jerseys. Those
-team-specific frames are bundled but are not yet active: gameplay still resolves
-the shared character paths and applies runtime palette projection. Technical
-must route the exact offense and clash-resolved defense team/jersey paths and
-bypass projection before the baked-uniform presentation can be release-
-accepted. The shared character set remains a fallback, and universal officials
+The shipping GameAssets inventory contains 620 declared assets, including 544
+baked character frames for all eight launch teams and both jerseys. Gameplay
+routes the selected offense and clash-resolved defense through their exact
+team/jersey paths and preserves the decoded RGBA artwork without runtime palette
+projection. The generic character fallback is disabled by default and is
+available only through an explicit development request. Universal officials
 remain shared.
 
 This document translates the approved release charter into ownership and data
