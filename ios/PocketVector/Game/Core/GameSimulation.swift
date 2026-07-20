@@ -214,11 +214,25 @@ struct GameSimulation {
                 min(streak, ScoringConfig.touchdownMultipliers.count - 1)
             ]
             : 1
-        let awardedPoints = Int((CGFloat(basePoints + bonusPoints) * multiplier).rounded())
+        let earnedPoints = Int((CGFloat(basePoints + bonusPoints) * multiplier).rounded())
+        let penaltyPoints = outcome == .interception
+            ? ScoringConfig.interceptionPenaltyPoints
+            : 0
+        let scoreDelta = earnedPoints - penaltyPoints
+        let totalAfter = max(0, score + scoreDelta)
+        let awardedPoints = totalAfter - score
         let meterAfter = isSuccessful
             ? min(ScoringConfig.meterMaximum, meter + (lane?.meterGain ?? 0))
             : 0
-        let streakAfter = isTouchdown ? streak + 1 : 0
+        let streakAfter: Int
+        switch outcome {
+        case .touchdown:
+            streakAfter = streak + 1
+        case .completion:
+            streakAfter = streak
+        case .incompletion, .interception:
+            streakAfter = 0
+        }
 
         return PlayScoreResult(
             outcome: outcome,
@@ -229,7 +243,7 @@ struct GameSimulation {
             touchdownMultiplier: multiplier,
             awardedPoints: awardedPoints,
             totalBefore: score,
-            totalAfter: score + awardedPoints,
+            totalAfter: totalAfter,
             meterBefore: meter,
             meterAfter: meterAfter,
             streakBefore: streak,
@@ -489,33 +503,23 @@ struct GameSimulation {
         state.touchdownMeter = scoreResult.meterAfter
         state.touchdownStreak = scoreResult.streakAfter
         state.lastPlayScore = scoreResult
-        state.statistics.attempts += 1
-        switch outcome {
-        case .completion:
-            state.statistics.completions += 1
-        case .touchdown:
-            state.statistics.touchdowns += 1
-        case .incompletion:
-            state.statistics.incompletions += 1
-        case .interception:
-            state.statistics.interceptions += 1
-        }
-        state.statistics.longestTouchdownStreak = max(
-            state.statistics.longestTouchdownStreak,
-            scoreResult.streakAfter
-        )
-        state.feedback = makeFeedback(result: scoreResult)
+        state.statistics.record(outcome: outcome)
+        state.feedback = Self.makeFeedback(result: scoreResult)
         state.ball = nil
         state.playCooldownMilliseconds = outcome == .touchdown
             ? 420
             : GameplayConfig.playResolutionCooldownMilliseconds
     }
 
-    private func makeFeedback(result: PlayScoreResult) -> FeedbackState {
+    static func makeFeedback(result: PlayScoreResult) -> FeedbackState {
         switch result.outcome {
         case .interception:
+            let deductedPoints = max(0, -result.awardedPoints)
+            let deductionText = deductedPoints > 0
+                ? "−\(Self.formattedPoints(deductedPoints))"
+                : "0"
             return FeedbackState(
-                headline: "INTERCEPTED",
+                headline: "INTERCEPTED \(deductionText)",
                 detail: "BONUS LOST",
                 tone: .negative,
                 remainingMilliseconds: 920
@@ -531,7 +535,7 @@ struct GameSimulation {
             var details: [String] = []
             if result.bonusWasActive { details.append("TD BONUS") }
             if result.touchdownMultiplier > 1 {
-                details.append("STREAK x\(Self.formattedMultiplier(result.touchdownMultiplier))")
+                details.append("CHAIN x\(Self.formattedMultiplier(result.touchdownMultiplier))")
             }
             return FeedbackState(
                 headline: "TOUCHDOWN +\(Self.formattedPoints(result.awardedPoints))",

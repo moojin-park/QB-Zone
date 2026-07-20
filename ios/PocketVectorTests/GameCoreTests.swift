@@ -504,7 +504,7 @@ final class GameCoreTests: XCTestCase {
     XCTAssertEqual(layout.clockTopAnchor.x, viewport.safeSceneFrame.midX, accuracy: 0.000_001)
   }
 
-  func testCompletionAddsPointsFillsMeterAndResetsTouchdownStreak() {
+  func testCompletionAddsPointsFillsMeterAndPreservesTouchdownStreak() {
     let result = GameSimulation.calculatePlayScore(
       score: 2_000,
       meter: 80,
@@ -517,7 +517,7 @@ final class GameCoreTests: XCTestCase {
     XCTAssertEqual(result.awardedPoints, 1_500)
     XCTAssertEqual(result.totalAfter, 3_500)
     XCTAssertEqual(result.meterAfter, ScoringConfig.meterMaximum)
-    XCTAssertEqual(result.streakAfter, 0)
+    XCTAssertEqual(result.streakAfter, 2)
     XCTAssertFalse(result.bonusWasActive)
   }
 
@@ -540,7 +540,22 @@ final class GameCoreTests: XCTestCase {
     XCTAssertEqual(result.streakAfter, 4)
   }
 
-  func testFailedPassResetsMeterAndStreakWithoutChangingScore() {
+  func testIncompletionResetsMeterAndStreakWithoutChangingScore() {
+    let result = GameSimulation.calculatePlayScore(
+      score: 4_500,
+      meter: 90,
+      streak: 4,
+      outcome: .incompletion,
+      laneID: nil
+    )
+
+    XCTAssertEqual(result.awardedPoints, 0)
+    XCTAssertEqual(result.totalAfter, 4_500)
+    XCTAssertEqual(result.meterAfter, 0)
+    XCTAssertEqual(result.streakAfter, 0)
+  }
+
+  func testInterceptionDeductsPointsAndResetsMeterAndStreak() {
     let result = GameSimulation.calculatePlayScore(
       score: 4_500,
       meter: 90,
@@ -549,10 +564,184 @@ final class GameCoreTests: XCTestCase {
       laneID: nil
     )
 
-    XCTAssertEqual(result.awardedPoints, 0)
-    XCTAssertEqual(result.totalAfter, 4_500)
+    XCTAssertEqual(result.awardedPoints, -ScoringConfig.interceptionPenaltyPoints)
+    XCTAssertEqual(result.totalAfter, 4_250)
     XCTAssertEqual(result.meterAfter, 0)
     XCTAssertEqual(result.streakAfter, 0)
+  }
+
+  func testRepeatedInterceptionPenaltiesDoNotReduceRunScoreBelowZero() {
+    var score = 600
+    var deltas: [Int] = []
+    var totals: [Int] = []
+
+    for _ in 0 ..< 4 {
+      let result = GameSimulation.calculatePlayScore(
+        score: score,
+        meter: 0,
+        streak: 0,
+        outcome: .interception,
+        laneID: nil
+      )
+      deltas.append(result.awardedPoints)
+      totals.append(result.totalAfter)
+      score = result.totalAfter
+    }
+
+    XCTAssertEqual(deltas, [-250, -250, -100, 0])
+    XCTAssertEqual(totals, [350, 100, 0, 0])
+  }
+
+  @MainActor
+  func testInterceptionFeedbackReportsTheAppliedDeductionAtTheScoreFloor() {
+    struct FeedbackCase {
+      let scoreBefore: Int
+      let expectedDelta: Int
+      let expectedTotal: Int
+      let expectedHeadline: String
+    }
+
+    let cases = [
+      FeedbackCase(
+        scoreBefore: 500,
+        expectedDelta: -250,
+        expectedTotal: 250,
+        expectedHeadline: "INTERCEPTED −250"
+      ),
+      FeedbackCase(
+        scoreBefore: 100,
+        expectedDelta: -100,
+        expectedTotal: 0,
+        expectedHeadline: "INTERCEPTED −100"
+      ),
+      FeedbackCase(
+        scoreBefore: 0,
+        expectedDelta: 0,
+        expectedTotal: 0,
+        expectedHeadline: "INTERCEPTED 0"
+      ),
+    ]
+    var announcements: [String] = []
+    let hud = BroadcastHUDNode(
+      layout: HUDLayout(),
+      textureLibrary: TextureLibrary(),
+      feedbackAnnouncementHandler: { announcements.append($0) }
+    )
+    let presentation = playingHUDPresentation()
+
+    for feedbackCase in cases {
+      let score = GameSimulation.calculatePlayScore(
+        score: feedbackCase.scoreBefore,
+        meter: 80,
+        streak: 3,
+        outcome: .interception,
+        laneID: nil
+      )
+      let feedback = GameSimulation.makeFeedback(result: score)
+
+      XCTAssertEqual(score.awardedPoints, feedbackCase.expectedDelta)
+      XCTAssertEqual(score.totalAfter, feedbackCase.expectedTotal)
+      XCTAssertEqual(feedback.headline, feedbackCase.expectedHeadline)
+      XCTAssertEqual(feedback.detail, "BONUS LOST")
+      XCTAssertEqual(feedback.tone, .negative)
+      XCTAssertEqual(feedback.remainingMilliseconds, 920)
+      XCTAssertEqual(
+        BroadcastHUDNode.feedbackAnnouncementText(feedback),
+        "\(feedbackCase.expectedHeadline). BONUS LOST"
+      )
+
+      hud.update(
+        presentation: presentation,
+        feedback: feedback,
+        isMuted: false,
+        reducedMotion: false
+      )
+      hud.update(
+        presentation: presentation,
+        feedback: feedback,
+        isMuted: false,
+        reducedMotion: false
+      )
+    }
+
+    XCTAssertEqual(
+      announcements,
+      cases.map { "\($0.expectedHeadline). BONUS LOST" }
+    )
+  }
+
+  func testCompletionBetweenTouchdownsPreservesNextTouchdownMultiplier() {
+    let firstTouchdown = GameSimulation.calculatePlayScore(
+      score: 0,
+      meter: 0,
+      streak: 0,
+      outcome: .touchdown,
+      laneID: .touchdown
+    )
+    let completion = GameSimulation.calculatePlayScore(
+      score: firstTouchdown.totalAfter,
+      meter: firstTouchdown.meterAfter,
+      streak: firstTouchdown.streakAfter,
+      outcome: .completion,
+      laneID: .short
+    )
+    let secondTouchdown = GameSimulation.calculatePlayScore(
+      score: completion.totalAfter,
+      meter: completion.meterAfter,
+      streak: completion.streakAfter,
+      outcome: .touchdown,
+      laneID: .touchdown
+    )
+
+    XCTAssertEqual(firstTouchdown.streakAfter, 1)
+    XCTAssertEqual(completion.streakAfter, 1)
+    XCTAssertEqual(secondTouchdown.touchdownMultiplier, 1.25)
+    XCTAssertEqual(secondTouchdown.awardedPoints, 3_125)
+    XCTAssertEqual(secondTouchdown.streakAfter, 2)
+  }
+
+  func testCompletionPreservesMultiplierChainButBreaksConsecutiveTouchdownStatistic() {
+    var statistics = RunStatistics()
+
+    statistics.record(outcome: .touchdown)
+    statistics.record(outcome: .completion)
+    statistics.record(outcome: .touchdown)
+
+    XCTAssertEqual(statistics.attempts, 3)
+    XCTAssertEqual(statistics.completions, 1)
+    XCTAssertEqual(statistics.touchdowns, 2)
+    XCTAssertEqual(statistics.accuracy, 100)
+    XCTAssertEqual(statistics.currentConsecutiveTouchdowns, 1)
+    XCTAssertEqual(statistics.longestTouchdownStreak, 1)
+
+    statistics.record(outcome: .touchdown)
+
+    XCTAssertEqual(statistics.currentConsecutiveTouchdowns, 2)
+    XCTAssertEqual(statistics.longestTouchdownStreak, 2)
+  }
+
+  func testFailedPassesResetNextTouchdownMultiplier() {
+    for outcome in [PassOutcome.incompletion, .interception] {
+      let failure = GameSimulation.calculatePlayScore(
+        score: 2_000,
+        meter: 80,
+        streak: 3,
+        outcome: outcome,
+        laneID: nil
+      )
+      let nextTouchdown = GameSimulation.calculatePlayScore(
+        score: failure.totalAfter,
+        meter: failure.meterAfter,
+        streak: failure.streakAfter,
+        outcome: .touchdown,
+        laneID: .touchdown
+      )
+
+      XCTAssertEqual(failure.meterAfter, 0, "\(outcome)")
+      XCTAssertEqual(failure.streakAfter, 0, "\(outcome)")
+      XCTAssertEqual(nextTouchdown.touchdownMultiplier, 1, "\(outcome)")
+      XCTAssertEqual(nextTouchdown.streakAfter, 1, "\(outcome)")
+    }
   }
 
   func testCountdownStartsGameplayAndExpiredTimerFinishesRun() {
@@ -1168,7 +1357,7 @@ final class GameCoreTests: XCTestCase {
       ReactionCase(
         name: "interception",
         feedback: PlayFeedback(
-          headline: "INTERCEPTED",
+          headline: "INTERCEPTED −250",
           detail: "BONUS LOST",
           tone: .negative,
           remainingMilliseconds: 920
@@ -1191,7 +1380,7 @@ final class GameCoreTests: XCTestCase {
         name: "maximum two-line touchdown",
         feedback: PlayFeedback(
           headline: "TOUCHDOWN +16,500",
-          detail: "TD BONUS  •  STREAK x3",
+          detail: "TD BONUS  •  CHAIN x3",
           tone: .touchdown,
           remainingMilliseconds: 1_050
         ),
@@ -1359,7 +1548,7 @@ final class GameCoreTests: XCTestCase {
     let presentation = playingHUDPresentation()
     let initial = PlayFeedback(
       headline: "TOUCHDOWN +16,500",
-      detail: "TD BONUS  •  STREAK x3",
+      detail: "TD BONUS  •  CHAIN x3",
       tone: .touchdown,
       remainingMilliseconds: 1_050
     )
@@ -1410,9 +1599,9 @@ final class GameCoreTests: XCTestCase {
     XCTAssertEqual(
       announcements,
       [
-        "TOUCHDOWN +16,500. TD BONUS, STREAK x3",
-        "TOUCHDOWN +16,500. TD BONUS, STREAK x3",
-        "TOUCHDOWN +16,500. TD BONUS, STREAK x3",
+        "TOUCHDOWN +16,500. TD BONUS, CHAIN x3",
+        "TOUCHDOWN +16,500. TD BONUS, CHAIN x3",
+        "TOUCHDOWN +16,500. TD BONUS, CHAIN x3",
       ]
     )
     XCTAssertFalse(announcements.contains(where: { $0.contains("0 points") }))
