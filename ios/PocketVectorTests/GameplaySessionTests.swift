@@ -193,7 +193,7 @@ final class GameplaySessionTests: XCTestCase {
         let bonusTouchdownScore = GameSimulation.calculatePlayScore(
             score: completionScore.totalAfter,
             meter: ScoringConfig.meterMaximum,
-            streak: 1,
+            streak: completionScore.streakAfter,
             outcome: .touchdown,
             laneID: .touchdown
         )
@@ -206,32 +206,33 @@ final class GameplaySessionTests: XCTestCase {
             ),
             playScore: bonusTouchdownScore
         )
+        let interceptionScore = GameSimulation.calculatePlayScore(
+            score: bonusTouchdownScore.totalAfter,
+            meter: 0,
+            streak: bonusTouchdownScore.streakAfter,
+            outcome: .interception,
+            laneID: nil
+        )
         recorder.record(
             update: UpdateResult(
                 passResolved: .interception,
                 laneID: nil,
-                scoreChanged: false,
+                scoreChanged: true,
                 runFinished: false
             ),
-            playScore: GameSimulation.calculatePlayScore(
-                score: bonusTouchdownScore.totalAfter,
-                meter: 0,
-                streak: 0,
-                outcome: .interception,
-                laneID: nil
-            )
+            playScore: interceptionScore
         )
 
         var state = GameState()
         state.elapsedGameplayMilliseconds = 60_000
-        state.score = bonusTouchdownScore.totalAfter
+        state.score = interceptionScore.totalAfter
         state.statistics = RunStatistics(
             attempts: 3,
             completions: 1,
             touchdowns: 1,
             incompletions: 0,
             interceptions: 1,
-            longestTouchdownStreak: 2
+            longestTouchdownStreak: 1
         )
         let run = recorder.makeCompletedRun(
             configuration: makeConfiguration(seed: 5),

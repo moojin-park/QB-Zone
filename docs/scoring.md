@@ -14,8 +14,12 @@ a second calculation.
 | 45 yards    |       1,500 |               50 |
 | End zone    |       2,500 |                0 |
 
-A completion or touchdown awards its lane's base points. Incompletions and
-interceptions award zero.
+A completion or touchdown awards its lane's base points. An incompletion awards
+zero. Every interception applies this score adjustment:
+
+```text
+score after = max(0, score before - 250)
+```
 
 ## Adrenaline meter
 
@@ -26,34 +30,37 @@ When the meter is already full before a touchdown resolves, that touchdown
 receives a 3,000-point TD Bonus. The end-zone catch does not itself add meter,
 so a player must fill the meter with prior completions.
 
-## Touchdown streak multiplier
+## Touchdown multiplier chain
 
-Consecutive touchdowns use these multipliers:
+Touchdowns within an active multiplier chain use these multipliers:
 
-| Touchdown in streak | Multiplier |
-| ------------------- | ---------: |
-| First               |       1.00 |
-| Second              |       1.25 |
-| Third               |       1.50 |
-| Fourth              |       2.00 |
-| Fifth               |       2.50 |
-| Sixth and later     |       3.00 |
+| Touchdown in chain | Multiplier |
+| ------------------ | ---------: |
+| First              |       1.00 |
+| Second             |       1.25 |
+| Third              |       1.50 |
+| Fourth             |       2.00 |
+| Fifth              |       2.50 |
+| Sixth and later    |       3.00 |
 
 For a touchdown:
 
 ```text
-awarded points = round((2,500 + eligible TD Bonus) * streak multiplier)
+awarded points = round((2,500 + eligible TD Bonus) * touchdown multiplier)
 ```
 
-Any non-touchdown outcome resets the touchdown streak. Normal completions keep
-the score but reset that streak.
+A completed non-touchdown pass preserves the chain and its next touchdown
+multiplier without advancing it. Only an incompletion or interception resets
+the multiplier chain to zero.
 
 ## Statistics
 
 Every resolved throw increments attempts exactly once. Completion percentage is
 the rounded percentage of completions plus touchdowns divided by attempts. The
 completed run also records touchdowns, incompletions, interceptions, longest
-touchdown streak, bonus touchdowns, and final score.
+back-to-back touchdown streak, bonus touchdowns, and final score. A normal
+completion breaks the back-to-back statistic even though it preserves the
+touchdown multiplier chain.
 
 ## Gameplay coin reward
 

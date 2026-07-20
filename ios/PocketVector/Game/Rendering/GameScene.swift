@@ -438,7 +438,7 @@ final class GameScene: SKScene {
         preview.touchdownStreak = 2
         preview.feedback = FeedbackState(
             headline: "TOUCHDOWN  +6,875",
-            detail: "TD BONUS  ·  STREAK x1.25",
+            detail: "TD BONUS  ·  CHAIN x1.25",
             tone: .touchdown,
             remainingMilliseconds: 10_000
         )

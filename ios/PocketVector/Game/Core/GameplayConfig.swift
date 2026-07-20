@@ -200,6 +200,7 @@ enum ReceiverMotion {
 enum ScoringConfig {
     static let meterMaximum = 100
     static let touchdownBonusPoints = 3_000
+    static let interceptionPenaltyPoints = 250
     static let touchdownMultipliers: [CGFloat] = [1, 1.25, 1.5, 2, 2.5, 3]
 }
 

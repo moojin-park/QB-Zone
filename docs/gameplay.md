@@ -33,9 +33,20 @@ texture readiness -> 3-second countdown -> 60-second run
   -> durable settlement -> results
 ```
 
-The first launch of gameplay is preceded by the four-step tutorial. Tutorial
-completion persists before the run starts. Exiting a run uses the same durable
-completion path but marks the run abandoned and ineligible for rewards.
+The first gameplay launch is preceded by a two-page How to Play tutorial. The
+Rules page explains the 60-second clock, completion and touchdown scoring, the
+interception penalty, and Adrenaline / touchdown-multiplier behavior. The
+Passing page presents three stages in order: Pick a spot, Throw to it, and Avoid
+the defenders. Its gesture lesson starts on the quarterback, drags to open grass
+away from defenders, and releases so the receiver runs under the throw. The
+demonstration can be replayed; Reduced Motion keeps it on its initial static
+state.
+
+On a first run, Start Run durably persists tutorial completion before the run is
+created or launched. Leaving early does not mark the tutorial complete. Settings
+can reopen it for review without rewriting completion. Exiting an active run
+uses the same durable completion path but marks the run abandoned and ineligible
+for rewards.
 
 ## Simulation
 
@@ -69,8 +80,11 @@ cosmetic and never changes projection, collision, scoring, or input authority.
 ## Outcomes
 
 A throw resolves exactly once as a completion, touchdown, incompletion, or
-interception. The result updates score, Adrenaline meter, touchdown streak, and
-run statistics. A new throw cannot begin until the resolution cooldown ends.
+interception. A completed non-touchdown pass preserves the touchdown multiplier
+chain, while an incompletion or interception resets it. An interception also
+applies `max(0, score - 250)`. Back-to-back-touchdown statistics remain strictly
+consecutive: any non-touchdown outcome resets that separate counter. A new
+throw cannot begin until the resolution cooldown ends.
 
 When regulation expires, no new throw can start. An already airborne ball may
 finish within the bounded final-ball grace period; otherwise the run ends.

@@ -95,10 +95,33 @@ struct RunStatistics: Equatable {
     var incompletions = 0
     var interceptions = 0
     var longestTouchdownStreak = 0
+    var currentConsecutiveTouchdowns = 0
 
     var accuracy: Int {
         guard attempts > 0 else { return 0 }
         return Int((Double(completions + touchdowns) / Double(attempts) * 100).rounded())
+    }
+
+    mutating func record(outcome: PassOutcome) {
+        attempts += 1
+        switch outcome {
+        case .completion:
+            completions += 1
+            currentConsecutiveTouchdowns = 0
+        case .touchdown:
+            touchdowns += 1
+            currentConsecutiveTouchdowns += 1
+            longestTouchdownStreak = max(
+                longestTouchdownStreak,
+                currentConsecutiveTouchdowns
+            )
+        case .incompletion:
+            incompletions += 1
+            currentConsecutiveTouchdowns = 0
+        case .interception:
+            interceptions += 1
+            currentConsecutiveTouchdowns = 0
+        }
     }
 }
 
