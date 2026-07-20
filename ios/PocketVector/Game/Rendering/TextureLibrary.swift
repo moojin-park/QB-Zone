@@ -13,13 +13,6 @@ extension RGBColor {
     }
 }
 
-struct UniformPixel: Equatable, Sendable {
-    let red: UInt8
-    let green: UInt8
-    let blue: UInt8
-    let alpha: UInt8
-}
-
 struct UniformTexturePrewarmResult: Equatable, Sendable {
     let requestedCount: Int
     let preparedCount: Int
@@ -120,25 +113,70 @@ struct UniformRaster: Equatable, Sendable {
     let width: Int
     let height: Int
     let bytesPerRow: Int
-    var bytes: [UInt8]
+    let bytes: [UInt8]
+}
 
-    func pixel(x: Int, y: Int) -> UniformPixel? {
-        guard (0 ..< width).contains(x), (0 ..< height).contains(y) else { return nil }
-        let offset = y * bytesPerRow + x * 4
-        return UniformPixel(
-            red: bytes[offset],
-            green: bytes[offset + 1],
-            blue: bytes[offset + 2],
-            alpha: bytes[offset + 3]
-        )
+struct GameplayJerseyAssetRoot: Equatable, Hashable, Sendable {
+    let teamID: TeamID
+    let jerseyID: JerseyID
+    let relativePath: String
+
+    init?(
+        teamID: TeamID,
+        jerseyID: JerseyID,
+        catalog: LaunchCatalog = .approved
+    ) {
+        guard let jersey = catalog.jersey(id: jerseyID),
+              jersey.teamID == teamID
+        else {
+            return nil
+        }
+        self.teamID = teamID
+        self.jerseyID = jersey.id
+        relativePath = "characters/teams/\(teamID.rawValue)/\(jersey.kind.rawValue)"
+    }
+
+    func framePath(for genericFramePath: String) -> String? {
+        guard genericFramePath.hasPrefix("characters/"),
+              !genericFramePath.hasSuffix("/"),
+              let frameName = genericFramePath.split(separator: "/").last,
+              frameName.hasSuffix(".webp")
+        else {
+            return nil
+        }
+        return "\(relativePath)/\(frameName)"
+    }
+}
+
+struct RunGameplayUniformAssetRoots: Equatable, Hashable, Sendable {
+    let offense: GameplayJerseyAssetRoot
+    let defense: GameplayJerseyAssetRoot
+
+    init?(
+        configuration: RunConfiguration,
+        catalog: LaunchCatalog = .approved
+    ) {
+        guard configuration.offenseTeamID != configuration.defenseTeamID,
+              let offense = GameplayJerseyAssetRoot(
+            teamID: configuration.offenseTeamID,
+            jerseyID: configuration.offenseJerseyID,
+            catalog: catalog
+        ), let defense = GameplayJerseyAssetRoot(
+            teamID: configuration.defenseTeamID,
+            jerseyID: configuration.defenseJerseyID,
+            catalog: catalog
+        ) else {
+            return nil
+        }
+        self.offense = offense
+        self.defense = defense
     }
 }
 
 struct UniformTexturePreparationRequest: Sendable {
     let relativePath: String
+    let developmentFallbackRelativePath: String?
     let cacheKey: UniformTextureCacheKey
-    let palette: UniformSpritePalette
-    let role: UniformSquadRole
 }
 
 struct PreparedUniformTexture: Sendable {
@@ -150,125 +188,8 @@ struct PreparedUniformTexture: Sendable {
 }
 
 struct UniformTextureCacheKey: Hashable, Sendable {
-    let relativePath: String
-    let palette: UniformSpritePalette
-    let role: UniformSquadRole
-}
-
-/// Recolors only the authored red offense or blue defense uniform regions. Skin, hair, shoes,
-/// transparent pixels, and field-independent sprite detail remain unchanged. Position-aware slot
-/// selection lets the shared launch sprites express helmet, shoulder, number, pants, and sock
-/// colors without multiplying the shipped raster asset set by every team and jersey.
-enum UniformTextureProjection {
-    @inline(__always)
-    static func project(
-        _ source: UniformPixel,
-        normalizedX: CGFloat,
-        normalizedY: CGFloat,
-        role: UniformSquadRole,
-        palette: UniformSpritePalette
-    ) -> UniformPixel {
-        guard source.alpha >= 16 else { return source }
-
-        // Channel ratios are unchanged by Quartz premultiplication. Integer comparisons avoid
-        // millions of HSV conversions during a cold prewarm while retaining the exact authored
-        // red/blue hue windows and alpha-relative brightness thresholds.
-        let red = Int(source.red)
-        let green = Int(source.green)
-        let blue = Int(source.blue)
-        let alpha = Int(source.alpha)
-        let maximum = max(red, green, blue)
-        let minimum = min(red, green, blue)
-        let delta = maximum - minimum
-        let hasUniformSaturation = delta * 100 > maximum * 28
-        let hasUniformBrightness = maximum * 100 > alpha * 18
-
-        let isAuthoredUniformColor: Bool
-        switch role {
-        case .offense:
-            isAuthoredUniformColor = hasUniformSaturation
-                && hasUniformBrightness
-                && red == maximum
-                && abs(green - blue) * 60 <= delta * 16
-        case .defense:
-            let greenBlueSeparation = green - red
-            isAuthoredUniformColor = hasUniformSaturation
-                && hasUniformBrightness
-                && blue == maximum
-                && greenBlueSeparation * 60 >= delta * 5
-                && greenBlueSeparation * 60 <= delta * 55
-        }
-
-        let target: RGBColor?
-        if isAuthoredUniformColor {
-            if isHelmetShellSlot(normalizedX: normalizedX, normalizedY: normalizedY) {
-                target = palette.helmetShell
-            } else if normalizedY < 0.51 && (normalizedX < 0.36 || normalizedX > 0.64) {
-                target = palette.shoulderPanel
-            } else if normalizedY > 0.68 {
-                target = palette.socks
-            } else {
-                target = palette.jerseyBody
-            }
-        } else if delta * 100 < maximum * 11,
-                  minimum * 100 > alpha * 42,
-                  maximum * 100 > alpha * 58,
-                  !isFaceDetail(normalizedX: normalizedX, normalizedY: normalizedY) {
-            if normalizedY < 0.30 {
-                target = palette.helmetDetail
-            } else if normalizedY > 0.52 {
-                target = palette.pants
-            } else {
-                target = palette.numberAndName
-            }
-        } else {
-            target = nil
-        }
-
-        guard let target else { return source }
-        let sourceValue = Double(maximum) / Double(alpha)
-        return UniformPixel(
-            red: premultiplied(
-                shaded(target.red, sourceValue: sourceValue),
-                alpha: source.alpha
-            ),
-            green: premultiplied(
-                shaded(target.green, sourceValue: sourceValue),
-                alpha: source.alpha
-            ),
-            blue: premultiplied(
-                shaded(target.blue, sourceValue: sourceValue),
-                alpha: source.alpha
-            ),
-            alpha: source.alpha
-        )
-    }
-
-    private static func isFaceDetail(normalizedX: CGFloat, normalizedY: CGFloat) -> Bool {
-        (0.29 ... 0.71).contains(normalizedX) && (0.17 ... 0.34).contains(normalizedY)
-    }
-
-    private static func isHelmetShellSlot(
-        normalizedX: CGFloat,
-        normalizedY: CGFloat
-    ) -> Bool {
-        normalizedY < 0.29 || (
-            normalizedY < 0.43 && (0.30 ... 0.70).contains(normalizedX)
-        )
-    }
-
-    @inline(__always)
-    private static func shaded(_ component: UInt8, sourceValue: Double) -> UInt8 {
-        let multiplier = 0.44 + sourceValue * 0.78
-        let highlightLift = max(0, sourceValue - 0.72) * 145
-        let value = Double(component) * multiplier + highlightLift
-        return UInt8(max(0, min(255, value.rounded())))
-    }
-
-    @inline(__always)
-    private static func premultiplied(_ component: UInt8, alpha: UInt8) -> UInt8 {
-        UInt8((Double(component) * Double(alpha) / 255).rounded())
-    }
+    let assetRoot: GameplayJerseyAssetRoot
+    let genericFramePath: String
 }
 
 enum GameAssetResources {
@@ -283,10 +204,13 @@ enum GameAssetResources {
     }
 }
 
-/// Decodes and recolors the finite run sprite set on the cooperative executor. No UIKit or
-/// SpriteKit object crosses this boundary; the main actor receives plain RGBA bytes and only
+/// Decodes the authored, team-specific sprite frames on the cooperative executor. No UIKit or
+/// SpriteKit object crosses this boundary; the main actor receives unchanged RGBA bytes and only
 /// performs the short final `SKTexture` installation step.
-enum UniformRasterPreprocessor {
+enum BakedUniformRasterPreprocessor {
+    static let framePixelWidth = 384
+    static let framePixelHeight = 512
+
     private struct IndexedPreparation: Sendable {
         let index: Int
         let texture: PreparedUniformTexture?
@@ -302,6 +226,9 @@ enum UniformRasterPreprocessor {
 
         let width = image.width
         let height = image.height
+        guard width == framePixelWidth, height == framePixelHeight else {
+            return nil
+        }
         let bytesPerRow = width * 4
         var bytes = [UInt8](repeating: 0, count: bytesPerRow * height)
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -333,62 +260,35 @@ enum UniformRasterPreprocessor {
         )
     }
 
-    static func projectedRaster(
-        _ source: UniformRaster,
-        palette: UniformSpritePalette,
-        role: UniformSquadRole
-    ) -> UniformRaster {
-        var output = source
-        let normalizedX = (0 ..< output.width).map {
-            CGFloat($0) / CGFloat(max(1, output.width - 1))
+    static func pixelSize(relativePath: String) -> CGSize? {
+        guard let url = GameAssetResources.url(for: relativePath),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber
+        else {
+            return nil
         }
-        output.bytes.withUnsafeMutableBufferPointer { pixels in
-            for y in 0 ..< output.height {
-                guard !Task.isCancelled else { return }
-                // The decoded RGBA buffer preserves authored top-to-bottom raster row order.
-                let normalizedY = CGFloat(y) / CGFloat(max(1, output.height - 1))
-                for x in 0 ..< output.width {
-                    let offset = y * output.bytesPerRow + x * 4
-                    // Roughly three quarters of every actor frame is transparent padding.
-                    guard pixels[offset + 3] >= 16 else { continue }
-                    let projected = UniformTextureProjection.project(
-                        UniformPixel(
-                            red: pixels[offset],
-                            green: pixels[offset + 1],
-                            blue: pixels[offset + 2],
-                            alpha: pixels[offset + 3]
-                        ),
-                        normalizedX: normalizedX[x],
-                        normalizedY: normalizedY,
-                        role: role,
-                        palette: palette
-                    )
-                    pixels[offset] = projected.red
-                    pixels[offset + 1] = projected.green
-                    pixels[offset + 2] = projected.blue
-                    pixels[offset + 3] = projected.alpha
-                }
-            }
-        }
-        return output
+        return CGSize(width: width.intValue, height: height.intValue)
     }
 
     static func prepare(
         _ request: UniformTexturePreparationRequest
     ) -> PreparedUniformTexture? {
-        guard !Task.isCancelled,
-              let source = loadRaster(relativePath: request.relativePath)
-        else {
+        guard !Task.isCancelled else {
             return nil
         }
-        let projected = projectedRaster(source, palette: request.palette, role: request.role)
+        let source = loadRaster(relativePath: request.relativePath)
+            ?? request.developmentFallbackRelativePath.flatMap(loadRaster(relativePath:))
+        guard let source else { return nil }
         guard !Task.isCancelled else { return nil }
         return PreparedUniformTexture(
             cacheKey: request.cacheKey,
-            width: projected.width,
-            height: projected.height,
-            bytesPerRow: projected.bytesPerRow,
-            rgbaData: Data(projected.bytes)
+            width: source.width,
+            height: source.height,
+            bytesPerRow: source.bytesPerRow,
+            rgbaData: Data(source.bytes)
         )
     }
 
@@ -421,12 +321,17 @@ protocol UniformTexturePreparing: Sendable {
     ) async -> [PreparedUniformTexture]
 }
 
-struct ConcurrentUniformTexturePreparer: UniformTexturePreparing {
+struct ConcurrentBakedUniformTexturePreparer: UniformTexturePreparing {
     func prepare(
         _ requests: [UniformTexturePreparationRequest]
     ) async -> [PreparedUniformTexture] {
-        await UniformRasterPreprocessor.prepare(requests)
+        await BakedUniformRasterPreprocessor.prepare(requests)
     }
+}
+
+enum GameplayUniformFallbackPolicy: Sendable {
+    case disabled
+    case developmentGeneric
 }
 
 @MainActor
@@ -449,11 +354,6 @@ struct SpriteKitUniformTexturePreloader: UniformTexturePreloading {
 
 @MainActor
 final class TextureLibrary {
-    private struct RunUniformPaletteKey: Hashable {
-        let offense: UniformSpritePalette
-        let defense: UniformSpritePalette
-    }
-
     static let offenseUniformPaths: [String] = {
         let directions = ["left", "right"]
         var paths = [
@@ -487,7 +387,7 @@ final class TextureLibrary {
 
     private var cache: [String: SKTexture] = [:]
     private var uniformCache: [UniformTextureCacheKey: SKTexture] = [:]
-    private var preparedRunPalettes: Set<RunUniformPaletteKey> = []
+    private var preparedRunAssetRoots: Set<RunGameplayUniformAssetRoots> = []
     private var preloadedFieldTexturePaths: Set<String> = []
     private var uniformPrewarmIsActive = false
     private var uniformPrewarmWaiters: [CheckedContinuation<Void, Never>] = []
@@ -495,13 +395,16 @@ final class TextureLibrary {
     private var fieldPrewarmWaiters: [CheckedContinuation<Void, Never>] = []
     private let uniformTexturePreparer: any UniformTexturePreparing
     private let uniformTexturePreloader: any UniformTexturePreloading
+    private let gameplayUniformFallbackPolicy: GameplayUniformFallbackPolicy
 
     init(
-        uniformTexturePreparer: any UniformTexturePreparing = ConcurrentUniformTexturePreparer(),
-        uniformTexturePreloader: any UniformTexturePreloading = SpriteKitUniformTexturePreloader()
+        uniformTexturePreparer: any UniformTexturePreparing = ConcurrentBakedUniformTexturePreparer(),
+        uniformTexturePreloader: any UniformTexturePreloading = SpriteKitUniformTexturePreloader(),
+        gameplayUniformFallbackPolicy: GameplayUniformFallbackPolicy = .disabled
     ) {
         self.uniformTexturePreparer = uniformTexturePreparer
         self.uniformTexturePreloader = uniformTexturePreloader
+        self.gameplayUniformFallbackPolicy = gameplayUniformFallbackPolicy
     }
 
     func texture(_ relativePath: String) -> SKTexture? {
@@ -522,26 +425,22 @@ final class TextureLibrary {
     }
 
     func uniformTexture(
-        _ relativePath: String,
-        palette: UniformSpritePalette,
-        role: UniformSquadRole
+        _ genericFramePath: String,
+        assetRoot: GameplayJerseyAssetRoot
     ) -> SKTexture? {
         uniformCache[UniformTextureCacheKey(
-            relativePath: relativePath,
-            palette: palette,
-            role: role
+            assetRoot: assetRoot,
+            genericFramePath: genericFramePath
         )]
     }
 
     func prewarmRunVisualTextures(
-        offensePalette: UniformSpritePalette,
-        defensePalette: UniformSpritePalette,
+        uniformAssetRoots: RunGameplayUniformAssetRoots,
         fieldLayerStack: GameplayFieldLayerStack
     ) async -> GameplayVisualPrewarmResult {
         let startedAt = ProcessInfo.processInfo.systemUptime
         let uniforms = await prewarmRunUniformTextures(
-            offensePalette: offensePalette,
-            defensePalette: defensePalette
+            uniformAssetRoots: uniformAssetRoots
         )
         let field: GameplayFieldTexturePreloadResult
         if Task.isCancelled {
@@ -611,24 +510,19 @@ final class TextureLibrary {
         )
     }
 
-    /// Prepares every finite animation texture used by one run. Raster decode and palette
-    /// projection run off the main actor; only the final texture-cache installation returns here.
+    /// Prepares every finite animation texture used by one run. The baked frames are decoded
+    /// without color projection off the main actor; only final cache installation returns here.
     /// `GameScene` exposes a visible readiness state and does not start its countdown until this
     /// completes, so gameplay-time frame swaps are cache reads without a frozen transition.
     func prewarmRunUniformTextures(
-        offensePalette: UniformSpritePalette,
-        defensePalette: UniformSpritePalette
+        uniformAssetRoots: RunGameplayUniformAssetRoots
     ) async -> UniformTexturePrewarmResult {
         let startedAt = ProcessInfo.processInfo.systemUptime
         let requestedCount = Self.offenseUniformPaths.count + Self.defenseUniformPaths.count
-        let runPaletteKey = RunUniformPaletteKey(
-            offense: offensePalette,
-            defense: defensePalette
-        )
         guard !Task.isCancelled else {
             return emptyPrewarmResult(requestedCount: requestedCount, startedAt: startedAt)
         }
-        if preparedRunPalettes.contains(runPaletteKey) {
+        if preparedRunAssetRoots.contains(uniformAssetRoots) {
             return cachedPrewarmResult(requestedCount: requestedCount, startedAt: startedAt)
         }
 
@@ -638,35 +532,19 @@ final class TextureLibrary {
         guard !Task.isCancelled else {
             return emptyPrewarmResult(requestedCount: requestedCount, startedAt: startedAt)
         }
-        // A preceding serialized request may have completed this palette while
+        // A preceding serialized request may have completed these roots while
         // the current caller was waiting for its turn.
-        if preparedRunPalettes.contains(runPaletteKey) {
+        if preparedRunAssetRoots.contains(uniformAssetRoots) {
             return cachedPrewarmResult(requestedCount: requestedCount, startedAt: startedAt)
         }
 
-        let requests = Self.offenseUniformPaths.map { path in
-            UniformTexturePreparationRequest(
-                relativePath: path,
-                cacheKey: UniformTextureCacheKey(
-                    relativePath: path,
-                    palette: offensePalette,
-                    role: .offense
-                ),
-                palette: offensePalette,
-                role: .offense
-            )
-        } + Self.defenseUniformPaths.map { path in
-            UniformTexturePreparationRequest(
-                relativePath: path,
-                cacheKey: UniformTextureCacheKey(
-                    relativePath: path,
-                    palette: defensePalette,
-                    role: .defense
-                ),
-                palette: defensePalette,
-                role: .defense
-            )
-        }
+        let requests = makePreparationRequests(
+            genericFramePaths: Self.offenseUniformPaths,
+            assetRoot: uniformAssetRoots.offense
+        ) + makePreparationRequests(
+            genericFramePaths: Self.defenseUniformPaths,
+            assetRoot: uniformAssetRoots.defense
+        )
 
         let missingRequests = requests.filter { uniformCache[$0.cacheKey] == nil }
         let preprocessingStartedAt = ProcessInfo.processInfo.systemUptime
@@ -737,7 +615,7 @@ final class TextureLibrary {
         if !Task.isCancelled,
            preparedCount == requests.count,
            preloadedCount == requests.count {
-            preparedRunPalettes.insert(runPaletteKey)
+            preparedRunAssetRoots.insert(uniformAssetRoots)
         }
 
         return UniformTexturePrewarmResult(
@@ -752,6 +630,32 @@ final class TextureLibrary {
             totalMainActorInstallationDurationMilliseconds: totalInstallationMilliseconds,
             spriteKitPreloadDurationMilliseconds: preloadDuration
         )
+    }
+
+    private func makePreparationRequests(
+        genericFramePaths: [String],
+        assetRoot: GameplayJerseyAssetRoot
+    ) -> [UniformTexturePreparationRequest] {
+        genericFramePaths.compactMap { genericFramePath in
+            guard let bakedFramePath = assetRoot.framePath(for: genericFramePath) else {
+                return nil
+            }
+            let fallbackPath: String?
+            switch gameplayUniformFallbackPolicy {
+            case .disabled:
+                fallbackPath = nil
+            case .developmentGeneric:
+                fallbackPath = genericFramePath
+            }
+            return UniformTexturePreparationRequest(
+                relativePath: bakedFramePath,
+                developmentFallbackRelativePath: fallbackPath,
+                cacheKey: UniformTextureCacheKey(
+                    assetRoot: assetRoot,
+                    genericFramePath: genericFramePath
+                )
+            )
+        }
     }
 
     private func acquireUniformPrewarmTurn() async {

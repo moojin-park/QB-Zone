@@ -26,6 +26,7 @@ final class GameScene: SKScene {
     let settings: PlayerSettings
 
     private let runVisuals: RunVisualIdentity
+    private let runUniformAssetRoots: RunGameplayUniformAssetRoots
     let fieldLayerStack: GameplayFieldLayerStack
     private var session: GameplaySession
     private let textures: TextureLibrary
@@ -88,9 +89,16 @@ final class GameScene: SKScene {
         ) else {
             preconditionFailure("Run configuration does not resolve to approved shipping visuals")
         }
+        guard let runUniformAssetRoots = RunGameplayUniformAssetRoots(
+            configuration: configuration,
+            catalog: .approved
+        ) else {
+            preconditionFailure("Run configuration does not resolve to approved baked uniforms")
+        }
         self.configuration = configuration
         self.settings = settings
         self.runVisuals = runVisuals
+        self.runUniformAssetRoots = runUniformAssetRoots
         fieldLayerStack = GameplayFieldLayerStack(
             offenseTeamID: configuration.offenseTeamID
         )
@@ -608,13 +616,11 @@ final class GameScene: SKScene {
     private func beginVisualPreparation() {
         cancelVisualPreparation()
         let textures = textures
-        let offensePalette = runVisuals.offenseUniform
-        let defensePalette = runVisuals.defenseUniform
+        let uniformAssetRoots = runUniformAssetRoots
         let fieldLayerStack = fieldLayerStack
         visualPreparationTask = Task { [weak self, textures] in
             let result = await textures.prewarmRunVisualTextures(
-                offensePalette: offensePalette,
-                defensePalette: defensePalette,
+                uniformAssetRoots: uniformAssetRoots,
                 fieldLayerStack: fieldLayerStack
             )
             guard !Task.isCancelled, let self else { return }
@@ -811,8 +817,7 @@ final class GameScene: SKScene {
             node.zPosition = 1_000 - lane.depth * 500
             node.texture = textures.uniformTexture(
                 receiverTexturePath(receiver),
-                palette: runVisuals.offenseUniform,
-                role: .offense
+                assetRoot: runUniformAssetRoots.offense
             )
         }
 
@@ -843,8 +848,7 @@ final class GameScene: SKScene {
             node.zPosition = 1_000 - defender.depth * 500
             node.texture = textures.uniformTexture(
                 defenderTexturePath(defender),
-                palette: runVisuals.defenseUniform,
-                role: .defense
+                assetRoot: runUniformAssetRoots.defense
             )
         }
     }
@@ -881,8 +885,7 @@ final class GameScene: SKScene {
         }
         quarterbackNode.texture = textures.uniformTexture(
             path,
-            palette: runVisuals.offenseUniform,
-            role: .offense
+            assetRoot: runUniformAssetRoots.offense
         )
     }
 
