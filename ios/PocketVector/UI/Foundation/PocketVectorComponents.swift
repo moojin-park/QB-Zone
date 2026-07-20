@@ -133,13 +133,18 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
     var body: some View {
         GeometryReader { proxy in
             let compactHeight = proxy.size.height < 430
-            let padLayout = proxy.size.width / max(proxy.size.height, 1) < 1.65
+            let padLayout = !compactHeight
+                && proxy.size.width / max(proxy.size.height, 1) < 1.65
             let accessibilityLayout = dynamicTypeSize.isAccessibilitySize
             let horizontalPadding: CGFloat = compactHeight ? 12 : (padLayout ? 22 : 18)
             let headerHeight: CGFloat = compactHeight ? 72 : (padLayout ? 132 : 88)
             let innerWidth = proxy.size.width - (horizontalPadding * 2)
             let sideWidth = compactHeight
-                ? min(max(proxy.size.width * 0.23, 176), 220)
+                ? (
+                    accessibilityLayout
+                        ? min(max(proxy.size.width * 0.19, 140), 170)
+                        : min(max(proxy.size.width * 0.23, 176), 220)
+                )
                 : min(max(proxy.size.width * 0.18, 210), padLayout ? 280 : 250)
             let titleWidth = max(
                 240,
@@ -149,16 +154,6 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
                     innerWidth - (sideWidth * 2) - 20
                 )
             )
-            let accessibleTitleWidth = min(
-                innerWidth,
-                padLayout ? 720 : 560
-            )
-            let accessibleTitleHeight: CGFloat = {
-                if compactHeight {
-                    return subtitle == nil ? 72 : 132
-                }
-                return subtitle == nil ? 132 : 180
-            }()
 
             ZStack {
                 ChampionshipBackdrop()
@@ -166,44 +161,50 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
                 VStack(spacing: compactHeight ? 7 : 10) {
                     if accessibilityLayout {
                         VStack(spacing: compactHeight ? 6 : 10) {
-                            if showsBackButton {
-                                ViewThatFits(in: .horizontal) {
-                                    HStack(spacing: 12) {
-                                        backButton(
-                                            compactHeight: compactHeight,
-                                            padLayout: padLayout
-                                        )
+                            ZStack {
+                                ChampionshipTitleMarquee(
+                                    title: title,
+                                    subtitle: nil,
+                                    compact: compactHeight,
+                                    expanded: padLayout,
+                                    accessibleType: true
+                                )
+                                .frame(width: titleWidth, height: headerHeight)
 
-                                        Spacer(minLength: 12)
-
-                                        headerAccessory
-                                            .fixedSize(horizontal: true, vertical: true)
-                                    }
-
-                                    VStack(spacing: 6) {
-                                        HStack {
+                                HStack(spacing: 0) {
+                                    Group {
+                                        if showsBackButton {
                                             backButton(
                                                 compactHeight: compactHeight,
-                                                padLayout: padLayout
+                                                padLayout: padLayout,
+                                                accessibleType: true
                                             )
-                                            Spacer(minLength: 0)
+                                        } else {
+                                            Color.clear
+                                                .frame(height: headerHeight)
+                                                .accessibilityHidden(true)
                                         }
-
-                                        headerAccessory
-                                            .frame(maxWidth: .infinity, alignment: .trailing)
                                     }
-                                }
-                                .frame(minHeight: compactHeight ? 58 : (padLayout ? 76 : 64))
-                            }
+                                    .frame(width: sideWidth, alignment: .leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                            ChampionshipTitleMarquee(
-                                title: title,
-                                subtitle: subtitle,
-                                compact: compactHeight,
-                                expanded: padLayout,
-                                accessibleType: true
-                            )
-                            .frame(width: accessibleTitleWidth, height: accessibleTitleHeight)
+                                    Color.clear
+                                        .frame(width: sideWidth, height: headerHeight)
+                                        .overlay(alignment: .trailing) {
+                                            headerAccessory
+                                        }
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: headerHeight)
+
+                            if let subtitle {
+                                ChampionshipSubtitleRail(
+                                    subtitle: subtitle,
+                                    compact: compactHeight
+                                )
+                                .frame(maxWidth: padLayout ? 1_080 : .infinity)
+                            }
                         }
                         .frame(maxWidth: .infinity)
                     } else {
@@ -222,7 +223,8 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
                                     if showsBackButton {
                                         backButton(
                                             compactHeight: compactHeight,
-                                            padLayout: padLayout
+                                            padLayout: padLayout,
+                                            accessibleType: false
                                         )
                                     } else {
                                         Color.clear
@@ -255,16 +257,22 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
         .foregroundStyle(PocketVectorTheme.championshipGlacier)
     }
 
-    private func backButton(compactHeight: Bool, padLayout: Bool) -> some View {
+    private func backButton(
+        compactHeight: Bool,
+        padLayout: Bool,
+        accessibleType: Bool
+    ) -> some View {
         Button(action: onBack) {
             HStack(spacing: compactHeight ? 5 : 7) {
                 ChampionshipPixelIcon(
                     name: "SubmenuBackIcon",
-                    size: compactHeight ? 28 : (padLayout ? 40 : 32)
+                    size: accessibleType ? 24 : (compactHeight ? 28 : (padLayout ? 40 : 32))
                 )
                 Text("BACK")
                     .font(.system(
-                        compactHeight ? .subheadline : (padLayout ? .title3 : .headline),
+                        accessibleType
+                            ? .caption2
+                            : (compactHeight ? .subheadline : (padLayout ? .title3 : .headline)),
                         design: .monospaced,
                         weight: .black
                     ))
@@ -276,6 +284,36 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
         .buttonStyle(ChampionshipBackButtonStyle(compact: compactHeight))
         .accessibilityHint("Returns to the previous screen")
         .accessibilitySortPriority(3)
+    }
+}
+
+private struct ChampionshipSubtitleRail: View {
+    let subtitle: String
+    let compact: Bool
+
+    var body: some View {
+        Text(subtitle)
+            .font(.system(
+                .caption2,
+                design: compact ? .rounded : .monospaced,
+                weight: .bold
+            ))
+            .fontWidth(compact ? .condensed : .standard)
+            .foregroundStyle(PocketVectorTheme.championshipSilver)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, compact ? 12 : 20)
+            .padding(.vertical, compact ? 3 : 9)
+            .frame(maxWidth: .infinity)
+            .background(
+                PocketVectorTheme.championshipVoid.opacity(0.96),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(PocketVectorTheme.championshipSilver.opacity(0.78), lineWidth: 1.5)
+            }
+            .accessibilitySortPriority(1)
     }
 }
 
@@ -316,12 +354,13 @@ private struct ChampionshipTitleMarquee: View {
                     .foregroundStyle(PocketVectorTheme.championshipGlacier)
             }
             .font(.system(
-                size: expanded ? 46 : (compact ? 28 : 34),
+                size: expanded ? 46 : (compact ? (accessibleType ? 19 : 28) : 34),
                 weight: .black,
                 design: .monospaced
             ))
             .tracking(compact ? -1.0 : (expanded ? -0.3 : -0.6))
-            .lineLimit(1)
+            .multilineTextAlignment(.center)
+            .lineLimit(accessibleType ? 2 : 1)
             .minimumScaleFactor(0.62)
 
             if let subtitle {
@@ -438,19 +477,20 @@ private struct ChampionshipBackButtonStyle: ButtonStyle {
 
 struct ChampionshipPrimaryButtonStyle: ButtonStyle {
     var compact: Bool = false
+    var accessibilityCompact: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(
-                compact ? .headline : .title3,
+                accessibilityCompact ? .caption2 : (compact ? .headline : .title3),
                 design: .monospaced,
                 weight: .black
             ))
             .tracking(0.6)
             .foregroundStyle(PocketVectorTheme.championshipGlacier)
             .frame(maxWidth: .infinity)
-            .frame(minHeight: compact ? 48 : 54)
-            .padding(.horizontal, compact ? 12 : 18)
+            .frame(minHeight: accessibilityCompact ? 44 : (compact ? 48 : 54))
+            .padding(.horizontal, accessibilityCompact ? 8 : (compact ? 12 : 18))
             .background(
                 LinearGradient(
                     colors: configuration.isPressed
@@ -479,12 +519,18 @@ struct ChampionshipPrimaryButtonStyle: ButtonStyle {
 }
 
 struct ChampionshipSecondaryButtonStyle: ButtonStyle {
+    var accessibilityCompact: Bool = false
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(.subheadline, design: .monospaced, weight: .bold))
+            .font(.system(
+                accessibilityCompact ? .caption2 : .subheadline,
+                design: .monospaced,
+                weight: .bold
+            ))
             .foregroundStyle(PocketVectorTheme.championshipGlacier)
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, minHeight: 46)
+            .padding(.horizontal, accessibilityCompact ? 8 : 12)
+            .frame(maxWidth: .infinity, minHeight: accessibilityCompact ? 44 : 46)
             .background(
                 PocketVectorTheme.championshipGraphite.opacity(
                     configuration.isPressed ? 0.72 : 0.96

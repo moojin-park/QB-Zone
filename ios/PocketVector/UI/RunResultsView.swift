@@ -18,7 +18,11 @@ struct RunResultsView: View {
                 let expanded = geometry.size.width / max(geometry.size.height, 1) < 1.65
 
                 if dynamicTypeSize.isAccessibilitySize {
-                    accessibilityLayout(compact: compact, expanded: expanded)
+                    accessibilityLayout(
+                        compact: compact,
+                        expanded: expanded,
+                        availableWidth: geometry.size.width
+                    )
                 } else {
                     ScrollView {
                         HStack(alignment: .top, spacing: compact ? 10 : 16) {
@@ -40,11 +44,19 @@ struct RunResultsView: View {
         }
     }
 
-    private func accessibilityLayout(compact: Bool, expanded: Bool) -> some View {
+    private func accessibilityLayout(
+        compact: Bool,
+        expanded: Bool,
+        availableWidth: CGFloat
+    ) -> some View {
         VStack(spacing: 6) {
+            accessibleScoreSummaryPanel(compact: compact)
+                .frame(maxWidth: expanded ? 760 : .infinity)
+                .padding(.horizontal, compact ? 2 : 8)
+
             ScrollView {
                 VStack(spacing: 10) {
-                    accessibleScorePanel()
+                    accessibleStatsPanel(expanded: expanded)
                     coinPanel(compact: true, accessibleType: true)
                     rewardedAdPanel(compact: true, accessibleType: true)
                 }
@@ -54,76 +66,34 @@ struct RunResultsView: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollBounceBehavior(.basedOnSize)
+            .clipped()
 
-            resultsActions(compact: true, accessibleType: true)
+            resultsActions(
+                compact: true,
+                accessibleType: true,
+                stacksVertically: availableWidth < 520
+            )
                 .padding(.horizontal, compact ? 2 : 8)
+                .padding(.top, 4)
                 .padding(.bottom, 2)
+                .background(PocketVectorTheme.championshipVoid.opacity(0.98))
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(PocketVectorTheme.championshipSilver.opacity(0.38))
+                        .frame(height: 1)
+                }
         }
     }
 
-    private func accessibleScorePanel() -> some View {
-        VStack(spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Text("FINAL SCORE")
-                    .font(.system(.headline, design: .monospaced, weight: .black))
-                    .tracking(0.8)
-                    .foregroundStyle(PocketVectorTheme.championshipSilver)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Spacer(minLength: 0)
-
-                if results.isNewPersonalBest {
-                    Text("NEW BEST")
-                        .font(.system(size: 13, weight: .black, design: .monospaced))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(PocketVectorTheme.gold, in: Capsule())
-                        .fixedSize()
-                }
-            }
-
-            Text(results.score.formatted())
-                .font(.system(size: 54, weight: .black, design: .monospaced))
-                .tracking(-3)
-                .foregroundStyle(PocketVectorTheme.championshipGlacier)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .shadow(color: .black.opacity(0.92), radius: 0, x: 3, y: 4)
-
-            VStack(spacing: 2) {
-                Text("PERSONAL BEST")
-                    .foregroundStyle(PocketVectorTheme.championshipSilver)
-                Text(results.personalBest.formatted())
-                    .foregroundStyle(
-                        results.isNewPersonalBest
-                            ? PocketVectorTheme.gold
-                            : PocketVectorTheme.championshipGlacier
-                    )
-            }
-            .font(.system(.headline, design: .monospaced, weight: .black).monospacedDigit())
-            .multilineTextAlignment(.center)
-
-            Divider()
-                .overlay(PocketVectorTheme.championshipSilver.opacity(0.38))
-
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: 8),
-                    GridItem(.flexible(), spacing: 8),
-                ],
-                spacing: 8
-            ) {
-                AccessibleResultStat(title: "ATTEMPTS", value: results.statistics.attempts.formatted())
-                AccessibleResultStat(
-                    title: "COMPLETIONS", value: results.statistics.successfulPasses.formatted())
-                AccessibleResultStat(
-                    title: "ACCURACY", value: "\(results.statistics.displayedAccuracyPercent)%")
-                AccessibleResultStat(title: "TOUCHDOWNS", value: results.statistics.touchdowns.formatted())
+    private func accessibleScoreSummaryPanel(compact: Bool) -> some View {
+        Group {
+            if compact {
+                compactAccessibleScoreHeader
+            } else {
+                expandedAccessibleScoreHeader
             }
         }
-        .padding(14)
+        .padding(compact ? 10 : 14)
         .frame(maxWidth: .infinity)
         .championshipPanel(isSelected: results.isNewPersonalBest)
         .overlay(alignment: .top) {
@@ -136,6 +106,135 @@ struct RunResultsView: View {
                 .padding(.top, 5)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    private func accessibleStatsPanel(expanded: Bool) -> some View {
+        VStack(spacing: 8) {
+            Text("RUN STATS")
+                .font(.system(.caption2, design: .monospaced, weight: .black))
+                .tracking(0.7)
+                .foregroundStyle(PocketVectorTheme.championshipSilver)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            LazyVGrid(
+                columns: Array(
+                    repeating: GridItem(.flexible(), spacing: 8),
+                    count: expanded ? 4 : 2
+                ),
+                spacing: 8
+            ) {
+                AccessibleResultStat(title: "ATTEMPTS", value: results.statistics.attempts.formatted())
+                AccessibleResultStat(
+                    title: "COMPLETIONS", value: results.statistics.successfulPasses.formatted())
+                AccessibleResultStat(
+                    title: "ACCURACY", value: "\(results.statistics.displayedAccuracyPercent)%")
+                AccessibleResultStat(title: "TOUCHDOWNS", value: results.statistics.touchdowns.formatted())
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .championshipPanel()
+        .accessibilityElement(children: .combine)
+    }
+
+    private var compactAccessibleScoreHeader: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("FINAL SCORE")
+                    .font(.system(.caption2, design: .monospaced, weight: .black))
+                    .fontWidth(.compressed)
+                    .tracking(0.5)
+                    .foregroundStyle(PocketVectorTheme.championshipSilver)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    accessibleScoreValue(size: 38)
+
+                    if results.isNewPersonalBest {
+                        newBestBadge
+                    }
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("PERSONAL BEST")
+                    .font(.system(.caption2, design: .monospaced, weight: .black))
+                    .fontWidth(.compressed)
+                    .foregroundStyle(PocketVectorTheme.championshipSilver)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+
+                Text(results.personalBest.formatted())
+                    .font(.system(.headline, design: .monospaced, weight: .black).monospacedDigit())
+                    .foregroundStyle(
+                        results.isNewPersonalBest
+                            ? PocketVectorTheme.gold
+                            : PocketVectorTheme.championshipGlacier
+                    )
+            }
+            .multilineTextAlignment(.trailing)
+        }
+    }
+
+    private var expandedAccessibleScoreHeader: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("FINAL SCORE")
+                        .font(.system(.headline, design: .monospaced, weight: .black))
+                        .tracking(0.8)
+                        .foregroundStyle(PocketVectorTheme.championshipSilver)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if results.isNewPersonalBest {
+                        newBestBadge
+                    }
+                }
+
+                accessibleScoreValue(size: 54)
+            }
+
+            Spacer(minLength: 6)
+
+            VStack(alignment: .trailing, spacing: 3) {
+                Text("PERSONAL BEST")
+                    .font(.system(.caption, design: .monospaced, weight: .black))
+                    .foregroundStyle(PocketVectorTheme.championshipSilver)
+                Text(results.personalBest.formatted())
+                    .font(.system(.title3, design: .monospaced, weight: .black).monospacedDigit())
+                    .foregroundStyle(
+                        results.isNewPersonalBest
+                            ? PocketVectorTheme.gold
+                            : PocketVectorTheme.championshipGlacier
+                    )
+            }
+            .multilineTextAlignment(.trailing)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var newBestBadge: some View {
+        Text("NEW BEST")
+            .font(.system(size: 11, weight: .black, design: .monospaced))
+            .foregroundStyle(.black)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(PocketVectorTheme.gold, in: Capsule())
+            .fixedSize()
+    }
+
+    private func accessibleScoreValue(size: CGFloat) -> some View {
+        Text(results.score.formatted())
+            .font(.system(size: size, weight: .black, design: .monospaced))
+            .tracking(size < 50 ? -2 : -3)
+            .foregroundStyle(PocketVectorTheme.championshipGlacier)
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .shadow(color: .black.opacity(0.92), radius: 0, x: 3, y: 4)
     }
 
     private func scorePanel(compact: Bool, expanded: Bool) -> some View {
@@ -250,8 +349,16 @@ struct RunResultsView: View {
     }
 
     @ViewBuilder
-    private func resultsActions(compact: Bool, accessibleType: Bool) -> some View {
-        HStack(spacing: compact ? 8 : 12) {
+    private func resultsActions(
+        compact: Bool,
+        accessibleType: Bool,
+        stacksVertically: Bool = false
+    ) -> some View {
+        let layout = stacksVertically
+            ? AnyLayout(VStackLayout(spacing: 8))
+            : AnyLayout(HStackLayout(spacing: compact ? 8 : 12))
+
+        layout {
             Button {
                 coordinator.returnToMainMenu()
             } label: {
@@ -260,7 +367,9 @@ struct RunResultsView: View {
                     .minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(ChampionshipSecondaryButtonStyle())
+            .buttonStyle(ChampionshipSecondaryButtonStyle(
+                accessibilityCompact: accessibleType
+            ))
             .accessibilityHint("Returns to the main menu")
 
             Button {
@@ -275,10 +384,14 @@ struct RunResultsView: View {
                     }
                     Text("PLAY AGAIN")
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(accessibleType ? 0.65 : 0.8)
                 }
+                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(ChampionshipPrimaryButtonStyle(compact: true))
+            .buttonStyle(ChampionshipPrimaryButtonStyle(
+                compact: true,
+                accessibilityCompact: accessibleType
+            ))
             .accessibilityHint("Starts another run with the same offense and equipment")
         }
     }

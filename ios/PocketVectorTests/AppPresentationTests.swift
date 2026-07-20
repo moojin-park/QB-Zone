@@ -7,6 +7,95 @@ import XCTest
 
 final class AppPresentationTests: XCTestCase {
     @MainActor
+    func testCaptureSharedHeaderAccessibilityMatrix() async throws {
+        let coordinator = AppCoordinator()
+        await coordinator.bootstrap()
+        coordinator.showTutorialReview()
+
+        let results = try makeRunResultsPresentation()
+        let surfaces: [(name: String, view: AnyView)] = [
+            ("choose-offense", AnyView(TeamSelectionView(coordinator: coordinator))),
+            ("team-locker", AnyView(LockerView(coordinator: coordinator))),
+            ("coin-store", AnyView(CoinStoreView(coordinator: coordinator))),
+            ("achievements", AnyView(AchievementsView(coordinator: coordinator))),
+            ("settings", AnyView(SettingsView(coordinator: coordinator))),
+            (
+                "tutorial-rules",
+                AnyView(TutorialView(coordinator: coordinator, initialPage: .gameRules))
+            ),
+            (
+                "tutorial-passing",
+                AnyView(TutorialView(coordinator: coordinator, initialPage: .passing))
+            ),
+            (
+                "results",
+                AnyView(RunResultsView(results: results, coordinator: coordinator))
+            ),
+        ]
+        let viewports: [(
+            name: String,
+            size: CGSize,
+            horizontalSizeClass: UserInterfaceSizeClass,
+            verticalSizeClass: UserInterfaceSizeClass,
+            dynamicTypeSize: DynamicTypeSize
+        )] = [
+            (
+                "compact-iphone-landscape-accessibility5",
+                CGSize(width: 667, height: 375),
+                .compact,
+                .compact,
+                .accessibility5
+            ),
+            (
+                "regular-iphone-landscape-accessibility5",
+                CGSize(width: 874, height: 402),
+                .compact,
+                .compact,
+                .accessibility5
+            ),
+            (
+                "ipad-landscape-accessibility5",
+                CGSize(width: 1_376, height: 1_032),
+                .regular,
+                .regular,
+                .accessibility5
+            ),
+            (
+                "regular-iphone-landscape-standard",
+                CGSize(width: 874, height: 402),
+                .compact,
+                .compact,
+                .large
+            ),
+            (
+                "ipad-landscape-standard",
+                CGSize(width: 1_376, height: 1_032),
+                .regular,
+                .regular,
+                .large
+            ),
+        ]
+
+        for viewport in viewports {
+            for surface in surfaces {
+                capture(
+                    AnyView(
+                        ZStack {
+                            PocketVectorBackdrop()
+                            surface.view
+                        }
+                        .dynamicTypeSize(viewport.dynamicTypeSize)
+                        .environment(\.horizontalSizeClass, viewport.horizontalSizeClass)
+                        .environment(\.verticalSizeClass, viewport.verticalSizeClass)
+                    ),
+                    size: viewport.size,
+                    name: "shared-header-\(surface.name)-\(viewport.name)"
+                )
+            }
+        }
+    }
+
+    @MainActor
     func testCaptureTutorialAndResultsLayoutMatrix() async throws {
         let tutorialCoordinator = AppCoordinator()
         await tutorialCoordinator.bootstrap()
