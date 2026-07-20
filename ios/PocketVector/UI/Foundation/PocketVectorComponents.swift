@@ -171,9 +171,9 @@ struct ChampionshipSubmenuScreen<HeaderAccessory: View, Content: View>: View {
                                             )
                                             Text("BACK")
                                                 .font(.system(
-                                                    compactHeight ? .subheadline : (padLayout ? .title3 : .headline),
-                                                    design: .monospaced,
-                                                    weight: .black
+                                                    size: compactHeight ? 18 : (padLayout ? 22 : 20),
+                                                    weight: .black,
+                                                    design: .monospaced
                                                 ))
                                                 .tracking(0.5)
                                         }
@@ -259,9 +259,9 @@ private struct ChampionshipTitleMarquee: View {
             if let subtitle {
                 Text(subtitle)
                     .font(.system(
-                        compact ? .caption2 : (expanded ? .subheadline : .caption),
-                        design: .monospaced,
-                        weight: .bold
+                        size: compact ? 11 : (expanded ? 15 : 12),
+                        weight: .bold,
+                        design: .monospaced
                     ))
                     .foregroundStyle(PocketVectorTheme.championshipSilver)
                     .lineLimit(1)

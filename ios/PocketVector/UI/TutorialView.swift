@@ -1,7 +1,15 @@
 import AVFoundation
 import Combine
+import CryptoKit
 import SwiftUI
 import UIKit
+
+enum TutorialPage: Int, CaseIterable {
+    case gameRules
+    case passing
+
+    var number: Int { rawValue + 1 }
+}
 
 @MainActor
 struct TutorialView: View {
@@ -15,6 +23,7 @@ struct TutorialView: View {
     @State private var mediaIsReady = false
     @State private var playbackStage = 0
     @State private var hasAutoplayed = false
+    @State private var page: TutorialPage
 
     private let playbackClock = Timer.publish(
         every: 0.10,
@@ -25,12 +34,20 @@ struct TutorialView: View {
 
     private let stages = TutorialStage.allCases
 
+    init(
+        coordinator: AppCoordinator,
+        initialPage: TutorialPage = .gameRules
+    ) {
+        self.coordinator = coordinator
+        _page = State(initialValue: initialPage)
+    }
+
     var body: some View {
         ChampionshipSubmenuScreen(
             title: "How to Play",
             onBack: coordinator.cancelTutorial,
             headerAccessory: {
-                TutorialStepBadge()
+                TutorialPageBadge(page: page)
             }
         ) {
             GeometryReader { proxy in
@@ -44,34 +61,39 @@ struct TutorialView: View {
                     max(0, proxy.size.width - (horizontalInset * 2)),
                     padLayout ? 1_280 : 1_240
                 )
-                let filmHeight: CGFloat = compact
-                    ? 160
-                    : (padLayout ? min(520, proxy.size.height * 0.63) : min(330, proxy.size.height * 0.66))
-
-                ScrollView {
-                    VStack(spacing: stackSpacing) {
-                        filmstrip(
+                VStack(spacing: accessibleType ? 6 : 0) {
+                    ScrollView {
+                        pageContent(
                             width: contentWidth,
-                            height: filmHeight,
+                            availableHeight: proxy.size.height,
                             compact: compact,
                             expanded: padLayout,
-                            accessibleType: accessibleType
+                            accessibleType: accessibleType,
+                            spacing: stackSpacing
                         )
-
-                        TutorialInstructionRail(compact: compact)
-
-                        transport(compact: compact, expanded: padLayout)
+                        .frame(width: contentWidth)
+                        .frame(
+                            minHeight: accessibleType
+                                ? nil
+                                : proxy.size.height - (verticalInset * 2),
+                            alignment: .center
+                        )
+                        .padding(.horizontal, horizontalInset)
+                        .padding(.vertical, verticalInset)
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(width: contentWidth)
-                    .frame(
-                        minHeight: accessibleType ? nil : proxy.size.height - (verticalInset * 2),
-                        alignment: .center
-                    )
-                    .padding(.horizontal, horizontalInset)
-                    .padding(.vertical, verticalInset)
-                    .frame(maxWidth: .infinity)
+                    .scrollBounceBehavior(.basedOnSize)
+
+                    if accessibleType {
+                        tutorialActions(
+                            compact: true,
+                            expanded: padLayout,
+                            accessibleType: true
+                        )
+                        .padding(.horizontal, max(2, horizontalInset))
+                        .padding(.bottom, 2)
+                    }
                 }
-                .scrollBounceBehavior(.basedOnSize)
             }
         }
         .task {
@@ -119,42 +141,143 @@ struct TutorialView: View {
     }
 
     @ViewBuilder
-    private func filmstrip(
+    private func pageContent(
         width: CGFloat,
-        height: CGFloat,
+        availableHeight: CGFloat,
+        compact: Bool,
+        expanded: Bool,
+        accessibleType: Bool,
+        spacing: CGFloat
+    ) -> some View {
+        VStack(spacing: spacing) {
+            switch page {
+            case .gameRules:
+                gameRules(
+                    width: width,
+                    compact: compact,
+                    expanded: expanded,
+                    accessibleType: accessibleType
+                )
+            case .passing:
+                passingLesson(
+                    width: width,
+                    availableHeight: availableHeight,
+                    compact: compact,
+                    expanded: expanded,
+                    accessibleType: accessibleType,
+                    spacing: spacing
+                )
+            }
+
+            if !accessibleType {
+                tutorialActions(
+                    compact: compact,
+                    expanded: expanded,
+                    accessibleType: false
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func gameRules(
+        width: CGFloat,
         compact: Bool,
         expanded: Bool,
         accessibleType: Bool
     ) -> some View {
+        let rules = TutorialRule.allCases
+
         if accessibleType {
-            VStack(spacing: expanded ? 14 : 10) {
-                ForEach(stages) { stage in
-                    filmFrame(
-                        stage,
-                        width: width,
-                        height: expanded ? 330 : 220,
+            LazyVStack(spacing: 10) {
+                ForEach(rules) { rule in
+                    TutorialRuleCard(
+                        rule: rule,
                         compact: false,
-                        expanded: expanded
+                        expanded: expanded,
+                        accessibleType: true
                     )
                 }
             }
         } else {
             let spacing: CGFloat = compact ? 6 : (expanded ? 14 : 10)
-            let frameWidth = max(0, (width - (spacing * 2)) / 3)
+            let cardWidth = max(0, (width - (spacing * 2)) / 3)
 
             HStack(spacing: spacing) {
-                ForEach(stages) { stage in
-                    filmFrame(
-                        stage,
-                        width: frameWidth,
-                        height: height,
+                ForEach(rules) { rule in
+                    TutorialRuleCard(
+                        rule: rule,
                         compact: compact,
-                        expanded: expanded
+                        expanded: expanded,
+                        accessibleType: false
                     )
+                        .frame(width: cardWidth)
                 }
             }
-            .frame(height: height)
+            .frame(height: compact ? 180 : (expanded ? 460 : 280))
         }
+    }
+
+    @ViewBuilder
+    private func passingLesson(
+        width: CGFloat,
+        availableHeight: CGFloat,
+        compact: Bool,
+        expanded: Bool,
+        accessibleType: Bool,
+        spacing: CGFloat
+    ) -> some View {
+        if accessibleType {
+            LazyVStack(spacing: 10) {
+                ForEach(stages) { stage in
+                    AccessibleTutorialStep(stage: stage, isActive: playbackStage == stage.index) {
+                        tutorialMedia(for: stage)
+                    }
+                }
+
+                TutorialInstructionRail(compact: false, accessibleType: true)
+            }
+        } else {
+            let filmHeight: CGFloat =
+                compact
+                ? 160
+                : (expanded
+                    ? min(520, availableHeight * 0.63)
+                    : min(330, availableHeight * 0.66))
+
+            filmstrip(
+                width: width,
+                height: filmHeight,
+                compact: compact,
+                expanded: expanded
+            )
+
+            TutorialInstructionRail(compact: compact, accessibleType: false)
+        }
+    }
+
+    @ViewBuilder
+    private func filmstrip(
+        width: CGFloat,
+        height: CGFloat,
+        compact: Bool,
+        expanded: Bool
+    ) -> some View {
+        let spacing: CGFloat = compact ? 6 : (expanded ? 14 : 10)
+        let frameWidth = max(0, (width - (spacing * 2)) / 3)
+
+        HStack(spacing: spacing) {
+            ForEach(stages) { stage in
+                filmFrame(
+                    stage,
+                    width: frameWidth,
+                    height: height,
+                    compact: compact,
+                    expanded: expanded
+                )
+            }
+        }
+        .frame(height: height)
     }
 
     private func filmFrame(
@@ -167,23 +290,29 @@ struct TutorialView: View {
         TutorialFilmFrame(
             stage: stage,
             isActive: playbackStage == stage.index,
+            reducesMotion: reducesMotion,
             width: width,
             height: height,
             compact: compact,
             expanded: expanded
         ) {
-            if stage == .throwToIt {
-                ZStack {
-                    tutorialImage(named: stage.posterAssetName)
-                    if mediaIsReady {
-                        TutorialPlayerSurface(player: player)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
-                    }
-                }
-            } else {
+            tutorialMedia(for: stage)
+        }
+    }
+
+    @ViewBuilder
+    private func tutorialMedia(for stage: TutorialStage) -> some View {
+        if stage == .throwToIt {
+            ZStack {
                 tutorialImage(named: stage.posterAssetName)
+                if mediaIsReady {
+                    TutorialPlayerSurface(player: player)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
+        } else {
+            tutorialImage(named: stage.posterAssetName)
         }
     }
 
@@ -192,50 +321,110 @@ struct TutorialView: View {
             .accessibilityHidden(true)
     }
 
-    private func transport(compact: Bool, expanded: Bool) -> some View {
+    @ViewBuilder
+    private func tutorialActions(
+        compact: Bool,
+        expanded: Bool,
+        accessibleType: Bool
+    ) -> some View {
+        if page == .gameRules {
+            Button {
+                page = .passing
+            } label: {
+                HStack(spacing: 8) {
+                    Text("NEXT: PASSING")
+                        .lineLimit(1)
+                    ChampionshipPixelIcon(
+                        name: "SubmenuForwardIcon",
+                        size: accessibleType ? 22 : (compact ? 22 : 28)
+                    )
+                }
+                .font(
+                    accessibleType
+                        ? .system(.headline, design: .monospaced, weight: .black)
+                        : .system(
+                            size: compact ? 17 : 20,
+                            weight: .black,
+                            design: .monospaced
+                        )
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(ChampionshipPrimaryButtonStyle(compact: true))
+            .frame(maxWidth: accessibleType ? .infinity : (expanded ? 420 : 330))
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .accessibilityHint("Shows the passing gesture lesson")
+        } else {
+            transport(
+                compact: compact,
+                expanded: expanded,
+                accessibleType: accessibleType
+            )
+        }
+    }
+
+    private func transport(
+        compact: Bool,
+        expanded: Bool,
+        accessibleType: Bool
+    ) -> some View {
         let replayWidth: CGFloat = compact ? 150 : (expanded ? 260 : 210)
         let completionWidth: CGFloat = compact ? 190 : (expanded ? 310 : 270)
+        let actionLayout = accessibleType && compact
+            ? AnyLayout(VStackLayout(spacing: 8))
+            : AnyLayout(HStackLayout(spacing: compact ? 8 : 12))
 
-        return HStack(spacing: compact ? 8 : 12) {
+        return actionLayout {
             Button(action: replayDemo) {
                 HStack(spacing: compact ? 6 : 9) {
-                    ChampionshipPixelIcon(
-                        name: "SubmenuPlayIcon",
-                        size: compact ? 22 : (expanded ? 34 : 28)
-                    )
+                    if !accessibleType {
+                        ChampionshipPixelIcon(
+                            name: "SubmenuPlayIcon",
+                            size: compact ? 22 : (expanded ? 34 : 28)
+                        )
+                    }
                     Text("REPLAY")
+                        .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(ChampionshipSecondaryButtonStyle())
-            .frame(width: replayWidth)
+            .frame(width: accessibleType ? nil : replayWidth)
+            .frame(maxWidth: accessibleType ? .infinity : nil)
             .disabled(!mediaIsReady)
             .accessibilityLabel("Replay passing demonstration")
             .accessibilityHint("Plays the complete tutorial animation from the beginning")
 
-            TutorialProgressLights(activeStage: playbackStage)
-                .frame(maxWidth: .infinity)
+            if !accessibleType {
+                TutorialProgressLights(activeStage: playbackStage)
+                    .frame(maxWidth: .infinity)
+            }
 
             Button {
                 Task { await coordinator.completeTutorial() }
             } label: {
                 HStack(spacing: compact ? 6 : 9) {
                     Text(completionTitle.uppercased())
-                    ChampionshipPixelIcon(
-                        name: completionTitle == "Start Run"
-                            ? "SubmenuPlayIcon"
-                            : "SubmenuForwardIcon",
-                        size: compact ? 22 : (expanded ? 34 : 28)
-                    )
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    if !accessibleType {
+                        ChampionshipPixelIcon(
+                            name: completionTitle == "Start Run"
+                                ? "SubmenuPlayIcon"
+                                : "SubmenuForwardIcon",
+                            size: compact ? 22 : (expanded ? 34 : 28)
+                        )
+                    }
                 }
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(ChampionshipPrimaryButtonStyle(compact: compact))
-            .frame(width: completionWidth)
+            .frame(width: accessibleType ? nil : completionWidth)
+            .frame(maxWidth: accessibleType ? .infinity : nil)
             .accessibilityHint(completionHint)
             .disabled(coordinator.isRequestInFlight)
         }
-        .frame(maxWidth: expanded ? 1_080 : 980)
+        .frame(maxWidth: accessibleType ? .infinity : (expanded ? 1_080 : 980))
         .frame(maxWidth: .infinity)
     }
 
@@ -250,11 +439,10 @@ struct TutorialView: View {
                 at: directory,
                 withIntermediateDirectories: true
             )
-            let mediaURL = directory.appendingPathComponent("tutorial-pass-run-under-v1.mp4")
-            let existingSize = try? mediaURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
-            if existingSize != dataAsset.data.count {
-                try dataAsset.data.write(to: mediaURL, options: .atomic)
-            }
+            let mediaURL = try TutorialMediaCache.validatedURL(
+                for: dataAsset.data,
+                directory: directory
+            )
 
             let item = AVPlayerItem(url: mediaURL)
             player.replaceCurrentItem(with: item)
@@ -322,16 +510,69 @@ private enum TutorialStage: Int, CaseIterable, Identifiable {
     }
 }
 
-private struct TutorialStepBadge: View {
+private enum TutorialRule: Int, CaseIterable, Identifiable {
+    case clock
+    case scoring
+    case adrenaline
+
+    var id: Int { rawValue }
+
+    var eyebrow: String {
+        switch self {
+        case .clock: "THE CLOCK"
+        case .scoring: "SCORING"
+        case .adrenaline: "ADRENALINE"
+        }
+    }
+
+    var display: String {
+        switch self {
+        case .clock: "60"
+        case .scoring: "−250"
+        case .adrenaline: "100"
+        }
+    }
+
+    var displayCaption: String {
+        switch self {
+        case .clock: "SECOND RUN"
+        case .scoring: "INTERCEPTION"
+        case .adrenaline: "BONUS READY"
+        }
+    }
+
+    var guidance: String {
+        switch self {
+        case .clock:
+            "Score as many points as you can before the game clock reaches zero."
+        case .scoring:
+            "Completions and touchdowns add points. Every interception costs 250 points."
+        case .adrenaline:
+            "Completions fill Adrenaline for a touchdown bonus. The TD multiplier resets only after an incompletion or interception."
+        }
+    }
+
+    var accessibilityValue: String {
+        "\(displayCaption). \(guidance)"
+    }
+}
+
+private struct TutorialPageBadge: View {
+    let page: TutorialPage
+
     var body: some View {
         HStack(spacing: 7) {
-            ForEach(0 ..< 3, id: \.self) { _ in
+            ForEach(TutorialPage.allCases.indices, id: \.self) { index in
                 Circle()
-                    .fill(PocketVectorTheme.championshipStatus)
+                    .fill(
+                        index == page.rawValue
+                            ? PocketVectorTheme.championshipStatus
+                            : PocketVectorTheme.championshipGraphite
+                    )
                     .frame(width: 7, height: 7)
             }
-            Text("3 STEPS")
-                .font(.system(.caption, design: .monospaced, weight: .black))
+            Text("\(page.number) OF 2")
+                .font(.system(size: 12, weight: .black, design: .monospaced))
                 .tracking(0.6)
                 .foregroundStyle(PocketVectorTheme.championshipGlacier)
         }
@@ -346,13 +587,150 @@ private struct TutorialStepBadge: View {
                 .stroke(PocketVectorTheme.championshipSilver.opacity(0.86), lineWidth: 1.5)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Three tutorial steps")
+        .accessibilityLabel("Tutorial page \(page.number) of 2")
+    }
+}
+
+private struct TutorialRuleCard: View {
+    let rule: TutorialRule
+    let compact: Bool
+    let expanded: Bool
+    let accessibleType: Bool
+
+    var body: some View {
+        VStack(spacing: accessibleType ? 10 : (compact ? 5 : 10)) {
+            Text(rule.eyebrow)
+                .font(
+                    .system(
+                        accessibleType
+                            ? .headline
+                            : (compact ? .caption2 : (expanded ? .title2 : .headline)),
+                        design: .monospaced,
+                        weight: .black
+                    )
+                )
+                .tracking(accessibleType ? 0.4 : 1)
+                .foregroundStyle(PocketVectorTheme.championshipSilver)
+                .frame(maxWidth: .infinity)
+
+            VStack(spacing: compact ? 0 : 2) {
+                Text(rule.display)
+                    .font(
+                        .system(
+                            size: accessibleType ? 48 : (compact ? 48 : (expanded ? 104 : 72)),
+                            weight: .black,
+                            design: .monospaced
+                        )
+                    )
+                    .tracking(-2)
+                    .foregroundStyle(
+                        rule == .scoring
+                            ? PocketVectorTheme.warning
+                            : PocketVectorTheme.championshipGlacier
+                    )
+                    .shadow(color: .black.opacity(0.9), radius: 0, x: 3, y: 3)
+
+                Text(rule.displayCaption)
+                    .font(
+                        .system(
+                            accessibleType
+                                ? .subheadline
+                                : (compact ? .caption2 : (expanded ? .title3 : .subheadline)),
+                            design: .monospaced,
+                            weight: .black
+                        )
+                    )
+                    .foregroundStyle(
+                        rule == .adrenaline
+                            ? PocketVectorTheme.championshipStatus
+                            : PocketVectorTheme.gold
+                    )
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity)
+
+            Rectangle()
+                .fill(PocketVectorTheme.championshipSteel.opacity(0.7))
+                .frame(height: 1)
+
+            Text(rule.guidance)
+                .font(
+                    .system(
+                        accessibleType
+                            ? .body
+                            : (compact ? .caption2 : (expanded ? .title3 : .subheadline)),
+                        design: .monospaced,
+                        weight: .bold
+                    )
+                )
+                .foregroundStyle(PocketVectorTheme.championshipGlacier)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(compact ? 9 : (expanded ? 24 : 16))
+        .frame(maxWidth: .infinity, maxHeight: accessibleType ? nil : .infinity)
+        .championshipPanel(isSelected: rule == .adrenaline)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(
+                    rule == .scoring
+                        ? PocketVectorTheme.warning
+                        : PocketVectorTheme.championshipStatus
+                )
+                .frame(height: 3)
+                .padding(.horizontal, 9)
+                .padding(.top, 5)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(rule.eyebrow)
+        .accessibilityValue(rule.accessibilityValue)
+    }
+}
+
+private struct AccessibleTutorialStep<Media: View>: View {
+    let stage: TutorialStage
+    let isActive: Bool
+    @ViewBuilder let media: Media
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(stage.number.formatted())
+                    .font(.system(.headline, design: .monospaced, weight: .black))
+                    .foregroundStyle(PocketVectorTheme.championshipStatus)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .overlay {
+                        Rectangle()
+                            .stroke(PocketVectorTheme.championshipStatus, lineWidth: 2)
+                    }
+
+                Text(stage.title.uppercased())
+                    .font(.system(.headline, design: .monospaced, weight: .black))
+                    .foregroundStyle(PocketVectorTheme.championshipGlacier)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+
+            media
+                .frame(maxWidth: .infinity)
+                .frame(height: 140)
+                .clipped()
+                .accessibilityHidden(true)
+        }
+        .championshipPanel(isSelected: isActive)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(stage.number), \(stage.title)")
     }
 }
 
 private struct TutorialFilmFrame<Media: View>: View {
     let stage: TutorialStage
     let isActive: Bool
+    let reducesMotion: Bool
     let width: CGFloat
     let height: CGFloat
     let compact: Bool
@@ -419,13 +797,17 @@ private struct TutorialFilmFrame<Media: View>: View {
         }
         .frame(width: width, height: height)
         .championshipPanel(isSelected: isActive)
-        .animation(.easeInOut(duration: 0.15), value: isActive)
+        .animation(
+            reducesMotion ? nil : .easeInOut(duration: 0.15),
+            value: isActive
+        )
         .accessibilityHidden(true)
     }
 }
 
 private struct TutorialInstructionRail: View {
     let compact: Bool
+    let accessibleType: Bool
 
     var body: some View {
         Text(
@@ -439,8 +821,9 @@ private struct TutorialInstructionRail: View {
         ))
         .foregroundStyle(PocketVectorTheme.championshipGlacier)
         .multilineTextAlignment(.center)
-        .lineLimit(compact ? 2 : 2)
-        .minimumScaleFactor(0.72)
+        .lineLimit(accessibleType ? nil : 2)
+        .minimumScaleFactor(accessibleType ? 1 : 0.72)
+        .fixedSize(horizontal: false, vertical: accessibleType)
         .padding(.horizontal, compact ? 10 : 18)
         .frame(maxWidth: 1_040)
         .frame(minHeight: compact ? 36 : 48)
@@ -452,6 +835,29 @@ private struct TutorialInstructionRail: View {
                 + "Start on the quarterback, drag to open grass away from defenders, "
                 + "then release. The receiver runs under the throw."
         )
+    }
+}
+
+enum TutorialMediaCache {
+    private static let fileName = "tutorial-pass-run-under-v1.mp4"
+
+    static func validatedURL(for data: Data, directory: URL) throws -> URL {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let mediaURL = directory.appendingPathComponent(fileName)
+        if !fileMatches(at: mediaURL, expectedData: data) {
+            try data.write(to: mediaURL, options: .atomic)
+        }
+        return mediaURL
+    }
+
+    static func fileMatches(at url: URL, expectedData: Data) -> Bool {
+        guard let existingData = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+            return false
+        }
+        return SHA256.hash(data: existingData) == SHA256.hash(data: expectedData)
     }
 }
 

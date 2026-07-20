@@ -4,6 +4,7 @@ import SwiftUI
 struct RunResultsView: View {
     let results: RunResultsPresentation
     @Bindable var coordinator: AppCoordinator
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         ChampionshipSubmenuScreen(
@@ -16,23 +17,125 @@ struct RunResultsView: View {
                 let compact = geometry.size.height < 430
                 let expanded = geometry.size.width / max(geometry.size.height, 1) < 1.65
 
-                ScrollView {
-                    HStack(alignment: .top, spacing: compact ? 10 : 16) {
-                        scorePanel(compact: compact, expanded: expanded)
-                            .frame(maxWidth: .infinity)
+                if dynamicTypeSize.isAccessibilitySize {
+                    accessibilityLayout(compact: compact, expanded: expanded)
+                } else {
+                    ScrollView {
+                        HStack(alignment: .top, spacing: compact ? 10 : 16) {
+                            scorePanel(compact: compact, expanded: expanded)
+                                .frame(maxWidth: .infinity)
 
-                        detailPanel(compact: compact, expanded: expanded)
-                            .frame(maxWidth: expanded ? 520 : 430)
+                            detailPanel(compact: compact, expanded: expanded)
+                                .frame(maxWidth: expanded ? 520 : 430)
+                        }
+                        .frame(maxWidth: expanded ? 1_180 : 1_020)
+                        .padding(.horizontal, compact ? 2 : 8)
+                        .padding(.vertical, compact ? 2 : 8)
+                        .frame(minHeight: geometry.size.height, alignment: .center)
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: expanded ? 1_180 : 1_020)
-                    .padding(.horizontal, compact ? 2 : 8)
-                    .padding(.vertical, compact ? 2 : 8)
-                    .frame(minHeight: geometry.size.height, alignment: .center)
-                    .frame(maxWidth: .infinity)
+                    .scrollBounceBehavior(.basedOnSize)
                 }
-                .scrollBounceBehavior(.basedOnSize)
             }
         }
+    }
+
+    private func accessibilityLayout(compact: Bool, expanded: Bool) -> some View {
+        VStack(spacing: 6) {
+            ScrollView {
+                VStack(spacing: 10) {
+                    accessibleScorePanel()
+                    coinPanel(compact: true, accessibleType: true)
+                    rewardedAdPanel(compact: true, accessibleType: true)
+                }
+                .frame(maxWidth: expanded ? 760 : .infinity)
+                .padding(.horizontal, compact ? 2 : 8)
+                .padding(.vertical, 2)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+
+            resultsActions(compact: true, accessibleType: true)
+                .padding(.horizontal, compact ? 2 : 8)
+                .padding(.bottom, 2)
+        }
+    }
+
+    private func accessibleScorePanel() -> some View {
+        VStack(spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text("FINAL SCORE")
+                    .font(.system(.headline, design: .monospaced, weight: .black))
+                    .tracking(0.8)
+                    .foregroundStyle(PocketVectorTheme.championshipSilver)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 0)
+
+                if results.isNewPersonalBest {
+                    Text("NEW BEST")
+                        .font(.system(size: 13, weight: .black, design: .monospaced))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(PocketVectorTheme.gold, in: Capsule())
+                        .fixedSize()
+                }
+            }
+
+            Text(results.score.formatted())
+                .font(.system(size: 54, weight: .black, design: .monospaced))
+                .tracking(-3)
+                .foregroundStyle(PocketVectorTheme.championshipGlacier)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .shadow(color: .black.opacity(0.92), radius: 0, x: 3, y: 4)
+
+            VStack(spacing: 2) {
+                Text("PERSONAL BEST")
+                    .foregroundStyle(PocketVectorTheme.championshipSilver)
+                Text(results.personalBest.formatted())
+                    .foregroundStyle(
+                        results.isNewPersonalBest
+                            ? PocketVectorTheme.gold
+                            : PocketVectorTheme.championshipGlacier
+                    )
+            }
+            .font(.system(.headline, design: .monospaced, weight: .black).monospacedDigit())
+            .multilineTextAlignment(.center)
+
+            Divider()
+                .overlay(PocketVectorTheme.championshipSilver.opacity(0.38))
+
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 8),
+                    GridItem(.flexible(), spacing: 8),
+                ],
+                spacing: 8
+            ) {
+                AccessibleResultStat(title: "ATTEMPTS", value: results.statistics.attempts.formatted())
+                AccessibleResultStat(
+                    title: "COMPLETIONS", value: results.statistics.successfulPasses.formatted())
+                AccessibleResultStat(
+                    title: "ACCURACY", value: "\(results.statistics.displayedAccuracyPercent)%")
+                AccessibleResultStat(title: "TOUCHDOWNS", value: results.statistics.touchdowns.formatted())
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity)
+        .championshipPanel(isSelected: results.isNewPersonalBest)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(
+                    results.isNewPersonalBest ? PocketVectorTheme.gold : PocketVectorTheme.championshipStatus
+                )
+                .frame(height: 3)
+                .padding(.horizontal, 10)
+                .padding(.top, 5)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private func scorePanel(compact: Bool, expanded: Bool) -> some View {
@@ -138,40 +241,51 @@ struct RunResultsView: View {
 
     private func detailPanel(compact: Bool, expanded: Bool) -> some View {
         VStack(spacing: compact ? 8 : 12) {
-            coinPanel(compact: compact)
-            rewardedAdPanel(compact: compact)
-
-            HStack(spacing: compact ? 8 : 12) {
-                Button {
-                    coordinator.returnToMainMenu()
-                } label: {
-                    Text("MAIN MENU")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(ChampionshipSecondaryButtonStyle())
-                .accessibilityHint("Returns to the main menu")
-
-                Button {
-                    coordinator.replayAfterResults()
-                } label: {
-                    HStack(spacing: 7) {
-                        ChampionshipPixelIcon(
-                            name: "SubmenuPlayIcon",
-                            size: compact ? 22 : 26
-                        )
-                        Text("PLAY AGAIN")
-                    }
-                }
-                .buttonStyle(ChampionshipPrimaryButtonStyle(compact: true))
-                .accessibilityHint("Starts another run with the same offense and equipment")
-            }
+            coinPanel(compact: compact, accessibleType: false)
+            rewardedAdPanel(compact: compact, accessibleType: false)
+            resultsActions(compact: compact, accessibleType: false)
         }
         .frame(minHeight: compact ? 260 : (expanded ? 480 : 330))
         .frame(maxWidth: .infinity)
     }
 
-    private func coinPanel(compact: Bool) -> some View {
-        HStack(spacing: compact ? 10 : 14) {
+    @ViewBuilder
+    private func resultsActions(compact: Bool, accessibleType: Bool) -> some View {
+        HStack(spacing: compact ? 8 : 12) {
+            Button {
+                coordinator.returnToMainMenu()
+            } label: {
+                Text("MAIN MENU")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(ChampionshipSecondaryButtonStyle())
+            .accessibilityHint("Returns to the main menu")
+
+            Button {
+                coordinator.replayAfterResults()
+            } label: {
+                HStack(spacing: 7) {
+                    if !accessibleType {
+                        ChampionshipPixelIcon(
+                            name: "SubmenuPlayIcon",
+                            size: compact ? 22 : 26
+                        )
+                    }
+                    Text("PLAY AGAIN")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+            }
+            .buttonStyle(ChampionshipPrimaryButtonStyle(compact: true))
+            .accessibilityHint("Starts another run with the same offense and equipment")
+        }
+    }
+
+    @ViewBuilder
+    private func coinPanel(compact: Bool, accessibleType: Bool) -> some View {
+        let content = HStack(spacing: compact ? 10 : 14) {
             Image("MenuCoinIcon")
                 .resizable()
                 .interpolation(.none)
@@ -209,15 +323,26 @@ struct RunResultsView: View {
                 }
             }
         }
-        .padding(.horizontal, compact ? 12 : 16)
-        .padding(.vertical, compact ? 8 : 12)
-        .frame(maxWidth: .infinity, minHeight: compact ? 70 : 90)
-        .championshipPanel()
-        .accessibilityElement(children: .combine)
+
+        if accessibleType {
+            content
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .championshipPanel()
+                .accessibilityElement(children: .combine)
+        } else {
+            content
+                .padding(.horizontal, compact ? 12 : 16)
+                .padding(.vertical, compact ? 8 : 12)
+                .frame(maxWidth: .infinity, minHeight: compact ? 70 : 90)
+                .championshipPanel()
+                .accessibilityElement(children: .combine)
+        }
     }
 
     @ViewBuilder
-    private func rewardedAdPanel(compact: Bool) -> some View {
+    private func rewardedAdPanel(compact: Bool, accessibleType: Bool) -> some View {
         switch results.rewardedAdOffer {
         case let .progress(validRuns, requiredRuns):
             VStack(alignment: .leading, spacing: compact ? 5 : 8) {
@@ -247,7 +372,7 @@ struct RunResultsView: View {
                 .accessibilityHint("The reward is credited only after verified ad completion")
                 if !canPresent {
                     Text("Connect to the service before loading the optional ad.")
-                        .font(.caption2)
+                        .font(accessibleType ? .body : .caption2)
                         .foregroundStyle(PocketVectorTheme.warning)
                 }
             }
@@ -267,9 +392,9 @@ struct RunResultsView: View {
             VStack(alignment: .leading, spacing: compact ? 4 : 6) {
                 rewardHeader("OPTIONAL BONUS UNAVAILABLE")
                 Text(message)
-                    .font(.caption2)
+                    .font(accessibleType ? .body : .caption2)
                     .foregroundStyle(PocketVectorTheme.championshipSilver)
-                    .lineLimit(compact ? 2 : 3)
+                    .lineLimit(accessibleType ? nil : (compact ? 2 : 3))
             }
             .rewardPanel(compact: compact)
         }
@@ -323,6 +448,33 @@ private struct ResultStat: View {
                 .foregroundStyle(PocketVectorTheme.championshipGlacier)
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+private struct AccessibleResultStat: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(title)
+                .font(.system(.caption, design: .monospaced, weight: .black))
+                .foregroundStyle(PocketVectorTheme.championshipSilver)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(value)
+                .font(.system(.title2, design: .monospaced, weight: .black).monospacedDigit())
+                .foregroundStyle(PocketVectorTheme.championshipGlacier)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: 72)
+        .background(PocketVectorTheme.championshipVoid.opacity(0.54))
+        .overlay {
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(PocketVectorTheme.championshipSteel.opacity(0.65), lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
