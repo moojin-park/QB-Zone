@@ -1,6 +1,6 @@
 # Pocket Vector production release status
 
-Status date: 2026-07-19
+Status date: 2026-07-20
 
 This is the living delivery board for the first iOS release. Product scope and
 rules remain authoritative in
@@ -97,6 +97,19 @@ Coin Store, and Settings, including the centered-title correction. Privacy and
 Support remains available through Settings only. Compact-iPhone, regular-iPhone,
 and iPad evidence passed PM inspection with no additional P0-P3 submenu finding;
 the two documented P3 frame/crop choices remain accepted.
+
+The ordered Art tutorial and results chain `e68651d` then `092580d` is merged
+with full ancestry at `d0dee1a` (`Merge latest Art direction`). Asset-catalog
+JSON, exact source/runtime media checks, 60 focused tests, the exact 836-test
+simulator suite, and an unsigned generic-iOS Release archive passed. At the
+standard text size, the three-panel tutorial passed compact-iPhone,
+regular-iPhone, and iPad inspection, and the results screen passed compact-
+iPhone inspection. Visual release acceptance is withheld: at Accessibility
+XXXL on compact landscape, tutorial content and the header accessory clip, and
+the results summary truncates while its actions leave the visible frame. The
+three-step tutorial also no longer covers several subjects promised by the
+Technical-owned four-step gameplay documentation; that contract must be
+reconciled before this presentation is accepted.
 
 The same Art merge adds 544 baked team-and-jersey character frames and expands
 the exact native inventory from 76 to 620 assets. All 16 team/uniform sets pass
@@ -242,6 +255,7 @@ final codesigned entitlement payload; that remains a release-candidate gate.
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
 | Account-independent service foundations         | Complete            | Cloud transport/checkpoint, typed genesis/publication/hydration, canonical V4 seed, player-scoped Game Center delivery, StoreKit runtime, and challenge-only rewarded-ad verification/recovery foundations pass; none implies live composition |
 | Production app shell and menus                  | Complete            | Art-approved High Mesa main menu plus championship-styled offense selection, locker, store, achievements, and Settings ship; Privacy and Support remains Settings-routed |
+| Tutorial and results presentation               | In progress         | Three-panel tutorial and championship results screen are integrated and pass automated and standard-size visual gates; compact-landscape Accessibility XXXL layout and tutorial-content contract remain open |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Paused gameplay presentation                    | In progress         | Refined Art panel and Technical/PM snapshot, Resume, and confirmed-exit actions are integrated and pass combined tests; compact-iPhone, regular-iPhone, and iPad landscape visual approval remains |
@@ -369,6 +383,11 @@ or runtime ownership boundaries.
 | 2026-07-19 | `db02d4c` | Latest full Technical branch integration | Technical head `fd74e2f` merged with full ancestry; exact baked offense and clash-resolved defense paths are active, decoded RGBA bypasses palette projection, production fallback is disabled, and independent reviews found no open P0-P3 finding |
 | 2026-07-19 | `db02d4c` | Baked-uniform routing focused gate | 31 passed, 0 failed, 0 skipped on iPad Pro 13-inch; result bundle `/tmp/PocketVector-UniformRouting-db02d4c-focused.xcresult` |
 | 2026-07-19 | `db02d4c` | Exact integrated full simulator suite | 836 total: 835 passed, 0 failed, 1 existing conditional case-alias skip on iPad Pro 13-inch; result bundle `/tmp/PocketVector-UniformRouting-db02d4c-full.xcresult`; runtime-only wave did not require a new archive |
+| 2026-07-20 | `d0dee1a` | Ordered Art tutorial/results integration | Art commits `e68651d` then `092580d` merged with full ancestry; all 16 changed paths are Art-owned; asset-catalog JSON, 620-asset manifest count, diff hygiene, declared-file presence, image identity, video decode, and source/runtime quality checks passed |
+| 2026-07-20 | `d0dee1a` | Tutorial/results focused simulator gate | 60 passed, 0 failed, 0 skipped across tutorial/privacy, app coordinator, gameplay coordinator, and launch visual identity tests; result bundle `/tmp/PocketVector-Art-TutorialResults-d0dee1a-focused.xcresult` |
+| 2026-07-20 | `d0dee1a` | Exact integrated full simulator suite | 836 total: 835 passed, 0 failed, 1 existing conditional case-alias filesystem skip; result bundle `/tmp/PocketVector-Art-TutorialResults-d0dee1a-full.xcresult` |
+| 2026-07-20 | `d0dee1a` | Unsigned generic-iOS Release archive | Passed at `/tmp/PocketVector-Art-TutorialResults-d0dee1a-Release.xcarchive`; arm64, iPhone/iPad, landscape-only, iOS 17+, Production app metadata, privacy manifest, exact 620-file GameAssets package, and all four new compiled tutorial assets verified; no source-art, tool, or documentation leakage |
+| 2026-07-20 | `d0dee1a` | Tutorial/results multi-device visual gate | Standard-size tutorial passed compact iPhone, regular iPhone, and iPad; standard-size results passed compact iPhone; playback, saved reduced motion, and accessibility labels/hints passed. Accessibility XXXL failed on compact landscape because tutorial and results content clips/truncates and results actions leave the visible frame; visual acceptance withheld. Evidence: `/tmp/PocketVector-Art-TutorialResults-d0dee1a-compact-tutorial.png`, `/tmp/PocketVector-Art-TutorialResults-d0dee1a-regular-tutorial.png`, `/tmp/PocketVector-Art-TutorialResults-d0dee1a-ipad-tutorial.png`, `/tmp/PocketVector-Art-TutorialResults-d0dee1a-compact-results.png`, and `/tmp/PocketVector-Art-TutorialResults-d0dee1a-compact-results-axxxl.png` |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -493,13 +512,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the integrated code and automated gates; multi-device gameplay visual acceptance remains pending |
+| Known P0/P1 defects                  |      0 | 0 open in the integrated code and automated gates; tutorial/results accessibility-size and multi-device gameplay visual acceptance remain pending |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud history, initial publication, hydration, online-only catalog debit/ownership, and StoreKit durable delivery pass internal tests; external sandbox/device gates remain |
-| Clean-checkout archive               |   Pass | Unsigned 620-resource archive for exact Art integration commit `17792f2` passed; the later runtime-only Technical merge did not trigger a new archive; final codesigned entitlement/export proof remains |
+| Clean-checkout archive               |   Pass | Unsigned 620-resource archive for exact Art integration commit `d0dee1a` passed; final codesigned entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner

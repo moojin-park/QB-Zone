@@ -2,16 +2,20 @@
 
 Status: implementation contract for version 1
 
-Last updated: 2026-07-19
+Last updated: 2026-07-20
 
-Implementation baseline: `db02d4c`, the complete Technical branch through
-`fd74e2f` merged over the complete Art branch through `8f804ab`. It includes
+Implementation baseline: `d0dee1a`, the ordered Art tutorial and results chain
+through `092580d` merged over the complete Technical branch through `fd74e2f`
+and the preceding complete Art branch through `8f804ab`. It includes
 the approved championship redesign of Choose Your Offense, Team & Locker,
 Achievements, Coin Store, and Settings; the centered-title correction; the
 active layered team-field renderer and baked team-uniform routing; refined
 paused-run controls; the explicit gameplay-presentation bridge; and online-only
-commerce composition. Privacy and Support remains reachable through Settings
-and is not a main-menu control.
+commerce composition. The three-panel visual tutorial and championship results
+screen are integrated but remain outside visual release acceptance until their
+compact-landscape Accessibility XXXL layout and the tutorial-content contract
+are corrected. Privacy and Support remains reachable through Settings and is
+not a main-menu control.
 
 The shipping GameAssets inventory contains 620 declared assets, including 544
 baked character frames for all eight launch teams and both jerseys. Gameplay
