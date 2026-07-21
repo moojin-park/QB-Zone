@@ -202,6 +202,26 @@ place a transparent noninteractive Results overlay above it without competing
 gameplay HUD, and complete multi-device visual verification before this Results
 revision receives visual release acceptance.
 
+The diverged Art Results handoff `08ff44d` (`Redesign run results as field
+overlay`) and release baseline `d96f027` are joined as the two parents of
+`b047ce0` (`Merge Art Results field overlay`), preserving both complete
+histories so Art can fast-forward from the new shared baseline. The single
+shared-test conflict retained release's authoritative reward components and
+ledger states; the integrated Art coin ledger now consumes those supplied
+values directly, reconciles them with overflow checking, and derives pending
+presentation only from this settlement's gameplay and signing-bonus states.
+The misplaced root-level Art QA note is excluded from the merged tree while
+remaining available in the submitted commit's history. Seven authored Results
+bezels/icons, their asset-catalog renditions, the responsive overlay, and the
+Art documentation are integrated. Asset JSON, six supplied compact/regular/
+iPad standard and Accessibility 5 captures, the 56-test focused gate, exact
+866-test simulator suite, unsigned generic-iOS Release archive, diff hygiene,
+and independent audits passed. This is an ancestry and continuation baseline,
+not final Results visual acceptance: Art must still retain the same gameplay
+adapter and `GameScene` beneath Results, freeze and hide it from interaction
+and accessibility, suppress its controls, and remove the synthetic field
+fallback before the integrated presentation can be accepted.
+
 The dormant StoreKit runtime foundation is versioned at `ce69388` (`Add dormant
 StoreKit runtime coordination`), player-scoped Game Center persistence and
 delivery at `9d749bc` (`Add player-scoped Game Center delivery`), the dormant
@@ -476,6 +496,10 @@ or runtime ownership boundaries.
 | 2026-07-21 | `91c77ee` | Results settlement focused integration gate | 78 passed, 0 failed, 0 skipped across economy, production composition/runtime, app coordinator, and gameplay coordinator suites; result bundle `/Users/andypark/Library/Developer/Xcode/DerivedData/PocketVector-gzonknuffecczwcjjrtxgwzvubqz/Logs/Test/Test-PocketVector-2026.07.21_00-46-44--0700.xcresult` |
 | 2026-07-21 | `91c77ee` | Exact integrated full simulator suite | 864 total: 863 passed, 0 failed, 1 existing conditional case-alias filesystem skip; result bundle `/Users/andypark/Library/Developer/Xcode/DerivedData/PocketVector-gzonknuffecczwcjjrtxgwzvubqz/Logs/Test/Test-PocketVector-2026.07.21_00-47-38--0700.xcresult` |
 | 2026-07-21 | `91c77ee` | Unsigned generic-iOS Release archive | Passed at `/tmp/PocketVector-ResultsTechnical-20260721.xcarchive`; App-composition integration compiles for generic arm64 iOS with signing disabled. Final codesigned distribution-entitlement proof remains pending |
+| 2026-07-21 | `b047ce0` | Diverged Art/Release ancestry bridge | Merge parents are exactly release baseline `d96f0273b13749ca53bf774a113b864c1ef7dd50` and Art handoff `08ff44db3f7e28633a45cf7bb05267146d185d3d`; both are verified ancestors. The one shared-test conflict retained authoritative release fields, the Art ledger was adapted to consume them directly, and the misplaced root QA note was excluded. Independent audits found no P0; retained real-gameplay composition remains an explicit P1 follow-up before visual acceptance |
+| 2026-07-21 | `b047ce0` | Results overlay focused integration gate | 56 passed, 0 failed, 0 skipped across Results presentation, app/gameplay coordinators, production composition, and the exact native asset-manifest test; result bundle `/Users/andypark/Library/Developer/Xcode/DerivedData/PocketVector-gzonknuffecczwcjjrtxgwzvubqz/Logs/Test/Test-PocketVector-2026.07.21_01-18-37--0700.xcresult` |
+| 2026-07-21 | `b047ce0` | Exact integrated full simulator suite | 866 total: 865 passed, 0 failed, 1 existing conditional case-alias filesystem skip; result bundle `/Users/andypark/Library/Developer/Xcode/DerivedData/PocketVector-gzonknuffecczwcjjrtxgwzvubqz/Logs/Test/Test-PocketVector-2026.07.21_01-20-07--0700.xcresult` |
+| 2026-07-21 | `b047ce0` | Art visual evidence and unsigned Release archive | Compact iPhone, regular iPhone, iPad, and Accessibility 5 evidence passed inspection; seven new asset-catalog JSON files parsed and compiled. Unsigned generic-iOS archive passed at `/tmp/PocketVector-ArtResultsBridge-20260721.xcarchive`; final retained-gameplay visual gate and codesigned distribution proof remain pending |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
