@@ -158,7 +158,7 @@ struct PlayScoreResult: Equatable {
 struct GameState: Equatable {
     var phase: GamePhase = .title
     var phaseBeforePause: GamePhase?
-    var countdownRemainingMilliseconds: CGFloat = 3_000
+    var countdownRemainingMilliseconds: CGFloat = GameplayConfig.countdownDurationMilliseconds
     var remainingMilliseconds: CGFloat = GameplayConfig.sessionDurationMilliseconds
     var elapsedGameplayMilliseconds: CGFloat = 0
     var finalBallGraceRemainingMilliseconds: CGFloat = GameplayConfig.finalBallGraceMilliseconds

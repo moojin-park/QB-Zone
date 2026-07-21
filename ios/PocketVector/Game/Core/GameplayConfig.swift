@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 
 enum GameplayConfig {
+    static let countdownDurationMilliseconds: CGFloat = 3_000
     static let sessionDurationMilliseconds: CGFloat = 60_000
     static let fixedStepMilliseconds: CGFloat = 1_000 / 60
     static let maximumFrameDeltaMilliseconds: CGFloat = 100

@@ -9,11 +9,13 @@ implementation under `ios/PocketVector/Game/` is authoritative.
 2. Drag upfield toward open space.
 3. Release ahead of a moving receiver.
 
-The activation band spans the landscape safe width from the bottom safe-area
-boundary through logical scene `y = 225`, covering the first two major yardage
-markers. Pause and mute controls and the complete scorebug/feedback footprint
-remain excluded. Only the initial press is constrained to this band; the drag
-and release may continue anywhere upfield.
+The activation band spans the landscape safe width from the higher of the
+bottom safe-area boundary or the completed cinematic bottom bar through logical
+scene `y = 225`, covering the first two major yardage markers. Throw-start
+activation inside the completed bottom-bar region is rejected. Pause and mute
+controls and the complete scorebug/feedback footprint remain excluded. Only the
+initial press is constrained to this band; the drag and release may continue
+anywhere upfield.
 
 The release position selects the target. Gesture distance and elapsed time
 determine release speed; a quick release produces a flatter, shorter flight and
@@ -82,6 +84,18 @@ The neutral base owns the grass, stadium, sidelines, and baked goalpost.
 SpriteKit adds only retained gameplay elements such as pylons, officials,
 characters, effects, and HUD above the field stack. Team field presentation is
 cosmetic and never changes projection, collision, scoring, or input authority.
+
+When the authoritative three-second countdown begins, equal black top and
+bottom cinematic bars ease from zero height to their completed height as the
+countdown reaches zero. Their rendered height is `clamp(18 points, 5% of the
+viewport height, 32 points)`. Reduced Motion presents the completed bars
+immediately. The bars remain fully presented during active play, final-ball
+resolution, and Pause, then are removed in Results so the unchanged retained
+frozen field remains visible through the transparent Results presentation.
+
+The bars do not alter field projection, actors, or trajectories. Scorebug,
+pause, and mute anchors remain unchanged; only the clock and Adrenaline HUD are
+reserved below the completed top bar.
 
 ## Outcomes
 

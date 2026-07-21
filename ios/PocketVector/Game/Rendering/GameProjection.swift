@@ -21,15 +21,20 @@ struct GameViewport: Equatable {
     let pointsPerSceneUnit: CGFloat
     let safeSceneFrame: CGRect
 
+    var letterboxLayout: GameplayLetterboxLayout {
+        GameplayLetterboxLayout(viewport: self)
+    }
+
     /// The unobstructed lower-field band where a throw gesture may begin.
     /// Release points remain free to travel beyond this frame.
     var throwActivationFrame: CGRect {
         let top = min(safeSceneFrame.maxY, GameProjection.throwActivationTopY)
+        let bottom = max(safeSceneFrame.minY, letterboxLayout.finalSceneHeight)
         return CGRect(
             x: safeSceneFrame.minX,
-            y: safeSceneFrame.minY,
+            y: bottom,
             width: safeSceneFrame.width,
-            height: max(0, top - safeSceneFrame.minY)
+            height: max(0, top - bottom)
         )
     }
 
@@ -82,6 +87,65 @@ struct GameViewport: Equatable {
             && point.x <= frame.maxX
             && point.y >= frame.minY
             && point.y <= frame.maxY
+    }
+}
+
+/// Responsive, render-only geometry and timing for the gameplay letterbox.
+///
+/// The completed bar height is specified in rendered points, then converted
+/// into the fixed-height SpriteKit coordinate space. Countdown progress is
+/// sampled from authoritative simulation state so frame partitioning cannot
+/// change the presentation.
+struct GameplayLetterboxLayout: Equatable {
+    static let minimumRenderedHeight: CGFloat = 18
+    static let viewportHeightFraction: CGFloat = 0.05
+    static let maximumRenderedHeight: CGFloat = 32
+
+    let finalRenderedHeight: CGFloat
+    let finalSceneHeight: CGFloat
+
+    init(viewport: GameViewport) {
+        finalRenderedHeight = min(
+            Self.maximumRenderedHeight,
+            max(
+                Self.minimumRenderedHeight,
+                viewport.viewSize.height * Self.viewportHeightFraction
+            )
+        )
+        finalSceneHeight = finalRenderedHeight / max(0.001, viewport.pointsPerSceneUnit)
+    }
+
+    func progress(
+        phase: GamePhase,
+        countdownRemainingMilliseconds: CGFloat,
+        reducedMotion: Bool
+    ) -> CGFloat {
+        switch phase {
+        case .countdown:
+            if reducedMotion { return 1 }
+            let linearProgress = min(1, max(
+                0,
+                1 - countdownRemainingMilliseconds
+                    / GameplayConfig.countdownDurationMilliseconds
+            ))
+            return linearProgress * linearProgress * (3 - 2 * linearProgress)
+        case .playing, .resolvingFinalBall, .paused:
+            return 1
+        case .title, .results:
+            return 0
+        }
+    }
+
+    func currentSceneHeight(
+        phase: GamePhase,
+        countdownRemainingMilliseconds: CGFloat,
+        reducedMotion: Bool
+    ) -> CGFloat {
+        finalSceneHeight * progress(
+            phase: phase,
+            countdownRemainingMilliseconds: countdownRemainingMilliseconds,
+            reducedMotion: reducedMotion
+        )
     }
 }
 

@@ -617,7 +617,7 @@ final class GameCoreTests: XCTestCase {
     }
   }
 
-  func testThrowActivationBandSpansSafeWidthThroughLogicalY225() {
+  func testThrowActivationBandSpansSafeWidthAboveCompletedBottomLetterboxThroughLogicalY225() {
     let configurations = [
       GameViewport.canonical,
       GameViewport(
@@ -638,7 +638,11 @@ final class GameCoreTests: XCTestCase {
       let frame = viewport.throwActivationFrame
       XCTAssertEqual(frame.minX, viewport.safeSceneFrame.minX, accuracy: 0.000_001)
       XCTAssertEqual(frame.maxX, viewport.safeSceneFrame.maxX, accuracy: 0.000_001)
-      XCTAssertEqual(frame.minY, viewport.safeSceneFrame.minY, accuracy: 0.000_001)
+      XCTAssertEqual(
+        frame.minY,
+        max(viewport.safeSceneFrame.minY, viewport.letterboxLayout.finalSceneHeight),
+        accuracy: 0.000_001
+      )
       XCTAssertEqual(frame.maxY, 225, accuracy: 0.000_001)
       XCTAssertTrue(
         viewport.containsThrowActivationPoint(
@@ -660,13 +664,100 @@ final class GameCoreTests: XCTestCase {
           CGPoint(x: frame.minX - 0.001, y: frame.midY)
         )
       )
-      if viewport.safeSceneFrame.minY > 0 {
-        XCTAssertFalse(
-          viewport.containsThrowActivationPoint(
-            CGPoint(x: frame.midX, y: frame.minY - 0.001)
-          )
+      XCTAssertFalse(
+        viewport.containsThrowActivationPoint(
+          CGPoint(x: frame.midX, y: frame.minY - 0.001)
         )
-      }
+      )
+    }
+  }
+
+  func testLetterboxHeightUsesRenderedViewportClampAndSceneConversion() {
+    let compactPhone = GameViewport(
+      viewSize: CGSize(width: 667, height: 375),
+      safeAreaInsets: .zero
+    )
+    let regularPhone = GameViewport(
+      viewSize: CGSize(width: 932, height: 430),
+      safeAreaInsets: .zero
+    )
+    let shortViewport = GameViewport(
+      viewSize: CGSize(width: 568, height: 320),
+      safeAreaInsets: .zero
+    )
+    let iPad = GameViewport(
+      viewSize: CGSize(width: 1_366, height: 1_024),
+      safeAreaInsets: .zero
+    )
+
+    XCTAssertEqual(compactPhone.letterboxLayout.finalRenderedHeight, 18.75, accuracy: 0.000_001)
+    XCTAssertEqual(regularPhone.letterboxLayout.finalRenderedHeight, 21.5, accuracy: 0.000_001)
+    XCTAssertEqual(shortViewport.letterboxLayout.finalRenderedHeight, 18, accuracy: 0.000_001)
+    XCTAssertEqual(iPad.letterboxLayout.finalRenderedHeight, 32, accuracy: 0.000_001)
+    XCTAssertEqual(
+      compactPhone.letterboxLayout.finalSceneHeight * compactPhone.pointsPerSceneUnit,
+      compactPhone.letterboxLayout.finalRenderedHeight,
+      accuracy: 0.000_001
+    )
+    XCTAssertEqual(
+      iPad.letterboxLayout.finalSceneHeight * iPad.pointsPerSceneUnit,
+      iPad.letterboxLayout.finalRenderedHeight,
+      accuracy: 0.000_001
+    )
+  }
+
+  func testLetterboxUsesAuthoritativeCountdownAndRequiredPhaseVisibility() {
+    let layout = GameViewport.canonical.letterboxLayout
+
+    let countdownExpectations: [(CGFloat, CGFloat)] = [
+      (3_000, 0),
+      (2_250, 0.15625),
+      (1_500, 0.5),
+      (750, 0.84375),
+      (0, 1),
+    ]
+    for (remaining, expected) in countdownExpectations {
+      XCTAssertEqual(
+        layout.progress(
+          phase: .countdown,
+          countdownRemainingMilliseconds: remaining,
+          reducedMotion: false
+        ),
+        expected,
+        accuracy: 0.000_001
+      )
+    }
+    XCTAssertEqual(
+      layout.progress(
+        phase: .countdown,
+        countdownRemainingMilliseconds: 3_000,
+        reducedMotion: true
+      ),
+      1,
+      accuracy: 0.000_001
+    )
+
+    for phase in [GamePhase.playing, .resolvingFinalBall, .paused] {
+      XCTAssertEqual(
+        layout.progress(
+          phase: phase,
+          countdownRemainingMilliseconds: 3_000,
+          reducedMotion: false
+        ),
+        1,
+        accuracy: 0.000_001
+      )
+    }
+    for phase in [GamePhase.title, .results] {
+      XCTAssertEqual(
+        layout.progress(
+          phase: phase,
+          countdownRemainingMilliseconds: 0,
+          reducedMotion: false
+        ),
+        0,
+        accuracy: 0.000_001
+      )
     }
   }
 
@@ -689,6 +780,79 @@ final class GameCoreTests: XCTestCase {
     XCTAssertTrue(viewport.safeSceneFrame.contains(layout.feedbackTwoLineFrame))
     XCTAssertTrue(viewport.safeSceneFrame.contains(layout.clockTopAnchor))
     XCTAssertEqual(layout.clockTopAnchor.x, viewport.safeSceneFrame.midX, accuracy: 0.000_001)
+  }
+
+  func testLetterboxRepositionsOnlyClockAndAdrenalineBelowTopBar() {
+    let configurations: [(GameViewport, HUDLayoutMetrics)] = [
+      (
+        GameViewport(
+          viewSize: CGSize(width: 667, height: 375),
+          safeAreaInsets: GameSafeAreaInsets(top: 0, left: 44, bottom: 21, right: 44)
+        ),
+        .compact
+      ),
+      (
+        GameViewport(
+          viewSize: CGSize(width: 932, height: 430),
+          safeAreaInsets: GameSafeAreaInsets(top: 0, left: 62, bottom: 21, right: 62)
+        ),
+        .compact
+      ),
+      (
+        GameViewport(
+          viewSize: CGSize(width: 1_366, height: 1_024),
+          safeAreaInsets: GameSafeAreaInsets(top: 0, left: 0, bottom: 20, right: 0)
+        ),
+        .canonical
+      ),
+    ]
+
+    for (viewport, metrics) in configurations {
+      let baseline = HUDLayout(
+        sceneSize: viewport.projection.sceneSize,
+        contentRect: viewport.safeSceneFrame,
+        metrics: metrics,
+        displayScale: viewport.pointsPerSceneUnit
+      )
+      let letterboxed = HUDLayout(
+        sceneSize: viewport.projection.sceneSize,
+        contentRect: viewport.safeSceneFrame,
+        metrics: metrics,
+        displayScale: viewport.pointsPerSceneUnit,
+        topObstructionHeight: viewport.letterboxLayout.finalSceneHeight
+      )
+      let expectedOffset = viewport.letterboxLayout.finalSceneHeight
+
+      XCTAssertEqual(letterboxed.topHUDOffset, expectedOffset, accuracy: 0.000_001)
+      XCTAssertEqual(
+        letterboxed.adrenalineFrame.minY,
+        baseline.adrenalineFrame.minY - expectedOffset,
+        accuracy: 0.000_001
+      )
+      XCTAssertEqual(
+        letterboxed.meterTrackFrame.minY,
+        baseline.meterTrackFrame.minY - expectedOffset,
+        accuracy: 0.000_001
+      )
+      XCTAssertEqual(
+        letterboxed.clockTopAnchor.y,
+        baseline.clockTopAnchor.y - expectedOffset,
+        accuracy: 0.000_001
+      )
+      XCTAssertEqual(letterboxed.scorePlateFrame, baseline.scorePlateFrame)
+      XCTAssertEqual(letterboxed.feedbackOneLineFrame, baseline.feedbackOneLineFrame)
+      XCTAssertEqual(letterboxed.feedbackTwoLineFrame, baseline.feedbackTwoLineFrame)
+      XCTAssertEqual(letterboxed.muteButtonFrame, baseline.muteButtonFrame)
+      XCTAssertEqual(letterboxed.pauseButtonFrame, baseline.pauseButtonFrame)
+      XCTAssertLessThanOrEqual(
+        letterboxed.adrenalineFrame.maxY,
+        viewport.projection.sceneSize.height - viewport.letterboxLayout.finalSceneHeight
+      )
+      XCTAssertLessThanOrEqual(
+        letterboxed.clockTopAnchor.y,
+        viewport.projection.sceneSize.height - viewport.letterboxLayout.finalSceneHeight
+      )
+    }
   }
 
   func testCompletionAddsPointsFillsMeterAndPreservesTouchdownStreak() {

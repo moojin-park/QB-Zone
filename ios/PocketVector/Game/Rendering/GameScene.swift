@@ -136,6 +136,9 @@ final class GameScene: SKScene {
     private var receiverNodes: [Int: SKSpriteNode] = [:]
     private var defenderNodes: [Int: SKSpriteNode] = [:]
 
+    private let letterboxLayer = SKNode()
+    private let topLetterboxBar = SKSpriteNode(color: .black, size: .zero)
+    private let bottomLetterboxBar = SKSpriteNode(color: .black, size: .zero)
     private var broadcastHUD: BroadcastHUDNode?
     private let phaseOverlay = SKNode()
     private let aimPathNode = SKShapeNode()
@@ -449,6 +452,7 @@ final class GameScene: SKScene {
         quarterbackNode.position = ForegroundQuarterbackPresentation.position(
             for: projection
         )
+        syncLetterbox()
     }
 
     private func advanceSimulationStep(deltaMilliseconds: CGFloat) {
@@ -506,6 +510,9 @@ final class GameScene: SKScene {
         if result.runFinished {
             audio.stopMusic()
             audio.play(.gameOver)
+            // Clear the bars before the completion callback can present the
+            // transparent Results layer over this retained frozen scene.
+            syncLetterbox()
         }
 
         if let completedRun = step.completedRun {
@@ -576,6 +583,7 @@ final class GameScene: SKScene {
         actorLayer.addChild(quarterbackNode)
 
         setupBallNode()
+        setupLetterbox()
         layoutStageForViewport()
     }
 
@@ -676,6 +684,24 @@ final class GameScene: SKScene {
         actorLayer.addChild(ballNode)
     }
 
+    private func setupLetterbox() {
+        letterboxLayer.removeAllChildren()
+        letterboxLayer.name = "gameplayLetterbox"
+        letterboxLayer.zPosition = 4_000
+
+        bottomLetterboxBar.name = "gameplayLetterbox.bottom"
+        bottomLetterboxBar.anchorPoint = .zero
+        bottomLetterboxBar.position = .zero
+        letterboxLayer.addChild(bottomLetterboxBar)
+
+        topLetterboxBar.name = "gameplayLetterbox.top"
+        topLetterboxBar.anchorPoint = .zero
+        letterboxLayer.addChild(topLetterboxBar)
+
+        addChild(letterboxLayer)
+        syncLetterbox()
+    }
+
     private func setupHUD() {
         broadcastHUD?.removeFromParent()
         let usesCompactHUD = UIDevice.current.userInterfaceIdiom == .phone &&
@@ -684,7 +710,8 @@ final class GameScene: SKScene {
             sceneSize: size,
             contentRect: viewport.safeSceneFrame,
             metrics: usesCompactHUD ? .compact : .canonical,
-            displayScale: viewport.pointsPerSceneUnit
+            displayScale: viewport.pointsPerSceneUnit,
+            topObstructionHeight: viewport.letterboxLayout.finalSceneHeight
         )
         let hud = BroadcastHUDNode(
             layout: layout,
@@ -848,10 +875,26 @@ final class GameScene: SKScene {
         syncActors()
         syncBall()
         syncQuarterback()
+        syncLetterbox()
         syncHUD()
         syncPhaseOverlay()
         syncAimMarker()
         publishGameplaySnapshotIfNeeded()
+    }
+
+    private func syncLetterbox() {
+        let phase = session.state.phase
+        let height = viewport.letterboxLayout.currentSceneHeight(
+            phase: phase,
+            countdownRemainingMilliseconds: session.state.countdownRemainingMilliseconds,
+            reducedMotion: session.settings.reducedMotion
+        )
+        let barSize = CGSize(width: size.width, height: height)
+        bottomLetterboxBar.size = barSize
+        bottomLetterboxBar.position = .zero
+        topLetterboxBar.size = barSize
+        topLetterboxBar.position = CGPoint(x: 0, y: size.height - height)
+        letterboxLayer.isHidden = phase == .title || phase == .results
     }
 
     @discardableResult

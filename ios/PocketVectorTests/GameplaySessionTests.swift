@@ -485,7 +485,13 @@ final class GameplaySessionTests: XCTestCase {
         let hud = try XCTUnwrap(
             scene.childNode(withName: "broadcastHUD") as? BroadcastHUDNode
         )
+        let bottomBar = try XCTUnwrap(
+            scene.childNode(withName: "//gameplayLetterbox.bottom") as? SKSpriteNode
+        )
 
+        XCTAssertEqual(bottomBar.size.height, 32, accuracy: 0.000_001)
+        XCTAssertFalse(scene.containsThrowActivationPoint(CGPoint(x: 512, y: 31.999)))
+        XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 512, y: 32)))
         XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 300, y: 200)))
         XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 700, y: 200)))
         XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 512, y: 225)))
@@ -517,6 +523,33 @@ final class GameplaySessionTests: XCTestCase {
             )
         )
 
+        scene.willMove(from: view)
+    }
+
+    @MainActor
+    func testMountedSceneStartsStandardMotionLetterboxAtZeroHeight() throws {
+        let scene = GameScene(
+            size: GameProjection.sceneSize,
+            configuration: makeConfiguration(seed: 811),
+            settings: PlayerSettings(isMuted: true, reducedMotion: false),
+            onCompletedRun: { _ in }
+        )
+        let view = SKView(frame: CGRect(origin: .zero, size: GameProjection.sceneSize))
+
+        scene.didMove(to: view)
+        let layer = try XCTUnwrap(scene.childNode(withName: "gameplayLetterbox"))
+        let topBar = try XCTUnwrap(
+            scene.childNode(withName: "//gameplayLetterbox.top") as? SKSpriteNode
+        )
+        let bottomBar = try XCTUnwrap(
+            scene.childNode(withName: "//gameplayLetterbox.bottom") as? SKSpriteNode
+        )
+
+        XCTAssertFalse(layer.isHidden)
+        XCTAssertEqual(topBar.size, CGSize(width: 1_024, height: 0))
+        XCTAssertEqual(bottomBar.size, topBar.size)
+        XCTAssertEqual(topBar.position.y, GameProjection.logicalHeight, accuracy: 0.000_001)
+        XCTAssertEqual(bottomBar.position, .zero)
         scene.willMove(from: view)
     }
 

@@ -80,6 +80,8 @@ struct HUDLayout: Equatable {
     let sceneSize: CGSize
     let contentRect: CGRect
     let metrics: HUDLayoutMetrics
+    let topObstructionHeight: CGFloat
+    let topHUDOffset: CGFloat
     /// SpriteKit scene units to one rendered point in the containing view.
     ///
     /// The browser HUD uses CSS `clamp()` values, so its phone typography and
@@ -118,12 +120,18 @@ struct HUDLayout: Equatable {
         sceneSize: CGSize = HUDLayout.referenceSize,
         contentRect: CGRect? = nil,
         metrics: HUDLayoutMetrics = .canonical,
-        displayScale: CGFloat? = nil
+        displayScale: CGFloat? = nil,
+        topObstructionHeight: CGFloat = 0
     ) {
         self.sceneSize = sceneSize
         let resolvedContentRect = contentRect ?? CGRect(origin: .zero, size: sceneSize)
         self.contentRect = resolvedContentRect
         self.metrics = metrics
+        self.topObstructionHeight = max(0, topObstructionHeight)
+
+        let safeTopInset = max(0, sceneSize.height - resolvedContentRect.maxY)
+        let resolvedTopHUDOffset = max(0, self.topObstructionHeight - safeTopInset)
+        topHUDOffset = min(resolvedContentRect.height, resolvedTopHUDOffset)
 
         let sceneScale = min(
             resolvedContentRect.width / Self.referenceSize.width,
@@ -148,7 +156,8 @@ struct HUDLayout: Equatable {
             + readyCopyHeight
         let adrenalineLeft = resolvedContentRect.minX
             + resolvedContentRect.width * metrics.adrenalineLeftFraction
-        let adrenalineTop = resolvedContentRect.height * metrics.adrenalineTopFraction
+        let adrenalineTop = topHUDOffset
+            + resolvedContentRect.height * metrics.adrenalineTopFraction
         let adrenalineWidth = resolvedContentRect.width * metrics.adrenalineWidthFraction
 
         adrenalineFrame = Self.topLeftFrame(
@@ -168,7 +177,9 @@ struct HUDLayout: Equatable {
 
         clockTopAnchor = CGPoint(
             x: resolvedContentRect.midX,
-            y: resolvedContentRect.maxY - resolvedContentRect.height * 0.02
+            y: resolvedContentRect.maxY
+                - topHUDOffset
+                - resolvedContentRect.height * 0.02
         )
 
         let controlsLeft = resolvedContentRect.minX
