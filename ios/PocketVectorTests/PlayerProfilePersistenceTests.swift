@@ -4756,7 +4756,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let repository = makeRepository(directory: directory)
         let initial = try await repository.load(at: baseDate)
         _ = try await addConfirmedCoins(
-            3_600,
+            6_000,
             transactionID: 9_100,
             to: repository,
             at: baseDate
@@ -4864,7 +4864,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let repository = makeRepository(directory: directory)
         let initial = try await repository.load(at: baseDate)
         _ = try await addConfirmedCoins(
-            1_650,
+            2_500,
             transactionID: 9_101,
             to: repository,
             at: baseDate
@@ -5351,7 +5351,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let repository = makeRepository(directory: directory)
         let initial = try await repository.load(at: baseDate)
         let afterCredit = try await addConfirmedCoins(
-            1_650,
+            2_500,
             transactionID: 9001,
             to: repository,
             at: baseDate
@@ -5392,9 +5392,9 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let afterDuplicate = try await repository.snapshot()
 
         XCTAssertFalse(first.wasAlreadyUnlocked)
-        XCTAssertEqual(first.confirmedBalanceAfter, 1_150)
+        XCTAssertEqual(first.confirmedBalanceAfter, 2_000)
         XCTAssertTrue(duplicate.wasAlreadyUnlocked)
-        XCTAssertEqual(duplicate.confirmedBalanceAfter, 1_150)
+        XCTAssertEqual(duplicate.confirmedBalanceAfter, 2_000)
         XCTAssertEqual(afterDuplicate, afterFirst)
         XCTAssertTrue(afterFirst.player.inventory.ownedJerseyIDs.contains(
             LaunchCatalog.approved.team(id: LaunchTeamID.novaCityComets)!.alternateJersey.id
@@ -5415,7 +5415,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let repository = makeRepository(directory: directory)
         let launched = try await repository.load(at: baseDate)
         _ = try await addConfirmedCoins(
-            1_650,
+            2_500,
             transactionID: 9004,
             to: repository,
             at: baseDate
@@ -5479,7 +5479,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         }
 
         _ = try await addConfirmedCoins(
-            1_650,
+            2_500,
             transactionID: 9002,
             to: repository,
             at: baseDate
@@ -5525,7 +5525,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let testRepository = makeRepository(directory: directory)
         let initial = try await testRepository.load(at: baseDate)
         _ = try await addConfirmedCoins(
-            1_650,
+            2_500,
             transactionID: 9003,
             to: testRepository,
             at: baseDate
@@ -6086,7 +6086,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         let first = makeRepository(directory: directory)
         let initial = try await first.load(at: baseDate)
         _ = try await addConfirmedCoins(
-            1_650,
+            2_500,
             transactionID: 9010,
             to: first,
             at: baseDate
@@ -6164,7 +6164,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(restored.player.career.completedRuns, 1)
         XCTAssertEqual(restored.player.career.totalScore, 30_000)
         XCTAssertEqual(restored.coinBalances.pending, 0)
-        XCTAssertEqual(restored.coinBalances.confirmed, 1_650 - 500 + 250 + 40)
+        XCTAssertEqual(restored.coinBalances.confirmed, 2_500 - 500 + 250 + 40)
         XCTAssertEqual(restored.player.selection.selectedJerseyID, novaAlternate)
         XCTAssertTrue(restored.player.settings.reducedMotion)
         XCTAssertTrue(restored.player.settings.tutorialCompleted)

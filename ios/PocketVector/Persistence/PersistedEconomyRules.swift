@@ -67,10 +67,10 @@ enum PersistedEconomyRulesV1 {
     static let alternateFootballPrice: Int64 = 750
 
     static let coinPackCoins: [CoinPackID: Int64] = [
-        CoinPackID("pocket"): 500,
-        CoinPackID("team"): 1_650,
-        CoinPackID("bundle"): 3_600,
-        CoinPackID("vault"): 6_500,
+        CoinPackID("pocket"): 750,
+        CoinPackID("team"): 2_500,
+        CoinPackID("bundle"): 6_000,
+        CoinPackID("vault"): 11_000,
     ]
 
     static func runRules(for economyVersion: Int) -> RunRules? {

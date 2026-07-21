@@ -127,10 +127,10 @@ final class DurableEconomyCoordinatorTests: XCTestCase, @unchecked Sendable {
                 "alternateJerseyPrice", "500",
                 "alternateFootballPrice", "750",
                 "coinPackCount", "4",
-                "coinPack", "bundle", "3600",
-                "coinPack", "pocket", "500",
-                "coinPack", "team", "1650",
-                "coinPack", "vault", "6500",
+                "coinPack", "bundle", "6000",
+                "coinPack", "pocket", "750",
+                "coinPack", "team", "2500",
+                "coinPack", "vault", "11000",
             ]
         )
         XCTAssertEqual(

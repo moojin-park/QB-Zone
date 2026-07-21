@@ -558,7 +558,7 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
         )
         await coordinator.bootstrap()
         XCTAssertEqual(coordinator.state.confirmedCoins, 0)
-        XCTAssertEqual(coordinator.state.pendingCoins, 1_500)
+        XCTAssertEqual(coordinator.state.pendingCoins, 2_250)
         let before = coordinator.state
         let lockedTeamItem = try XCTUnwrap(
             coordinator.catalog.unlockableItems.first {
@@ -1020,7 +1020,7 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
             let entryID = CoinLedgerID.storeKit(transactionID: transactionID)
             document.player.ledger[entryID] = CoinLedgerEntry(
                 id: entryID,
-                delta: 500,
+                delta: 750,
                 reason: .storeKit(transactionID: transactionID, packID: packID),
                 createdAt: date
             )

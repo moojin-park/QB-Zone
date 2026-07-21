@@ -147,10 +147,14 @@ US prices are launch hypotheses; Apple supplies localized storefront prices.
 
 | Pack   | Coins | Proposed US price |
 | ------ | ----: | ----------------: |
-| Pocket |   500 |             $0.99 |
-| Team   | 1,650 |             $2.99 |
-| Bundle | 3,600 |             $5.99 |
-| Vault  | 6,500 |             $9.99 |
+| Pocket |    750 |             $0.99 |
+| Team   |  2,500 |             $2.99 |
+| Bundle |  6,000 |             $5.99 |
+| Vault  | 11,000 |             $9.99 |
+
+Each successive tier provides strictly more coins per US dollar. No combination
+of lower-tier packs at or below $9.99 provides as many coins as the Vault. The
+Vault covers the 10,750-coin launch catalog with a 250-coin remainder.
 
 Purchased credits never expire. Every gameplay, advertisement, purchase, and
 spend mutation must have an idempotent ledger identifier so a retry, crash,

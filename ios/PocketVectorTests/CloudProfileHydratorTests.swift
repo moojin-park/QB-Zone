@@ -526,7 +526,7 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
         }!
         let storeCredit = CoinLedgerEntry(
             id: CoinLedgerID.storeKit(transactionID: 42),
-            delta: 1_650,
+            delta: 2_500,
             reason: .storeKit(transactionID: 42, packID: CoinPackID("team")),
             createdAt: date(2_100)
         )
@@ -561,7 +561,7 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
             try PlayerProfileProjection.coinBalances(
                 for: result.candidateDocument
             ).confirmed,
-            150
+            1_000
         )
         XCTAssertNotNil(result.candidateDocument.player.ledger[unlock.id])
         XCTAssertTrue(result.revisionPlan.economyMaterialChanged)
@@ -577,7 +577,7 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
         var document = fixture.source.envelope.document
         let credit = CoinLedgerEntry(
             id: CoinLedgerID.storeKit(transactionID: 99),
-            delta: 1_650,
+            delta: 2_500,
             reason: .storeKit(transactionID: 99, packID: CoinPackID("team")),
             createdAt: date(2_000)
         )
@@ -617,7 +617,7 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
         var document = fixture.source.envelope.document
         let credit = CoinLedgerEntry(
             id: CoinLedgerID.storeKit(transactionID: 100),
-            delta: 500,
+            delta: 750,
             reason: .storeKit(transactionID: 100, packID: CoinPackID("pocket")),
             createdAt: date(2_000)
         )
