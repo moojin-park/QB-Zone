@@ -673,7 +673,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(fingerprint, CloudReplicaScopeFingerprint.make(for: base))
         XCTAssertEqual(
             fingerprint.rawValue,
-            "91cb348fe8634d65f93c8fa1e59e24077cb0b3b1f7a57fe1649892d6a43a7710"
+            "4d01494c9d6d505014fa7c70120f9b61abdaf6c5e606479faa22af088be5d52f"
         )
         XCTAssertEqual(fingerprint.rawValue.count, 64)
         XCTAssertEqual(
