@@ -984,32 +984,21 @@ struct RunResultsCoinProjection: Equatable, Sendable {
         let outcome = settlement.outcome
         let record = outcome.record
         let run = record.run
-        guard let rules = PersistedEconomyRulesV1.runRules(
-            for: run.configuration.economyVersion
-        ) else {
+        guard let rewardBreakdown = try? run.rewardBreakdown() else {
             throw ProductionAppCompositionError.authoritativeSettlementMismatch
         }
 
-        let rewardIsEligible = rules.isRewardEligible(run)
-        let completionCoins = rewardIsEligible ? rules.baseRunCoins : 0
-        let performanceCoins = rewardIsEligible
-            ? min(
-                rules.maximumScoreCoins,
-                Int64(max(0, run.score) / rules.scoreCoinsPerPoints)
-            )
-            : 0
-        let hasAccuracyBonus = rewardIsEligible
-            && run.statistics.attempts >= rules.accuracyMinimumAttempts
-            && run.statistics.attempts > 0
-            && run.statistics.successfulPasses * 100
-                >= run.statistics.attempts * rules.accuracyMinimumPercent
-        let accuracyCoins = hasAccuracyBonus ? rules.accuracyBonusCoins : 0
+        let rewardIsEligible = rewardBreakdown.isEligible
+        let completionCoins = rewardBreakdown.completionCoins
+        let performanceCoins = rewardBreakdown.performanceCoins
+        let accuracyCoins = rewardBreakdown.accuracyCoins
         let gameplayCoins = try checkedSum(
             completionCoins,
             performanceCoins,
             accuracyCoins
         )
-        guard gameplayCoins == record.rewardCoins else {
+        guard gameplayCoins == rewardBreakdown.totalCoins,
+              gameplayCoins == record.rewardCoins else {
             throw ProductionAppCompositionError.authoritativeSettlementMismatch
         }
 
