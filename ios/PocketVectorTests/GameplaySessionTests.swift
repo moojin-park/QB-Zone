@@ -540,13 +540,18 @@ final class GameplaySessionTests: XCTestCase {
     }
 
     @MainActor
-    func testMountedCountdownIsInertAndPlayingAcceptsInputUnderBottomBarForBothMotionModes() async throws {
+    func testMountedCountdownCuesRemainAudibleAndGameplayInertForBothMotionModes() async throws {
         for reducedMotion in [false, true] {
             var snapshots: [GameplaySceneSnapshot] = []
             let scene = GameScene(
                 size: GameProjection.sceneSize,
                 configuration: makeConfiguration(seed: reducedMotion ? 813 : 812),
-                settings: PlayerSettings(isMuted: true, reducedMotion: reducedMotion),
+                settings: PlayerSettings(
+                    musicVolume: 1,
+                    sfxVolume: 1,
+                    isMuted: false,
+                    reducedMotion: reducedMotion
+                ),
                 onCompletedRun: { _ in },
                 onGameplaySnapshotChanged: { snapshots.append($0) }
             )
@@ -562,7 +567,14 @@ final class GameplaySessionTests: XCTestCase {
             }
             XCTAssertEqual(scene.visualReadiness, .ready)
             XCTAssertFalse(scene.isGameplayMusicPlaying)
-            XCTAssertFalse(scene.isAudioCuePlaying(.countdown))
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.countdown), 1)
+            XCTAssertEqual(
+                try XCTUnwrap(
+                    scene.childNode(withName: "//countdown") as? SKLabelNode
+                ).text,
+                "3"
+            )
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.snap), 0)
 
             let startPoint = CGPoint(x: scene.size.width / 2, y: 1)
             scene.handlePrimaryInputBegan(
@@ -576,21 +588,46 @@ final class GameplaySessionTests: XCTestCase {
             XCTAssertEqual(scene.currentSnapshot.statistics.attempts, 0)
 
             scene.update(0)
-            for step in 1 ... 20 {
+            for step in 1 ... 11 {
                 scene.update(TimeInterval(step) / 10)
             }
             XCTAssertNotNil(scene.childNode(withName: "//countdown"))
             XCTAssertFalse(scene.isAiming)
             XCTAssertEqual(scene.currentSnapshot.statistics.attempts, 0)
             XCTAssertFalse(scene.isGameplayMusicPlaying)
-            XCTAssertFalse(scene.isAudioCuePlaying(.countdown))
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.countdown), 2)
+            XCTAssertEqual(
+                try XCTUnwrap(
+                    scene.childNode(withName: "//countdown") as? SKLabelNode
+                ).text,
+                "2"
+            )
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.snap), 0)
             XCTAssertEqual(snapshots.map(\.defersBottomSystemGestures), [true])
 
-            for step in 21 ... 31 {
+            for step in 12 ... 21 {
+                scene.update(TimeInterval(step) / 10)
+            }
+            XCTAssertNotNil(scene.childNode(withName: "//countdown"))
+            XCTAssertFalse(scene.isGameplayMusicPlaying)
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.countdown), 3)
+            XCTAssertEqual(
+                try XCTUnwrap(
+                    scene.childNode(withName: "//countdown") as? SKLabelNode
+                ).text,
+                "1"
+            )
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.snap), 0)
+            XCTAssertEqual(snapshots.map(\.defersBottomSystemGestures), [true])
+
+            for step in 22 ... 31 {
                 scene.update(TimeInterval(step) / 10)
             }
             XCTAssertNil(scene.childNode(withName: "//countdown"))
             XCTAssertEqual(snapshots.map(\.defersBottomSystemGestures), [true])
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.countdown), 3)
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.snap), 1)
+            XCTAssertTrue(scene.isGameplayMusicPlaying)
 
             let bottomBar = try XCTUnwrap(
                 scene.childNode(withName: "//gameplayLetterbox.bottom") as? SKSpriteNode
@@ -608,6 +645,7 @@ final class GameplaySessionTests: XCTestCase {
                 "Playing input beneath the completed bar must work with reducedMotion=\(reducedMotion)"
             )
 
+            scene.setApplicationActive(false)
             scene.willMove(from: view)
         }
     }

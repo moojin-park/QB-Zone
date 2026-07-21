@@ -57,6 +57,7 @@ final class GameAudioController {
     private var musicPlayer: AVAudioPlayer?
     private var effectPools: [GameAudioCue: [AVAudioPlayer]] = [:]
     private var nextVoiceIndex: [GameAudioCue: Int] = [:]
+    private var successfulPlayCounts: [GameAudioCue: Int] = [:]
     private var sessionIsActive = false
     nonisolated(unsafe) private var interruptionObserver: NSObjectProtocol?
     private var resumeMusicAfterInterruption = false
@@ -69,6 +70,10 @@ final class GameAudioController {
 
     func isPlaying(_ cue: GameAudioCue) -> Bool {
         effectPools[cue]?.contains(where: \.isPlaying) == true
+    }
+
+    func successfulPlayCount(for cue: GameAudioCue) -> Int {
+        successfulPlayCounts[cue, default: 0]
     }
 
     init(
@@ -121,7 +126,11 @@ final class GameAudioController {
         let player = players[index]
         player.currentTime = 0
         player.volume = isMuted ? 0 : min(1, settings.sfxVolume * cue.gain)
-        return player.play()
+        let didPlay = player.play()
+        if didPlay {
+            successfulPlayCounts[cue, default: 0] += 1
+        }
+        return didPlay
     }
 
     func startMusic() {

@@ -26,7 +26,9 @@ does not create a throw.
 Only one football is authoritative at a time. Input is disabled while textures
 are preparing, during countdown, while paused, while a play resolves, and after
 the run enters its final-ball state. Countdown advances only its own visual
-timer: it cannot aim, throw, score, advance the gameplay clock, or emit audio.
+timer: it cannot aim, throw, score, or advance the gameplay clock. Its initial
+countdown cue and subsequent number cues are presentation-only and do not alter
+simulation state.
 
 ## Run lifecycle
 
