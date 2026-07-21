@@ -194,6 +194,42 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertNil(TutorialPage.gameRules.previous)
     }
 
+    func testTutorialPassingGuidanceExplainsBulletAndLobReleaseTiming() {
+        XCTAssertEqual(
+            TutorialPassingGuidance.instruction,
+            "Start on the quarterback, drag to open grass away from defenders, then release. "
+                + "Release quickly for a bullet (low trajectory), or hold longer before releasing for a lob "
+                + "(high trajectory). The receiver runs under the throw."
+        )
+    }
+
+    func testTutorialPlaybackOnlyRunsOnActivePassingPageWithMotionEnabled() {
+        XCTAssertFalse(TutorialPlaybackPolicy.shouldPlay(
+            page: .gameRules,
+            mediaIsReady: true,
+            reducesMotion: false,
+            sceneIsActive: true
+        ))
+        XCTAssertFalse(TutorialPlaybackPolicy.shouldPlay(
+            page: .passing,
+            mediaIsReady: true,
+            reducesMotion: true,
+            sceneIsActive: true
+        ))
+        XCTAssertFalse(TutorialPlaybackPolicy.shouldPlay(
+            page: .passing,
+            mediaIsReady: true,
+            reducesMotion: false,
+            sceneIsActive: false
+        ))
+        XCTAssertTrue(TutorialPlaybackPolicy.shouldPlay(
+            page: .passing,
+            mediaIsReady: true,
+            reducesMotion: false,
+            sceneIsActive: true
+        ))
+    }
+
     func testTeamPresentationUsesAllEightApprovedTeamsAndLockedPrices() throws {
         let catalog = LaunchCatalog.approved
         let state = AppCoordinatorState.launchDefault(catalog: catalog)

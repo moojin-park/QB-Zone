@@ -23,10 +23,10 @@ struct TutorialView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var player = AVPlayer()
+    @State private var player = AVQueuePlayer()
+    @State private var playerLooper: AVPlayerLooper?
     @State private var mediaIsReady = false
     @State private var playbackStage = 0
-    @State private var hasAutoplayed = false
     @State private var page: TutorialPage
 
     private let playbackClock = Timer.publish(
@@ -106,20 +106,14 @@ struct TutorialView: View {
         .onReceive(playbackClock) { _ in
             updatePlaybackStage()
         }
+        .onChange(of: page) { _, newPage in
+            synchronizePlayback(restart: newPage == .passing)
+        }
         .onChange(of: reducesMotion) { _, reduced in
-            if reduced {
-                player.pause()
-                player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
-                playbackStage = 0
-            } else if mediaIsReady, !hasAutoplayed {
-                hasAutoplayed = true
-                replayDemo()
-            }
+            synchronizePlayback(restart: !reduced)
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active {
-                player.pause()
-            }
+            synchronizePlayback(restart: phase == .active)
         }
         .onDisappear {
             player.pause()
@@ -309,7 +303,7 @@ struct TutorialView: View {
         if stage == .throwToIt {
             ZStack {
                 tutorialImage(named: stage.posterAssetName)
-                if mediaIsReady {
+                if mediaIsReady, !reducesMotion {
                     TutorialPlayerSurface(player: player)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
@@ -374,26 +368,16 @@ struct TutorialView: View {
         accessibleType: Bool
     ) -> some View {
         let previousWidth: CGFloat = compact ? 132 : (expanded ? 240 : 190)
-        let replayWidth: CGFloat = compact ? 150 : (expanded ? 260 : 210)
         let completionWidth: CGFloat = compact ? 190 : (expanded ? 310 : 270)
 
         if accessibleType {
             VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    previousButton(
-                        compact: compact,
-                        expanded: expanded,
-                        accessibleType: true
-                    )
-                    .frame(maxWidth: .infinity)
-
-                    replayButton(
-                        compact: compact,
-                        expanded: expanded,
-                        accessibleType: true
-                    )
-                    .frame(maxWidth: .infinity)
-                }
+                previousButton(
+                    compact: compact,
+                    expanded: expanded,
+                    accessibleType: true
+                )
+                .frame(maxWidth: .infinity)
 
                 completionButton(
                     compact: compact,
@@ -411,13 +395,6 @@ struct TutorialView: View {
                     accessibleType: false
                 )
                 .frame(width: previousWidth)
-
-                replayButton(
-                    compact: compact,
-                    expanded: expanded,
-                    accessibleType: false
-                )
-                .frame(width: replayWidth)
 
                 TutorialProgressLights(activeStage: playbackStage)
                     .frame(maxWidth: .infinity)
@@ -457,30 +434,6 @@ struct TutorialView: View {
         .accessibilityHint("Returns to the tutorial rules")
     }
 
-    private func replayButton(
-        compact: Bool,
-        expanded: Bool,
-        accessibleType: Bool
-    ) -> some View {
-        Button(action: replayDemo) {
-            HStack(spacing: compact ? 6 : 9) {
-                if !accessibleType {
-                    ChampionshipPixelIcon(
-                        name: "SubmenuPlayIcon",
-                        size: compact ? 22 : (expanded ? 34 : 28)
-                    )
-                }
-                Text("REPLAY")
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(ChampionshipSecondaryButtonStyle())
-        .disabled(!mediaIsReady)
-        .accessibilityLabel("Replay passing demonstration")
-        .accessibilityHint("Plays the complete tutorial animation from the beginning")
-    }
-
     private func completionButton(
         compact: Bool,
         expanded: Bool,
@@ -516,7 +469,7 @@ struct TutorialView: View {
     }
 
     private func prepareMediaIfNeeded() {
-        guard player.currentItem == nil else { return }
+        guard playerLooper == nil else { return }
         guard let dataAsset = NSDataAsset(name: "TutorialRunUnder") else { return }
 
         do {
@@ -532,32 +485,41 @@ struct TutorialView: View {
             )
 
             let item = AVPlayerItem(url: mediaURL)
-            player.replaceCurrentItem(with: item)
-            player.actionAtItemEnd = .pause
+            playerLooper = AVPlayerLooper(player: player, templateItem: item)
             player.isMuted = true
             mediaIsReady = true
-
-            if reducesMotion {
-                player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
-            } else {
-                hasAutoplayed = true
-                replayDemo()
-            }
+            synchronizePlayback(restart: page == .passing)
         } catch {
             mediaIsReady = false
         }
     }
 
-    private func replayDemo() {
-        guard mediaIsReady else { return }
-        playbackStage = 0
-        player.pause()
-        player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+    private func synchronizePlayback(restart: Bool) {
+        guard TutorialPlaybackPolicy.shouldPlay(
+            page: page,
+            mediaIsReady: mediaIsReady,
+            reducesMotion: reducesMotion,
+            sceneIsActive: scenePhase == .active
+        ) else {
+            player.pause()
+            if page != .passing || reducesMotion {
+                player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+                playbackStage = 0
+            }
+            return
+        }
+
+        if restart {
+            playbackStage = 0
+            player.pause()
+            player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+
         player.play()
     }
 
     private func updatePlaybackStage() {
-        guard mediaIsReady else { return }
+        guard page == .passing, mediaIsReady else { return }
         let elapsed = player.currentTime().seconds
         guard elapsed.isFinite else { return }
 
@@ -568,6 +530,17 @@ struct TutorialView: View {
         } else {
             playbackStage = 2
         }
+    }
+}
+
+enum TutorialPlaybackPolicy {
+    static func shouldPlay(
+        page: TutorialPage,
+        mediaIsReady: Bool,
+        reducesMotion: Bool,
+        sceneIsActive: Bool
+    ) -> Bool {
+        page == .passing && mediaIsReady && !reducesMotion && sceneIsActive
     }
 }
 
@@ -908,10 +881,7 @@ private struct TutorialInstructionRail: View {
     let accessibleType: Bool
 
     var body: some View {
-        Text(
-            "Start on the quarterback, drag to open grass away from defenders, "
-                + "then release. The receiver runs under the throw."
-        )
+        Text(TutorialPassingGuidance.instruction)
         .font(.system(
             compact ? .caption2 : .subheadline,
             design: .monospaced,
@@ -919,21 +889,27 @@ private struct TutorialInstructionRail: View {
         ))
         .foregroundStyle(PocketVectorTheme.championshipGlacier)
         .multilineTextAlignment(.center)
-        .lineLimit(accessibleType ? nil : 2)
-        .minimumScaleFactor(accessibleType ? 1 : 0.72)
-        .fixedSize(horizontal: false, vertical: accessibleType)
+        .lineLimit(nil)
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, compact ? 10 : 18)
         .frame(maxWidth: 1_040)
         .frame(minHeight: compact ? 36 : 48)
         .championshipPanel()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Passing demonstration")
-        .accessibilityValue(
-            "Step 1, Pick a spot. Step 2, Throw to it. Step 3, Avoid the defenders. "
-                + "Start on the quarterback, drag to open grass away from defenders, "
-                + "then release. The receiver runs under the throw."
-        )
+        .accessibilityValue(TutorialPassingGuidance.accessibilityValue)
     }
+}
+
+enum TutorialPassingGuidance {
+    static let instruction =
+        "Start on the quarterback, drag to open grass away from defenders, then release. "
+        + "Release quickly for a bullet (low trajectory), or hold longer before releasing for a lob "
+        + "(high trajectory). The receiver runs under the throw."
+
+    static let accessibilityValue =
+        "Step 1, Pick a spot. Step 2, Throw to it. Step 3, Avoid the defenders. "
+        + instruction
 }
 
 enum TutorialMediaCache {
