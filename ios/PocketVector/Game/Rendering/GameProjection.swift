@@ -12,13 +12,26 @@ struct GameSafeAreaInsets: Equatable {
 
 /// Converts the physical SpriteKit view into the app's fixed-height logical canvas.
 ///
-/// The field is full bleed. Safe-area insets constrain HUD and controls only.
+/// The field is full bleed. Safe-area insets constrain HUD, controls, and the
+/// lower-field region where a throw may begin.
 struct GameViewport: Equatable {
     let viewSize: CGSize
     let safeAreaInsets: GameSafeAreaInsets
     let projection: GameProjection
     let pointsPerSceneUnit: CGFloat
     let safeSceneFrame: CGRect
+
+    /// The unobstructed lower-field band where a throw gesture may begin.
+    /// Release points remain free to travel beyond this frame.
+    var throwActivationFrame: CGRect {
+        let top = min(safeSceneFrame.maxY, GameProjection.throwActivationTopY)
+        return CGRect(
+            x: safeSceneFrame.minX,
+            y: safeSceneFrame.minY,
+            width: safeSceneFrame.width,
+            height: max(0, top - safeSceneFrame.minY)
+        )
+    }
 
     static let canonical = GameViewport(
         viewSize: GameProjection.classicSceneSize,
@@ -62,6 +75,14 @@ struct GameViewport: Equatable {
             height: max(0, GameProjection.logicalHeight - top - bottom)
         )
     }
+
+    func containsThrowActivationPoint(_ point: CGPoint) -> Bool {
+        let frame = throwActivationFrame
+        return point.x >= frame.minX
+            && point.x <= frame.maxX
+            && point.y >= frame.minY
+            && point.y <= frame.maxY
+    }
 }
 
 /// Immutable world-to-screen projection.
@@ -73,6 +94,7 @@ struct GameProjection: Equatable {
     static let classicWidth: CGFloat = 1_024
     static let classicSceneSize = CGSize(width: classicWidth, height: logicalHeight)
     static let maximumFieldArtWidth: CGFloat = 1_728
+    static let throwActivationTopY: CGFloat = 225
 
     /// Compatibility name for canonical simulation and unit-test geometry.
     static let sceneSize = classicSceneSize
@@ -100,10 +122,6 @@ struct GameProjection: Equatable {
 
     var centerX: CGFloat {
         viewportWidth / 2
-    }
-
-    var quarterbackHitFrame: CGRect {
-        CGRect(x: centerX - 140, y: 0, width: 280, height: 220)
     }
 
     static func perspectiveFactor(depth: CGFloat) -> CGFloat {
@@ -161,10 +179,6 @@ struct GameProjection: Equatable {
         )
     }
 
-    func isPointOnQuarterback(_ point: CGPoint) -> Bool {
-        quarterbackHitFrame.contains(point)
-    }
-
     /// Canonical wrappers retained for deterministic simulation and existing tests.
     static func halfFieldWidth(depth: CGFloat) -> CGFloat {
         classic.halfFieldWidth(depth: depth)
@@ -176,10 +190,6 @@ struct GameProjection: Equatable {
 
     static func sceneToWorld(_ point: CGPoint) -> WorldPoint {
         classic.sceneToWorld(point)
-    }
-
-    static func isPointOnQuarterback(_ point: CGPoint) -> Bool {
-        classic.isPointOnQuarterback(point)
     }
 
     private static func clamp(_ value: CGFloat, minimum: CGFloat, maximum: CGFloat) -> CGFloat {

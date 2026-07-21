@@ -48,6 +48,7 @@ final class BroadcastHUDNode: SKNode {
     let layout: HUDLayout
     let muteHitFrame: CGRect
     let pauseHitFrame: CGRect
+    let scoreReactionExclusionFrame: CGRect
 
     /// Compatibility aliases for scene code that names the visible controls as buttons.
     var muteButtonFrame: CGRect { layout.muteButtonFrame }
@@ -110,6 +111,9 @@ final class BroadcastHUDNode: SKNode {
         let controlHitFrames = Self.controlHitFrames(for: layout)
         muteHitFrame = controlHitFrames.mute
         pauseHitFrame = controlHitFrames.pause
+        scoreReactionExclusionFrame = layout.scorePlateFrame.union(
+            layout.feedbackTwoLineFrame
+        )
         let sceneScale = min(
             layout.contentRect.width / HUDLayout.referenceSize.width,
             layout.contentRect.height / HUDLayout.referenceSize.height
@@ -242,6 +246,10 @@ final class BroadcastHUDNode: SKNode {
 
     func containsPauseControl(_ scenePoint: CGPoint) -> Bool {
         pauseHitFrame.contains(scenePoint)
+    }
+
+    func containsScoreReactionSurface(_ scenePoint: CGPoint) -> Bool {
+        scoreReactionExclusionFrame.contains(scenePoint)
     }
 
     private func buildMeter() {

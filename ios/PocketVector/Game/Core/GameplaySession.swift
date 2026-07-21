@@ -43,10 +43,13 @@ struct LiveGameplayStatisticsSnapshot: Equatable, Sendable {
 /// Read-only gameplay state published to app-owned presentation adapters.
 struct GameplaySceneSnapshot: Equatable, Sendable {
     let isPaused: Bool
+    let defersBottomSystemGestures: Bool
     let statistics: LiveGameplayStatisticsSnapshot
 
     init(state: GameState) {
         isPaused = state.phase == .paused
+        defersBottomSystemGestures = state.phase == .playing
+            || state.phase == .resolvingFinalBall
         statistics = LiveGameplayStatisticsSnapshot(statistics: state.statistics)
     }
 }

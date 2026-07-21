@@ -5,9 +5,15 @@ implementation under `ios/PocketVector/Game/` is authoritative.
 
 ## Input
 
-1. Press the quarterback.
+1. Press anywhere in the unobstructed lower-field activation band.
 2. Drag upfield toward open space.
 3. Release ahead of a moving receiver.
+
+The activation band spans the landscape safe width from the bottom safe-area
+boundary through logical scene `y = 225`, covering the first two major yardage
+markers. Pause and mute controls and the complete scorebug/feedback footprint
+remain excluded. Only the initial press is constrained to this band; the drag
+and release may continue anywhere upfield.
 
 The release position selects the target. Gesture distance and elapsed time
 determine release speed; a quick release produces a flatter, shorter flight and
@@ -105,6 +111,12 @@ Canceling that confirmation leaves the run paused. Confirmation creates at most
 one immutable abandoned run, which must complete the normal durable settlement
 path before navigation changes. Mute state affects music and sound effects and
 persists through the profile settings model.
+
+The gameplay snapshot requests bottom-edge system-gesture deferral only during
+active play and final-ball resolution. It clears that request during countdown,
+pause, results, and every non-gameplay state. The app-owned gameplay adapter
+must apply the platform deferral; this reduces accidental exits but does not disable
+the deliberate repeat gesture provided by iOS.
 
 ## Authoritative files
 
