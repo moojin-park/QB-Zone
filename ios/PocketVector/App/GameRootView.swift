@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor
 struct GameRootView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.rootSystemGestureDeferralState) private var systemGestureDeferralState
     let configuration: RunConfiguration
     let settings: PlayerSettings
     let abandonRequestID: Int
@@ -55,10 +56,15 @@ struct GameRootView: View {
         .allowsHitTesting(!freezesPresentation)
         .accessibilityHidden(freezesPresentation)
         .onAppear {
-            sceneHost.bridge.mountSnapshotPresentation(onGameplaySnapshotChanged)
+            sceneHost.bridge.mountSnapshotPresentation { snapshot in
+                receiveGameplaySnapshot(snapshot)
+            }
         }
         .onDisappear {
             sceneHost.bridge.unmountSnapshotPresentation()
+            systemGestureDeferralState?.clearGameplayRequest(
+                for: configuration.runID
+            )
         }
         .onChange(of: scenePhase) { _, newPhase in
             sceneHost.bridge.setApplicationActive(newPhase == .active)
@@ -69,6 +75,22 @@ struct GameRootView: View {
         .onChange(of: abandonRequestID) { _, newValue in
             sceneHost.bridge.requestConfirmedExit(id: newValue)
         }
+        .onChange(of: freezesPresentation) { _, isFrozen in
+            systemGestureDeferralState?.receive(
+                sceneHost.bridge.currentSnapshot,
+                for: configuration.runID,
+                freezesPresentation: isFrozen
+            )
+        }
+    }
+
+    private func receiveGameplaySnapshot(_ snapshot: GameplaySceneSnapshot) {
+        systemGestureDeferralState?.receive(
+            snapshot,
+            for: configuration.runID,
+            freezesPresentation: freezesPresentation
+        )
+        onGameplaySnapshotChanged(snapshot)
     }
 }
 
@@ -102,6 +124,8 @@ final class GameplaySceneBridge {
         lastResumeRequestID = initialResumeRequestID
         lastConfirmedExitRequestID = initialConfirmedExitRequestID
     }
+
+    var currentSnapshot: GameplaySceneSnapshot { target.currentSnapshot }
 
     func mountSnapshotPresentation(
         _ receiver: @escaping @MainActor (GameplaySceneSnapshot) -> Void

@@ -503,6 +503,180 @@ final class AppPresentationTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testRootHostingControllerIsAuthoritativeForBottomGestureDeferral() {
+        let state = RootSystemGestureDeferralState()
+        let controller = RecordingRootHostingController(
+            rootView: AnyView(Color.clear),
+            systemGestureDeferralState: state
+        )
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 874, height: 402))
+        window.rootViewController = controller
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        XCTAssertTrue(window.rootViewController === controller)
+        XCTAssertEqual(controller.preferredScreenEdgesDeferringSystemGestures, [])
+        XCTAssertEqual(controller.screenEdgeUpdateRequestCount, 0)
+
+        let runID = RunID()
+        state.setApplicationActive(true)
+        state.setAllowedGameplayRunID(runID)
+        state.receive(
+            gameplaySnapshot(phase: .playing),
+            for: runID,
+            freezesPresentation: false
+        )
+
+        XCTAssertEqual(
+            controller.preferredScreenEdgesDeferringSystemGestures,
+            .bottom
+        )
+        XCTAssertEqual(controller.screenEdgeUpdateRequestCount, 1)
+
+        state.receive(
+            gameplaySnapshot(phase: .playing),
+            for: runID,
+            freezesPresentation: false
+        )
+        XCTAssertEqual(controller.screenEdgeUpdateRequestCount, 1)
+
+        state.receive(
+            gameplaySnapshot(phase: .paused),
+            for: runID,
+            freezesPresentation: false
+        )
+        XCTAssertEqual(controller.preferredScreenEdgesDeferringSystemGestures, [])
+        XCTAssertEqual(controller.screenEdgeUpdateRequestCount, 2)
+    }
+
+    @MainActor
+    func testRootGestureDeferralRequiresMatchingLiveRunAndClearsAtEveryBlocker() {
+        let state = RootSystemGestureDeferralState()
+        let firstRunID = RunID()
+        let replayRunID = RunID()
+
+        state.setApplicationActive(true)
+        state.setAllowedGameplayRunID(firstRunID)
+        state.receive(
+            gameplaySnapshot(phase: .countdown),
+            for: firstRunID,
+            freezesPresentation: false
+        )
+        XCTAssertFalse(state.defersBottomSystemGestures)
+
+        state.receive(
+            gameplaySnapshot(phase: .playing),
+            for: firstRunID,
+            freezesPresentation: false
+        )
+        XCTAssertTrue(state.defersBottomSystemGestures)
+
+        state.receive(
+            gameplaySnapshot(phase: .paused),
+            for: firstRunID,
+            freezesPresentation: false
+        )
+        XCTAssertFalse(state.defersBottomSystemGestures)
+
+        state.receive(
+            gameplaySnapshot(phase: .playing),
+            for: firstRunID,
+            freezesPresentation: false
+        )
+        XCTAssertTrue(state.defersBottomSystemGestures)
+
+        state.receive(
+            gameplaySnapshot(phase: .resolvingFinalBall),
+            for: firstRunID,
+            freezesPresentation: false
+        )
+        XCTAssertTrue(state.defersBottomSystemGestures)
+
+        state.setAllowedGameplayRunID(nil)
+        XCTAssertFalse(state.defersBottomSystemGestures)
+
+        state.setAllowedGameplayRunID(replayRunID)
+        XCTAssertFalse(state.defersBottomSystemGestures, "A stale prior-run snapshot cannot defer replay")
+
+        state.receive(
+            gameplaySnapshot(phase: .countdown),
+            for: replayRunID,
+            freezesPresentation: false
+        )
+        XCTAssertFalse(state.defersBottomSystemGestures)
+
+        state.receive(
+            gameplaySnapshot(phase: .playing),
+            for: replayRunID,
+            freezesPresentation: false
+        )
+        XCTAssertTrue(state.defersBottomSystemGestures)
+
+        state.receive(
+            gameplaySnapshot(phase: .playing),
+            for: replayRunID,
+            freezesPresentation: true
+        )
+        XCTAssertFalse(state.defersBottomSystemGestures)
+
+        state.receive(
+            gameplaySnapshot(phase: .playing),
+            for: replayRunID,
+            freezesPresentation: false
+        )
+        state.setApplicationActive(false)
+        XCTAssertFalse(state.defersBottomSystemGestures)
+
+        state.setApplicationActive(true)
+        XCTAssertTrue(state.defersBottomSystemGestures)
+        state.clearGameplayRequest(for: firstRunID)
+        XCTAssertTrue(state.defersBottomSystemGestures, "A stale disappearance cannot clear replay")
+        state.clearGameplayRequest(for: replayRunID)
+        XCTAssertFalse(state.defersBottomSystemGestures)
+    }
+
+    func testRootGesturePresentationPolicyDisablesNonGameplaySettlementAndResults() throws {
+        let results = try makeRunResultsPresentation()
+        let configuration = results.completedRun.configuration
+
+        XCTAssertEqual(
+            RootSystemGestureDeferralPresentationPolicy.allowedGameplayRunID(
+                bootstrapState: .ready,
+                destination: .gameplay(configuration),
+                isSettling: false,
+                settlementErrorMessage: nil
+            ),
+            configuration.runID
+        )
+
+        let blockedContexts: [(AppBootstrapState, AppDestination, Bool, String?)] = [
+            (.loading, .gameplay(configuration), false, nil),
+            (.failed(message: "Unavailable"), .gameplay(configuration), false, nil),
+            (.ready, .gameplay(configuration), true, nil),
+            (.ready, .gameplay(configuration), false, "Save failed"),
+            (.ready, .mainMenu, false, nil),
+            (.ready, .settings, false, nil),
+            (.ready, .coinStore, false, nil),
+            (.ready, .tutorial(.review), false, nil),
+            (.ready, .runResults(results), false, nil),
+        ]
+
+        for context in blockedContexts {
+            XCTAssertNil(
+                RootSystemGestureDeferralPresentationPolicy.allowedGameplayRunID(
+                    bootstrapState: context.0,
+                    destination: context.1,
+                    isSettling: context.2,
+                    settlementErrorMessage: context.3
+                )
+            )
+        }
+    }
+
     func testTeamPresentationUsesAllEightApprovedTeamsAndLockedPrices() throws {
         let catalog = LaunchCatalog.approved
         let state = AppCoordinatorState.launchDefault(catalog: catalog)
@@ -810,5 +984,21 @@ final class AppPresentationTests: XCTestCase {
             isNewPersonalBest: true,
             rewardedAdOffer: .progress(validRuns: 2, requiredRuns: 5)
         )
+    }
+
+    private func gameplaySnapshot(phase: GamePhase) -> GameplaySceneSnapshot {
+        var state = GameState()
+        state.phase = phase
+        return GameplaySceneSnapshot(state: state)
+    }
+}
+
+@MainActor
+private final class RecordingRootHostingController: PocketVectorRootHostingController {
+    private(set) var screenEdgeUpdateRequestCount = 0
+
+    override func requestScreenEdgesDeferralUpdate() {
+        screenEdgeUpdateRequestCount += 1
+        super.requestScreenEdgesDeferralUpdate()
     }
 }
