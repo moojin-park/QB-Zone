@@ -310,6 +310,31 @@ These asset-catalog resources are outside `native-assets.json`. Validate them
 through JSON checks, asset-catalog compilation, simulator builds, and visual
 inspection on compact iPhone, regular iPhone, and iPad landscape.
 
+## Results overlay assets
+
+The transparent post-game broadcast overlay extends the neutral Championship
+system with four dedicated stat icons and three reusable equipment bezels.
+Editable transparent masters live under:
+
+```text
+ios/AssetSources/Submenus/results-{attempts,completions,accuracy,touchdown}-icon-v1.png
+ios/AssetSources/Submenus/results-{marquee,wing,bonus}-bezel-v1.png
+```
+
+Runtime outputs are universal lossless PNG imagesets named
+`Results*Icon` and `Results*Bezel` under
+`ios/PocketVector/Resources/Assets.xcassets/`. Stat icons are normalized to
+144 x 144 with nearest-neighbor scaling. Bezels retain enough source detail
+for SwiftUI cap-inset resizing without stretching corner bolts, clipped steel
+corners, or cyan status lights. The exact `MenuCoinIcon` remains the only
+currency mark.
+
+The Results screen composes the existing registered gameplay field layers as
+its noninteractive fallback background. When app presentation retains the
+completed gameplay surface beneath Results, the same translucent overlay is
+used without the fallback so the player's frozen final frame remains visible.
+Neither path changes gameplay assets or field registration.
+
 ## HUD control icons
 
 Sources:

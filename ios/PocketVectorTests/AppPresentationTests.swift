@@ -152,7 +152,7 @@ final class AppPresentationTests: XCTestCase {
                         .dynamicTypeSize(textSize.size)
                     ),
                     size: viewport.size,
-                    name: "results-\(viewport.name)-\(textSize.name)"
+                    name: "results-option3-\(viewport.name)-\(textSize.name)"
                 )
             }
         }
@@ -228,6 +228,44 @@ final class AppPresentationTests: XCTestCase {
             reducesMotion: false,
             sceneIsActive: true
         ))
+    }
+
+    func testRunResultsCoinLedgerUsesApprovedOrderAndReconcilesToTotal() throws {
+        let results = try makeRunResultsPresentation()
+        let ledger = RunResultsCoinLedger(results: results)
+
+        XCTAssertEqual(
+            ledger.lines.map(\.label),
+            ["RUN COMPLETE", "SCORE BONUS", "ACCURACY BONUS", "FIRST RUN BONUS"]
+        )
+        XCTAssertEqual(ledger.lines.map(\.amount), [10, 12, 5, 250])
+        XCTAssertEqual(ledger.total, 277)
+        XCTAssertEqual(ledger.lines.reduce(0) { $0 + $1.amount }, ledger.total)
+    }
+
+    func testRunResultsCoinLedgerOmitsUnearnedSigningBonus() throws {
+        let firstRunResults = try makeRunResultsPresentation()
+        let laterRunResults = RunResultsPresentation(
+            completedRun: firstRunResults.completedRun,
+            completionCoins: firstRunResults.completionCoins,
+            performanceCoins: firstRunResults.performanceCoins,
+            accuracyCoins: firstRunResults.accuracyCoins,
+            signingBonusCoins: 0,
+            totalEarnedCoins: 27,
+            pendingCoins: 0,
+            gameplayRewardState: .recorded,
+            signingBonusState: nil,
+            personalBest: firstRunResults.personalBest,
+            isNewPersonalBest: false,
+            rewardedAdOffer: firstRunResults.rewardedAdOffer
+        )
+        let ledger = RunResultsCoinLedger(results: laterRunResults)
+
+        XCTAssertEqual(
+            ledger.lines.map(\.label),
+            ["RUN COMPLETE", "SCORE BONUS", "ACCURACY BONUS"]
+        )
+        XCTAssertEqual(ledger.lines.reduce(0) { $0 + $1.amount }, ledger.total)
     }
 
     func testTeamPresentationUsesAllEightApprovedTeamsAndLockedPrices() throws {
