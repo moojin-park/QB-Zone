@@ -329,11 +329,12 @@ for SwiftUI cap-inset resizing without stretching corner bolts, clipped steel
 corners, or cyan status lights. The exact `MenuCoinIcon` remains the only
 currency mark.
 
-The Results screen composes the existing registered gameplay field layers as
-its noninteractive fallback background. When app presentation retains the
-completed gameplay surface beneath Results, the same translucent overlay is
-used without the fallback so the player's frozen final frame remains visible.
-Neither path changes gameplay assets or field registration.
+The Results screen does not recreate or substitute the field. App presentation
+retains the same run-ID-keyed `LegacyGameplayAdapterView`, `GameRootView`, and
+SpriteKit scene after authoritative settlement, freezes that scene, and places
+the translucent Results overlay above the player's exact final frame. The
+retained gameplay surface is noninteractive, accessibility-hidden, and free of
+gameplay or settlement chrome while Results is visible.
 
 ## HUD control icons
 

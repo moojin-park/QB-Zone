@@ -1,4 +1,6 @@
+import SpriteKit
 import SwiftUI
+import UIKit
 
 /// SwiftUI owns run navigation and settlement; SpriteKit owns only the active
 /// configured simulation. Exit never changes destinations until the scene has
@@ -9,6 +11,7 @@ struct LegacyGameplayAdapterView: View {
     let settings: PlayerSettings
     let isSettling: Bool
     let settlementErrorMessage: String?
+    let freezesPresentation: Bool
     let onCompletedRun: (CompletedRun) -> Void
     let onRetrySettlement: () -> Void
 
@@ -25,6 +28,7 @@ struct LegacyGameplayAdapterView: View {
                 settings: settings,
                 abandonRequestID: pauseRequests.confirmedExitRequestID,
                 resumeRequestID: pauseRequests.resumeRequestID,
+                freezesPresentation: freezesPresentation,
                 onCompletedRun: { completedRun in
                     onCompletedRun(completedRun)
                 },
@@ -37,7 +41,17 @@ struct LegacyGameplayAdapterView: View {
                 }
             )
 
-            if let gameplaySnapshot, gameplaySnapshot.isPaused {
+            GameplayRendererFreezeBridge(
+                runID: configuration.runID,
+                isFrozen: freezesPresentation
+            )
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+
+            if chromePolicy.showsPausedControls,
+               let gameplaySnapshot,
+               gameplaySnapshot.isPaused {
                 PausedGameplayOverlay(
                     statistics: gameplaySnapshot.statistics,
                     accent: pauseAccent,
@@ -64,12 +78,15 @@ struct LegacyGameplayAdapterView: View {
                 }
             }
 
-            if isSettling || settlementErrorMessage != nil {
+            if chromePolicy.showsSettlementChrome,
+               isSettling || settlementErrorMessage != nil {
                 settlementOverlay
             }
         }
         .background(PocketVectorTheme.void)
         .ignoresSafeArea()
+        .allowsHitTesting(chromePolicy.allowsGameplayInteraction)
+        .accessibilityHidden(chromePolicy.hidesGameplayFromAccessibility)
         .defersSystemGestures(on: deferredSystemGestureEdges)
     }
 
@@ -77,8 +94,13 @@ struct LegacyGameplayAdapterView: View {
         GameplaySystemGestureDeferralPolicy.edges(
             snapshot: gameplaySnapshot,
             isSettling: isSettling,
-            settlementErrorMessage: settlementErrorMessage
+            settlementErrorMessage: settlementErrorMessage,
+            freezesPresentation: freezesPresentation
         )
+    }
+
+    private var chromePolicy: GameplayAdapterChromePolicy {
+        GameplayAdapterChromePolicy(freezesPresentation: freezesPresentation)
     }
 
     private var pauseAccent: Color {
@@ -159,15 +181,86 @@ struct GameplaySystemGestureDeferralPolicy {
     static func edges(
         snapshot: GameplaySceneSnapshot?,
         isSettling: Bool,
-        settlementErrorMessage: String?
+        settlementErrorMessage: String?,
+        freezesPresentation: Bool = false
     ) -> Edge.Set {
-        guard snapshot?.defersBottomSystemGestures == true,
+        guard !freezesPresentation,
+              snapshot?.defersBottomSystemGestures == true,
               !isSettling,
               settlementErrorMessage == nil else {
             return []
         }
 
         return .bottom
+    }
+}
+
+struct GameplayAdapterChromePolicy: Equatable {
+    let freezesPresentation: Bool
+
+    var showsPausedControls: Bool { !freezesPresentation }
+    var showsSettlementChrome: Bool { !freezesPresentation }
+    var allowsGameplayInteraction: Bool { !freezesPresentation }
+    var hidesGameplayFromAccessibility: Bool { freezesPresentation }
+}
+
+private struct GameplayRendererFreezeBridge: UIViewRepresentable {
+    let runID: RunID
+    let isFrozen: Bool
+
+    func makeUIView(context: Context) -> GameplayRendererFreezeProbeView {
+        let view = GameplayRendererFreezeProbeView()
+        view.isUserInteractionEnabled = false
+        view.apply(runID: runID, isFrozen: isFrozen)
+        return view
+    }
+
+    func updateUIView(_ uiView: GameplayRendererFreezeProbeView, context: Context) {
+        uiView.apply(runID: runID, isFrozen: isFrozen)
+    }
+}
+
+@MainActor
+private final class GameplayRendererFreezeProbeView: UIView {
+    private var runID: RunID?
+    private var isFrozen = false
+
+    func apply(runID: RunID, isFrozen: Bool) {
+        self.runID = runID
+        self.isFrozen = isFrozen
+        synchronizeRenderer()
+        DispatchQueue.main.async { [weak self] in
+            self?.synchronizeRenderer()
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        synchronizeRenderer()
+    }
+
+    private func synchronizeRenderer() {
+        var candidate = superview
+        while let container = candidate {
+            if let gameplayView = firstGameplayView(in: container) {
+                gameplayView.isPaused = isFrozen
+                gameplayView.scene?.isPaused = isFrozen
+                return
+            }
+            candidate = container.superview
+        }
+    }
+
+    private func firstGameplayView(in view: UIView) -> SKView? {
+        if let gameplayView = view as? SKView,
+           let scene = gameplayView.scene as? GameScene,
+           scene.configuration.runID == runID {
+            return gameplayView
+        }
+        for child in view.subviews {
+            if let gameplayView = firstGameplayView(in: child) { return gameplayView }
+        }
+        return nil
     }
 }
 

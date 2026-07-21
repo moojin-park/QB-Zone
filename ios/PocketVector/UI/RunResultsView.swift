@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 
 @MainActor
 struct RunResultsView: View {
@@ -11,8 +10,6 @@ struct RunResultsView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                ResultsFieldBackdrop(configuration: results.completedRun.configuration)
-
                 Color.black
                     .opacity(dynamicTypeSize.isAccessibilitySize ? 0.48 : 0.34)
                     .ignoresSafeArea()
@@ -85,6 +82,7 @@ struct RunResultsView: View {
             .frame(maxWidth: expanded ? 820 : 760)
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
+            .padding(.bottom, availableSize.height < 390 ? 72 : 0)
             .frame(maxWidth: .infinity)
         }
         .scrollBounceBehavior(.basedOnSize)
@@ -764,43 +762,6 @@ private extension Array where Element == Int64 {
             total = sum
         }
         return total
-    }
-}
-
-private struct ResultsFieldBackdrop: View {
-    let configuration: RunConfiguration
-
-    private var layerPaths: [String] {
-        GameplayFieldLayerStack(offenseTeamID: configuration.offenseTeamID)
-            .orderedLayers
-            .map(\.relativePath)
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                ForEach(layerPaths, id: \.self) { relativePath in
-                    if let image = ResultsFieldImageLoader.image(relativePath: relativePath) {
-                        Image(uiImage: image)
-                            .resizable()
-                            .interpolation(.none)
-                            .scaledToFill()
-                            .frame(width: proxy.size.width, height: proxy.size.height)
-                            .clipped()
-                    }
-                }
-            }
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-}
-
-private enum ResultsFieldImageLoader {
-    static func image(relativePath: String) -> UIImage? {
-        guard let url = GameAssetResources.url(for: relativePath) else { return nil }
-        return UIImage(contentsOfFile: url.path)
     }
 }
 
