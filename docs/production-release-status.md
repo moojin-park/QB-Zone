@@ -222,6 +222,21 @@ adapter and `GameScene` beneath Results, freeze and hide it from interaction
 and accessibility, suppress its controls, and remove the synthetic field
 fallback before the integrated presentation can be accepted.
 
+Art handoff `71ccd0e` (`Retain gameplay surface beneath run results`) is merged
+with full ancestry at `3acbf4c` (`Merge retained gameplay Results surface`).
+The production gameplay adapter retains the exact `SKView` and `GameScene` for
+the completed run, freezes both render surfaces, removes the synthetic field
+fallback, and presents the transparent Results overlay above that stable final
+frame. The retained field is noninteractive and accessibility-hidden; gameplay
+HUD, paused/settlement chrome, and bottom-system-gesture deferral are suppressed
+while Results is visible. Existing Main Menu and Play Again coordinator routes
+remain unchanged. The misplaced root-level Art QA note was excluded from the
+merged tree. Independent review found no P0-P2 issue; the accepted P3 is the
+compact Accessibility 5 wrap of `OPTIONAL` as `OPTION-` / `AL`. Twenty-six
+focused tests, the exact 872-test simulator suite, compact/regular/iPad standard
+and Accessibility 5 evidence, and an unsigned generic-iOS Release archive all
+passed. This completes the retained-gameplay Results visual acceptance gate.
+
 The dormant StoreKit runtime foundation is versioned at `ce69388` (`Add dormant
 StoreKit runtime coordination`), player-scoped Game Center persistence and
 delivery at `9d749bc` (`Add player-scoped Game Center delivery`), the dormant
@@ -337,7 +352,7 @@ final codesigned entitlement payload; that remains a release-candidate gate.
 | Durable local player profile and ledger         | Complete            | Atomic recovery, migration, account isolation, idempotent settlement, unlock, ad reward, and relaunch tests pass                      |
 | Account-independent service foundations         | Complete            | Cloud transport/checkpoint, typed genesis/publication/hydration, canonical V4 seed, player-scoped Game Center delivery, StoreKit runtime, and challenge-only rewarded-ad verification/recovery foundations pass; none implies live composition |
 | Production app shell and menus                  | Complete            | Art-approved High Mesa main menu plus championship-styled offense selection, locker, store, achievements, and Settings ship; Privacy and Support remains Settings-routed |
-| Tutorial and results presentation               | In progress         | The tutorial and prior Results accessibility gates pass; the authoritative settlement coin breakdown is integrated, while Art's retained frozen gameplay field, transparent Results overlay, HUD suppression, and multi-device visual verification remain |
+| Tutorial and results presentation               | Complete            | The tutorial and authoritative Results coin breakdown pass; Results retains and freezes the exact gameplay scene beneath a transparent overlay, suppresses gameplay chrome and interaction, and passes compact/regular/iPad standard and Accessibility 5 gates with one accepted P3 compact label wrap |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
 | Paused gameplay presentation                    | In progress         | Refined Art panel and Technical/PM snapshot, Resume, and confirmed-exit actions are integrated and pass combined tests; compact-iPhone, regular-iPhone, and iPad landscape visual approval remains |
@@ -500,6 +515,10 @@ or runtime ownership boundaries.
 | 2026-07-21 | `b047ce0` | Results overlay focused integration gate | 56 passed, 0 failed, 0 skipped across Results presentation, app/gameplay coordinators, production composition, and the exact native asset-manifest test; result bundle `/Users/andypark/Library/Developer/Xcode/DerivedData/PocketVector-gzonknuffecczwcjjrtxgwzvubqz/Logs/Test/Test-PocketVector-2026.07.21_01-18-37--0700.xcresult` |
 | 2026-07-21 | `b047ce0` | Exact integrated full simulator suite | 866 total: 865 passed, 0 failed, 1 existing conditional case-alias filesystem skip; result bundle `/Users/andypark/Library/Developer/Xcode/DerivedData/PocketVector-gzonknuffecczwcjjrtxgwzvubqz/Logs/Test/Test-PocketVector-2026.07.21_01-20-07--0700.xcresult` |
 | 2026-07-21 | `b047ce0` | Art visual evidence and unsigned Release archive | Compact iPhone, regular iPhone, iPad, and Accessibility 5 evidence passed inspection; seven new asset-catalog JSON files parsed and compiled. Unsigned generic-iOS archive passed at `/tmp/PocketVector-ArtResultsBridge-20260721.xcarchive`; final retained-gameplay visual gate and codesigned distribution proof remain pending |
+| 2026-07-21 | `3acbf4c` | Retained-gameplay Results Art integration | Art handoff `71ccd0e` merged with full ancestry; the exact gameplay adapter, `SKView`, and `GameScene` are retained and frozen beneath the transparent Results overlay, gameplay chrome/interaction/accessibility/gesture deferral are suppressed, and existing replay/menu coordinator behavior is preserved. The submitted root QA note was excluded as outside Art ownership. Independent review found no P0-P2 issue; the compact Accessibility 5 `OPTIONAL` wrap is an accepted P3 |
+| 2026-07-21 | `3acbf4c` | Retained Results focused integration gate | 26 passed, 0 failed, 0 skipped across AppPresentation, coordinator, gameplay-HUD, production-composition, gesture-deferral, and exact native asset-manifest coverage; result bundle `/Users/andypark/Library/Developer/Xcode/DerivedData/PocketVector-gzonknuffecczwcjjrtxgwzvubqz/Logs/Test/Test-PocketVector-2026.07.21_02-41-39--0700.xcresult` |
+| 2026-07-21 | `3acbf4c` | Exact integrated full simulator suite | 872 total: 871 passed, 0 failed, 1 existing conditional case-alias filesystem skip; result bundle `/Users/andypark/Library/Developer/Xcode/DerivedData/PocketVector-gzonknuffecczwcjjrtxgwzvubqz/Logs/Test/Test-PocketVector-2026.07.21_02-43-34--0700.xcresult` |
+| 2026-07-21 | `3acbf4c` | Retained Results visual and archive gates | Compact iPhone, regular iPhone, and iPad standard and Accessibility 5 evidence passed PM inspection at `/tmp/pocket-vector-results-retained-final`; unsigned generic-iOS Release archive passed at `/tmp/PocketVector-RetainedResults-20260721.xcarchive`. Final codesigned distribution-entitlement proof remains pending |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -624,13 +643,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the integrated code and automated gates; tutorial/results accessibility-size and multi-device gameplay visual acceptance remain pending |
+| Known P0/P1 defects                  |      0 | 0 open in the integrated code and automated gates; retained-gameplay Results accessibility-size and multi-device visual acceptance pass with one accepted P3 compact label wrap |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud history, initial publication, hydration, online-only catalog debit/ownership, and StoreKit durable delivery pass internal tests; external sandbox/device gates remain |
-| Clean-checkout archive               |   Pass | Unsigned generic-iOS archive for Results economy integration commit `91c77ee` passed; final codesigned entitlement/export proof remains |
+| Clean-checkout archive               |   Pass | Unsigned generic-iOS archive for retained-gameplay Results integration commit `3acbf4c` passed; final codesigned entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
