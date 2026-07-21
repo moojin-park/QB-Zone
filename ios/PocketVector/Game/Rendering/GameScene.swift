@@ -8,6 +8,79 @@ enum GameSceneVisualReadiness: Equatable {
     case failed
 }
 
+enum ForegroundQuarterbackPose: CaseIterable, Equatable {
+    case idle
+    case aim
+    case throwing
+    case recovery
+
+    var texturePath: String {
+        switch self {
+        case .idle:
+            "characters/qb-idle.webp"
+        case .aim:
+            "characters/qb-aim.webp"
+        case .throwing:
+            "characters/qb-throw.webp"
+        case .recovery:
+            "characters/qb-recovery.webp"
+        }
+    }
+}
+
+/// Render-only placement for the foreground quarterback and the opening
+/// frames of the football's flight. Simulation continues to use
+/// `GameplayConfig.quarterbackStart` as its authoritative release point.
+enum ForegroundQuarterbackPresentation {
+    static let renderedBaselineY: CGFloat = -310
+    static let spriteSize = CGSize(width: 438, height: 584)
+    static let releaseVerticalOffset: CGFloat = 60
+    static let releaseAlignmentDurationMilliseconds: CGFloat = 180
+
+    static func position(for projection: GameProjection) -> CGPoint {
+        CGPoint(x: projection.centerX, y: renderedBaselineY)
+    }
+
+    static func pose(
+        isAiming: Bool,
+        ballElapsedMilliseconds: CGFloat?
+    ) -> ForegroundQuarterbackPose {
+        if isAiming {
+            return .aim
+        }
+        guard let ballElapsedMilliseconds else {
+            return .idle
+        }
+        if ballElapsedMilliseconds < releaseAlignmentDurationMilliseconds {
+            return .throwing
+        }
+        if ballElapsedMilliseconds < 520 {
+            return .recovery
+        }
+        return .idle
+    }
+
+    static func renderedBallPosition(
+        simulatedPosition: CGPoint,
+        elapsedMilliseconds: CGFloat
+    ) -> CGPoint {
+        CGPoint(
+            x: simulatedPosition.x,
+            y: simulatedPosition.y + releaseOffset(
+                elapsedMilliseconds: elapsedMilliseconds
+            )
+        )
+    }
+
+    static func releaseOffset(elapsedMilliseconds: CGFloat) -> CGFloat {
+        let alignmentWeight = min(1, max(
+            0,
+            1 - elapsedMilliseconds / releaseAlignmentDurationMilliseconds
+        ))
+        return releaseVerticalOffset * alignmentWeight
+    }
+}
+
 @MainActor
 final class GameScene: SKScene {
     private enum Palette {
@@ -373,7 +446,9 @@ final class GameScene: SKScene {
             textures: textures
         )
         sidelineEnvironmentNode.isPaused = session.settings.reducedMotion
-        quarterbackNode.position = CGPoint(x: projection.centerX, y: -370)
+        quarterbackNode.position = ForegroundQuarterbackPresentation.position(
+            for: projection
+        )
     }
 
     private func advanceSimulationStep(deltaMilliseconds: CGFloat) {
@@ -496,7 +571,7 @@ final class GameScene: SKScene {
         addChild(actorLayer)
 
         quarterbackNode.anchorPoint = CGPoint(x: 0.5, y: 0)
-        quarterbackNode.size = CGSize(width: 438, height: 584)
+        quarterbackNode.size = ForegroundQuarterbackPresentation.spriteSize
         quarterbackNode.zPosition = 1_500
         actorLayer.addChild(quarterbackNode)
 
@@ -871,7 +946,10 @@ final class GameScene: SKScene {
             return
         }
         ballNode.isHidden = false
-        ballNode.position = projection.worldToScene(ball.current)
+        ballNode.position = ForegroundQuarterbackPresentation.renderedBallPosition(
+            simulatedPosition: projection.worldToScene(ball.current),
+            elapsedMilliseconds: ball.elapsedMilliseconds
+        )
         let scale = GameProjection.actorScale(depth: ball.current.depth)
         let radiusScale = ball.radiusPixels / GameplayConfig.defaultBallRadiusPixels
         ballNode.setScale(scale * radiusScale)
@@ -885,18 +963,12 @@ final class GameScene: SKScene {
     }
 
     private func syncQuarterback() {
-        let path: String
-        if isAiming {
-            path = "characters/qb-aim.webp"
-        } else if let ball = session.state.ball, ball.elapsedMilliseconds < 180 {
-            path = "characters/qb-throw.webp"
-        } else if let ball = session.state.ball, ball.elapsedMilliseconds < 520 {
-            path = "characters/qb-recovery.webp"
-        } else {
-            path = "characters/qb-idle.webp"
-        }
+        let pose = ForegroundQuarterbackPresentation.pose(
+            isAiming: isAiming,
+            ballElapsedMilliseconds: session.state.ball?.elapsedMilliseconds
+        )
         quarterbackNode.texture = textures.uniformTexture(
-            path,
+            pose.texturePath,
             assetRoot: runUniformAssetRoots.offense
         )
     }
@@ -998,13 +1070,17 @@ final class GameScene: SKScene {
         )
         let path = CGMutablePath()
         for index in 0 ... 36 {
+            let progress = CGFloat(index) / 36
             let world = Trajectory.position(
                 start: GameplayConfig.quarterbackStart,
                 end: trajectory.end,
                 arcHeight: trajectory.arcHeight,
-                progress: CGFloat(index) / 36
+                progress: progress
             )
-            let point = projection.worldToScene(world)
+            let point = ForegroundQuarterbackPresentation.renderedBallPosition(
+                simulatedPosition: projection.worldToScene(world),
+                elapsedMilliseconds: trajectory.durationMilliseconds * progress
+            )
             if index == 0 {
                 path.move(to: point)
             } else {

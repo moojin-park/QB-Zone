@@ -570,6 +570,55 @@ final class LaunchVisualIdentityTests: XCTestCase {
         XCTAssertEqual(cacheKeys.count, 16 * 34)
     }
 
+    func testRaisedForegroundQuarterbackRoutesEveryPoseForAllSixteenUniforms() throws {
+        let catalog = LaunchCatalog.approved
+        let poses = ForegroundQuarterbackPose.allCases
+        var routedFrameCount = 0
+
+        XCTAssertEqual(ForegroundQuarterbackPresentation.renderedBaselineY, -310)
+        XCTAssertEqual(
+            ForegroundQuarterbackPresentation.spriteSize,
+            CGSize(width: 438, height: 584)
+        )
+        XCTAssertEqual(
+            Set(poses.map(\.texturePath)),
+            Set([
+                "characters/qb-idle.webp",
+                "characters/qb-aim.webp",
+                "characters/qb-throw.webp",
+                "characters/qb-recovery.webp",
+            ])
+        )
+
+        for team in catalog.teams {
+            for jersey in team.jerseys {
+                let root = try XCTUnwrap(
+                    GameplayJerseyAssetRoot(
+                        teamID: team.id,
+                        jerseyID: jersey.id,
+                        catalog: catalog
+                    )
+                )
+                for pose in poses {
+                    let framePath = try XCTUnwrap(
+                        root.framePath(for: pose.texturePath)
+                    )
+                    XCTAssertNotNil(GameAssetResources.url(for: framePath), framePath)
+                    XCTAssertEqual(
+                        BakedUniformRasterPreprocessor.pixelSize(
+                            relativePath: framePath
+                        ),
+                        CGSize(width: 384, height: 512),
+                        framePath
+                    )
+                    routedFrameCount += 1
+                }
+            }
+        }
+
+        XCTAssertEqual(routedFrameCount, 16 * poses.count)
+    }
+
     @MainActor
     func testAllSixteenLaunchJerseysUseSeparateNearestNeighborCacheEntries() async throws {
         let catalog = LaunchCatalog.approved
