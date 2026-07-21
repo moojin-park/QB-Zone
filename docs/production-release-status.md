@@ -144,6 +144,19 @@ accepted P3. No archive was required because the follow-up changes no resource,
 capability, app-composition, or Release configuration path. The tutorial,
 Results, and shared-header accessibility presentation is release-accepted.
 
+Art follow-up `5dae317` is merged with full ancestry at `a07950f` (`Merge
+looping tutorial passing media`). Tutorial media remains paused and reset on
+Rules page one, starts from the beginning only after entering Passing page two,
+and uses a retained `AVQueuePlayer` with `AVPlayerLooper` for continuous
+playback. Reduce Motion pauses and resets playback and suppresses the player
+surface in favor of the static poster. The 11-test focused presentation gate
+and exact 849-test simulator suite passed with no failure and the single
+existing filesystem skip. Manual simulator verification on a disposable fresh
+iPhone 17 Pro observed progress reset across multiple loop boundaries and a
+static unchanged Passing presentation for six seconds with Reduce Motion
+enabled. No archive was required because the follow-up changes no resource,
+capability, app-composition, or Release configuration path.
+
 The same Art merge adds 544 baked team-and-jersey character frames and expands
 the exact native inventory from 76 to 620 assets. All 16 team/uniform sets pass
 the deterministic 34-frame validator. The complete Technical branch through
@@ -429,6 +442,9 @@ or runtime ownership boundaries.
 | 2026-07-20 | `df690b8` | Shared-header and Results focused gate | 61 passed, 0 failed, 0 skipped across AppPresentation, LaunchVisualIdentity, AppCoordinator, and TutorialPrivacyCoordinator tests; result bundle `/tmp/PocketVector-Art-46c4b96-df690b8-focused.xcresult` |
 | 2026-07-20 | `df690b8` | Exact integrated full simulator suite | 847 total: 846 passed, 0 failed, 1 existing conditional case-alias skip on a case-sensitive filesystem; result bundle `/tmp/PocketVector-Art-46c4b96-df690b8-full.xcresult` |
 | 2026-07-20 | `df690b8` | Shared-header multi-device visual gate | Forty integrated captures passed compact/regular/iPad Accessibility 5 and regular/iPad standard inspection across Choose Offense, Team & Locker, Coin Store, Achievements, Settings, Tutorial Rules/Passing, and Results. Compact subtitles and full Results actions are readable and reachable. Accepted P3: iPad AX5 Results stat labels wrap awkwardly. Evidence directory `/tmp/PocketVector-Art-46c4b96-df690b8-attachments.KNLjzU` |
+| 2026-07-20 | `a07950f` | Looping Passing-media Art integration | Art head `5dae317` merged with full ancestry; exact delta is Art-owned `TutorialView.swift` plus matching presentation tests; both independent audits accepted with no P0-P2 finding and diff hygiene passed |
+| 2026-07-20 | `a07950f` | Passing-media focused and full simulator gates | Focused AppPresentation suite: 11 passed, 0 failed, 0 skipped at `/tmp/PocketVector-Art-5dae317-a07950f-focused.xcresult`; complete suite: 849 total, 848 passed, 0 failed, 1 existing conditional case-alias filesystem skip at `/tmp/PocketVector-Art-5dae317-a07950f-full.xcresult` |
+| 2026-07-20 | `a07950f` | Passing-media runtime gate | Fresh disposable iPhone 17 Pro verified no media on Rules page one; page-two progress advanced and reset across multiple loop boundaries during an eight-second observation; with system Reduce Motion enabled, the static poster and first progress state remained visually unchanged for six seconds. No resource/configuration delta required an archive |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or

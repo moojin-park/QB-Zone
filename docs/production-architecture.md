@@ -4,8 +4,8 @@ Status: implementation contract for version 1
 
 Last updated: 2026-07-20
 
-Accepted implementation baseline: `df690b8`, the revised Art branch through
-`46c4b96` over the revised Technical scoring commit `bd47ac2`. Compact,
+Accepted implementation baseline: `a07950f`, the revised Art branch through
+`5dae317` over the revised Technical scoring commit `bd47ac2`. Compact,
 regular-iPhone, and iPad shared-header, Tutorial, and Results presentation gates
 are accepted through Accessibility 5. The implementation includes
 the approved championship redesign of Choose Your Offense, Team & Locker,
@@ -13,8 +13,10 @@ Achievements, Coin Store, and Settings; the centered-title correction; the
 active layered team-field renderer and baked team-uniform routing; refined
 paused-run controls; the explicit gameplay-presentation bridge; and online-only
 commerce composition. The two-page Rules and Passing tutorial matches the
-active interception-penalty, Adrenaline, and touchdown-multiplier rules, and
-the Results surface retains authoritative settlement actions. Privacy and
+active interception-penalty, Adrenaline, and touchdown-multiplier rules.
+Passing media begins only on page two, loops continuously while active, and
+remains a static poster under Reduce Motion. The Results surface retains
+authoritative settlement actions. Privacy and
 Support remains reachable through Settings and is not a main-menu control.
 
 The shipping GameAssets inventory contains 620 declared assets, including 544
