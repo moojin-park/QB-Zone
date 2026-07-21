@@ -377,8 +377,14 @@ final class AppCoordinatorTests: XCTestCase {
         )
         return RunResultsPresentation(
             completedRun: run,
-            earnedCoins: 22,
-            pendingCoins: 22,
+            completionCoins: 10,
+            performanceCoins: 12,
+            accuracyCoins: 5,
+            signingBonusCoins: 0,
+            totalEarnedCoins: 27,
+            pendingCoins: 27,
+            gameplayRewardState: .pending,
+            signingBonusState: nil,
             personalBest: run.score,
             isNewPersonalBest: true,
             rewardedAdOffer: .progress(validRuns: 1, requiredRuns: 5)

@@ -913,22 +913,14 @@ final class ProductionAppComposition {
         settlement: RunSettlementResult,
         snapshot: LocalPlayerProfileSnapshot
     ) throws -> RunResultsPresentation {
-        var earnedCoins: Int64 = 0
-        let entryIDs = [
-            settlement.outcome.gameplayRewardEntryID,
-            settlement.outcome.signingBonusEntryID,
-        ].compactMap { $0 }
-
-        for entryID in entryIDs {
-            guard let entry = snapshot.ledger[entryID], entry.delta > 0 else {
-                throw ProductionAppCompositionError.authoritativeLedgerEntryMissing
-            }
-            let next = earnedCoins.addingReportingOverflow(entry.delta)
-            guard !next.overflow else {
-                throw ProductionAppCompositionError.authoritativeLedgerOverflow
-            }
-            earnedCoins = next.partialValue
+        let settledRun = settlement.outcome.record.run
+        guard settledRun == run else {
+            throw ProductionAppCompositionError.authoritativeSettlementMismatch
         }
+        let coinProjection = try RunResultsCoinProjection.make(
+            settlement: settlement,
+            snapshot: snapshot
+        )
 
         let priorPersonalBest = snapshot.completedRuns.values.reduce(0) { best, record in
             guard record.run.runID != run.runID,
@@ -955,9 +947,15 @@ final class ProductionAppComposition {
         }
 
         return RunResultsPresentation(
-            completedRun: run,
-            earnedCoins: earnedCoins,
-            pendingCoins: snapshot.coinBalances.pending,
+            completedRun: settledRun,
+            completionCoins: coinProjection.completionCoins,
+            performanceCoins: coinProjection.performanceCoins,
+            accuracyCoins: coinProjection.accuracyCoins,
+            signingBonusCoins: coinProjection.signingBonusCoins,
+            totalEarnedCoins: coinProjection.totalEarnedCoins,
+            pendingCoins: coinProjection.pendingCoins,
+            gameplayRewardState: coinProjection.gameplayRewardState,
+            signingBonusState: coinProjection.signingBonusState,
             personalBest: settlement.outcome.resultingPersonalBest,
             isNewPersonalBest: isNewPersonalBest,
             rewardedAdOffer: rewardedAdOffer,
@@ -966,9 +964,141 @@ final class ProductionAppComposition {
     }
 }
 
+/// Projects only the two ledger entries named by one durable run-settlement
+/// receipt. Profile-wide pending credits and rewarded-ad ledger entries are
+/// deliberately outside this Results contract.
+struct RunResultsCoinProjection: Equatable, Sendable {
+    let completionCoins: Int64
+    let performanceCoins: Int64
+    let accuracyCoins: Int64
+    let signingBonusCoins: Int64
+    let totalEarnedCoins: Int64
+    let pendingCoins: Int64
+    let gameplayRewardState: RunResultsLedgerState?
+    let signingBonusState: RunResultsLedgerState?
+
+    static func make(
+        settlement: RunSettlementResult,
+        snapshot: LocalPlayerProfileSnapshot
+    ) throws -> RunResultsCoinProjection {
+        let outcome = settlement.outcome
+        let record = outcome.record
+        let run = record.run
+        guard let rules = PersistedEconomyRulesV1.runRules(
+            for: run.configuration.economyVersion
+        ) else {
+            throw ProductionAppCompositionError.authoritativeSettlementMismatch
+        }
+
+        let rewardIsEligible = rules.isRewardEligible(run)
+        let completionCoins = rewardIsEligible ? rules.baseRunCoins : 0
+        let performanceCoins = rewardIsEligible
+            ? min(
+                rules.maximumScoreCoins,
+                Int64(max(0, run.score) / rules.scoreCoinsPerPoints)
+            )
+            : 0
+        let hasAccuracyBonus = rewardIsEligible
+            && run.statistics.attempts >= rules.accuracyMinimumAttempts
+            && run.statistics.attempts > 0
+            && run.statistics.successfulPasses * 100
+                >= run.statistics.attempts * rules.accuracyMinimumPercent
+        let accuracyCoins = hasAccuracyBonus ? rules.accuracyBonusCoins : 0
+        let gameplayCoins = try checkedSum(
+            completionCoins,
+            performanceCoins,
+            accuracyCoins
+        )
+        guard gameplayCoins == record.rewardCoins else {
+            throw ProductionAppCompositionError.authoritativeSettlementMismatch
+        }
+
+        let gameplayRewardState: RunResultsLedgerState?
+        if let entryID = outcome.gameplayRewardEntryID {
+            guard let entry = snapshot.ledger[entryID] else {
+                throw ProductionAppCompositionError.authoritativeLedgerEntryMissing
+            }
+            guard entry.id == entryID,
+                  entryID == CoinLedgerID.gameplay(runID: run.runID),
+                  entry.delta == gameplayCoins,
+                  entry.delta > 0,
+                  case let .gameplay(entryRunID, economyVersion) = entry.reason,
+                  entryRunID == run.runID,
+                  economyVersion == run.configuration.economyVersion else {
+                throw ProductionAppCompositionError.authoritativeLedgerEntryInvalid
+            }
+            gameplayRewardState = snapshot.pendingLedgerEntryIDs.contains(entryID)
+                ? .pending
+                : .recorded
+        } else {
+            guard gameplayCoins == 0 else {
+                throw ProductionAppCompositionError.authoritativeSettlementMismatch
+            }
+            gameplayRewardState = nil
+        }
+
+        let signingBonusCoins: Int64
+        let signingBonusState: RunResultsLedgerState?
+        if let entryID = outcome.signingBonusEntryID {
+            guard rewardIsEligible,
+                  entryID != outcome.gameplayRewardEntryID,
+                  let entry = snapshot.ledger[entryID] else {
+                throw ProductionAppCompositionError.authoritativeLedgerEntryMissing
+            }
+            guard entry.id == entryID,
+                  entry.delta == PersistedEconomyRulesV1.signingBonusCoins,
+                  case let .signingBonus(version) = entry.reason,
+                  version == PersistedEconomyRulesV1.signingBonusVersion,
+                  entryID == CoinLedgerID.signingBonus(version: version) else {
+                throw ProductionAppCompositionError.authoritativeLedgerEntryInvalid
+            }
+            signingBonusCoins = entry.delta
+            signingBonusState = snapshot.pendingLedgerEntryIDs.contains(entryID)
+                ? .pending
+                : .recorded
+        } else {
+            signingBonusCoins = 0
+            signingBonusState = nil
+        }
+
+        let totalEarnedCoins = try checkedSum(gameplayCoins, signingBonusCoins)
+        let pendingGameplayCoins = gameplayRewardState == .pending ? gameplayCoins : 0
+        let pendingSigningBonusCoins = signingBonusState == .pending ? signingBonusCoins : 0
+        let pendingCoins = try checkedSum(
+            pendingGameplayCoins,
+            pendingSigningBonusCoins
+        )
+
+        return RunResultsCoinProjection(
+            completionCoins: completionCoins,
+            performanceCoins: performanceCoins,
+            accuracyCoins: accuracyCoins,
+            signingBonusCoins: signingBonusCoins,
+            totalEarnedCoins: totalEarnedCoins,
+            pendingCoins: pendingCoins,
+            gameplayRewardState: gameplayRewardState,
+            signingBonusState: signingBonusState
+        )
+    }
+
+    private static func checkedSum(_ values: Int64...) throws -> Int64 {
+        var total: Int64 = 0
+        for value in values {
+            let next = total.addingReportingOverflow(value)
+            guard !next.overflow else {
+                throw ProductionAppCompositionError.authoritativeLedgerOverflow
+            }
+            total = next.partialValue
+        }
+        return total
+    }
+}
+
 enum ProductionAppCompositionError: Error, Equatable {
     case authoritativeLedgerEntryMissing
+    case authoritativeLedgerEntryInvalid
     case authoritativeLedgerOverflow
+    case authoritativeSettlementMismatch
     case authoritativeSessionMismatch
     case authoritativeRevisionCollision
     case syncRevisionOverflow

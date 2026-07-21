@@ -508,8 +508,16 @@ struct AppCoordinatorEnvironment {
 
 struct RunResultsPresentation: Equatable, Sendable {
     let completedRun: CompletedRun
-    let earnedCoins: Int64
+    let completionCoins: Int64
+    let performanceCoins: Int64
+    let accuracyCoins: Int64
+    let signingBonusCoins: Int64
+    let totalEarnedCoins: Int64
+    /// Portion of this settlement's gameplay and signing-bonus credits that is
+    /// still pending. This is never the profile-wide pending balance.
     let pendingCoins: Int64
+    let gameplayRewardState: RunResultsLedgerState?
+    let signingBonusState: RunResultsLedgerState?
     let personalBest: Int
     let isNewPersonalBest: Bool
     let rewardedAdOffer: RewardedAdOfferPresentation
@@ -517,16 +525,28 @@ struct RunResultsPresentation: Equatable, Sendable {
 
     init(
         completedRun: CompletedRun,
-        earnedCoins: Int64,
+        completionCoins: Int64,
+        performanceCoins: Int64,
+        accuracyCoins: Int64,
+        signingBonusCoins: Int64,
+        totalEarnedCoins: Int64,
         pendingCoins: Int64,
+        gameplayRewardState: RunResultsLedgerState?,
+        signingBonusState: RunResultsLedgerState?,
         personalBest: Int,
         isNewPersonalBest: Bool,
         rewardedAdOffer: RewardedAdOfferPresentation,
         achievementUpdates: [AchievementProgressUpdate] = []
     ) {
         self.completedRun = completedRun
-        self.earnedCoins = earnedCoins
+        self.completionCoins = completionCoins
+        self.performanceCoins = performanceCoins
+        self.accuracyCoins = accuracyCoins
+        self.signingBonusCoins = signingBonusCoins
+        self.totalEarnedCoins = totalEarnedCoins
         self.pendingCoins = pendingCoins
+        self.gameplayRewardState = gameplayRewardState
+        self.signingBonusState = signingBonusState
         self.personalBest = personalBest
         self.isNewPersonalBest = isNewPersonalBest
         self.rewardedAdOffer = rewardedAdOffer
@@ -535,6 +555,15 @@ struct RunResultsPresentation: Equatable, Sendable {
 
     var score: Int { completedRun.score }
     var statistics: RunStatisticsSnapshot { completedRun.statistics }
+
+    /// Compatibility projection for the existing Results surface. Rewarded-ad
+    /// credits remain exclusively in `rewardedAdOffer` and are never included.
+    var earnedCoins: Int64 { totalEarnedCoins }
+}
+
+enum RunResultsLedgerState: Equatable, Sendable {
+    case pending
+    case recorded
 }
 
 enum RewardedAdOfferPresentation: Equatable, Sendable {

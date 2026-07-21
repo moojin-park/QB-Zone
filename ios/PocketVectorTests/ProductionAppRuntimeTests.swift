@@ -883,7 +883,7 @@ final class ProductionAppRuntimeTests: XCTestCase, @unchecked Sendable {
                 settleCompletedRun: { run in
                     var settledState = initialState
                     settledState.personalBest = run.score
-                    settledState.pendingCoins = 28
+                    settledState.pendingCoins = 33
                     return .settled(
                         authoritativeSnapshot: self.runtimeSnapshot(
                             state: settledState,
@@ -1269,8 +1269,14 @@ final class ProductionAppRuntimeTests: XCTestCase, @unchecked Sendable {
     private func runtimeResults(for run: CompletedRun) -> RunResultsPresentation {
         RunResultsPresentation(
             completedRun: run,
-            earnedCoins: 28,
-            pendingCoins: 28,
+            completionCoins: 10,
+            performanceCoins: 18,
+            accuracyCoins: 5,
+            signingBonusCoins: 0,
+            totalEarnedCoins: 33,
+            pendingCoins: 33,
+            gameplayRewardState: .pending,
+            signingBonusState: nil,
             personalBest: run.score,
             isNewPersonalBest: true,
             rewardedAdOffer: .progress(validRuns: 1, requiredRuns: 5)

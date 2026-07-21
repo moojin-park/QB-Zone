@@ -8,6 +8,7 @@ struct GameRootView: View {
     let settings: PlayerSettings
     let abandonRequestID: Int
     let resumeRequestID: Int
+    let freezesPresentation: Bool
     let onGameplaySnapshotChanged: @MainActor (GameplaySceneSnapshot) -> Void
 
     @StateObject private var sceneHost: GameplaySceneHost
@@ -17,6 +18,7 @@ struct GameRootView: View {
         settings: PlayerSettings,
         abandonRequestID: Int,
         resumeRequestID: Int = 0,
+        freezesPresentation: Bool = false,
         onCompletedRun: @escaping @MainActor (CompletedRun) -> Void,
         onGameplaySnapshotChanged: @escaping @MainActor (GameplaySceneSnapshot) -> Void = { _ in }
     ) {
@@ -24,6 +26,7 @@ struct GameRootView: View {
         self.settings = settings
         self.abandonRequestID = abandonRequestID
         self.resumeRequestID = resumeRequestID
+        self.freezesPresentation = freezesPresentation
         self.onGameplaySnapshotChanged = onGameplaySnapshotChanged
         _sceneHost = StateObject(
             wrappedValue: GameplaySceneHost(
@@ -39,6 +42,7 @@ struct GameRootView: View {
     var body: some View {
         SpriteView(
             scene: sceneHost.scene,
+            isPaused: freezesPresentation,
             preferredFramesPerSecond: 60,
             options: [.ignoresSiblingOrder]
         )
@@ -48,6 +52,8 @@ struct GameRootView: View {
         .background(CabinetPalette.void.ignoresSafeArea())
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
+        .allowsHitTesting(!freezesPresentation)
+        .accessibilityHidden(freezesPresentation)
         .onAppear {
             sceneHost.bridge.mountSnapshotPresentation(onGameplaySnapshotChanged)
         }

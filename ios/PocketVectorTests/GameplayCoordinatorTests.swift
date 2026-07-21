@@ -8,7 +8,7 @@ final class GameplayCoordinatorTests: XCTestCase {
     func testNaturalCompletionUsesAuthoritativeStateAndResults() async throws {
         var receivedRuns: [CompletedRun] = []
         var authoritativeState = AppCoordinatorState.launchDefault()
-        authoritativeState.confirmedCoins = 28
+        authoritativeState.confirmedCoins = 29
         authoritativeState.personalBest = 14_000
 
         let coordinator = AppCoordinator(
@@ -39,7 +39,7 @@ final class GameplayCoordinatorTests: XCTestCase {
             return XCTFail("Expected authoritative results navigation")
         }
         XCTAssertEqual(results.completedRun, run)
-        XCTAssertEqual(results.earnedCoins, 28)
+        XCTAssertEqual(results.totalEarnedCoins, 29)
     }
 
     @MainActor
@@ -383,8 +383,14 @@ final class GameplayCoordinatorTests: XCTestCase {
     ) -> RunResultsPresentation {
         RunResultsPresentation(
             completedRun: run,
-            earnedCoins: 28,
-            pendingCoins: state.pendingCoins,
+            completionCoins: 10,
+            performanceCoins: 14,
+            accuracyCoins: 5,
+            signingBonusCoins: 0,
+            totalEarnedCoins: 29,
+            pendingCoins: state.pendingCoins > 0 ? 29 : 0,
+            gameplayRewardState: state.pendingCoins > 0 ? .pending : .recorded,
+            signingBonusState: nil,
             personalBest: state.personalBest,
             isNewPersonalBest: true,
             rewardedAdOffer: .progress(validRuns: 1, requiredRuns: 5)

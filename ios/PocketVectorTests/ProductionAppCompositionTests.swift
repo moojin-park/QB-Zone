@@ -455,8 +455,14 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
         guard case let .runResults(firstResults) = coordinator.currentDestination else {
             return XCTFail("Expected persisted run results")
         }
-        XCTAssertEqual(firstResults.earnedCoins, 277)
+        XCTAssertEqual(firstResults.completionCoins, 10)
+        XCTAssertEqual(firstResults.performanceCoins, 12)
+        XCTAssertEqual(firstResults.accuracyCoins, 5)
+        XCTAssertEqual(firstResults.signingBonusCoins, 250)
+        XCTAssertEqual(firstResults.totalEarnedCoins, 277)
         XCTAssertEqual(firstResults.pendingCoins, 277)
+        XCTAssertEqual(firstResults.gameplayRewardState, .pending)
+        XCTAssertEqual(firstResults.signingBonusState, .pending)
         XCTAssertEqual(firstResults.personalBest, run.score)
         XCTAssertTrue(firstResults.isNewPersonalBest)
         XCTAssertFalse(firstResults.achievementUpdates.isEmpty)
@@ -479,6 +485,327 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(duplicateResults, firstResults)
         XCTAssertEqual(duplicateSnapshot.state.pendingCoins, 277)
         XCTAssertEqual(duplicateSnapshot.state.confirmedCoins, 0)
+    }
+
+    @MainActor
+    func testRunResultsPendingStateIgnoresUnrelatedProfileCredits() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let account = PlayerAccountIdentity("results-pending-scope-account")
+        let deviceID = "results-pending-scope-device"
+        let date = Date(timeIntervalSince1970: 35_000)
+        try seedPendingCoinProfile(
+            root: root,
+            account: account,
+            deviceID: deviceID,
+            profileID: fixedUUID(450),
+            date: date
+        )
+        let clock = TestClock(date.addingTimeInterval(10))
+        let coordinator = AppCoordinator(
+            environment: makeEnvironment(
+                root: root,
+                account: account,
+                deviceID: deviceID,
+                sessionNonce: fixedUUID(451),
+                newProfileID: fixedUUID(452),
+                clock: clock,
+                runID: fixedRunID(453)
+            )
+        )
+        await coordinator.bootstrap()
+        let configuration = try await launchConfiguration(from: coordinator)
+        let run = makeNaturalRun(configuration: configuration)
+        clock.date = run.endedAt.addingTimeInterval(1)
+
+        await coordinator.handleCompletedRun(run)
+
+        guard case let .runResults(results) = coordinator.currentDestination else {
+            return XCTFail("Expected authoritative run results")
+        }
+        XCTAssertEqual(results.totalEarnedCoins, 277)
+        XCTAssertEqual(results.pendingCoins, 277)
+        XCTAssertEqual(results.gameplayRewardState, .pending)
+        XCTAssertEqual(results.signingBonusState, .pending)
+        XCTAssertEqual(coordinator.state.pendingCoins, 2_527)
+    }
+
+    @MainActor
+    func testLaterSettlementDoesNotReExposeAccountSigningBonus() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let clock = TestClock(Date(timeIntervalSince1970: 35_500))
+        var nextRunNumber = 470
+        let composition = ProductionAppComposition(
+            dependencies: ProductionAppDependencies(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: .local,
+                deviceID: "results-second-run-device",
+                sessionNonce: fixedUUID(470),
+                newProfileID: fixedUUID(471),
+                now: { clock.date },
+                makeRunID: {
+                    defer { nextRunNumber += 1 }
+                    return self.fixedRunID(nextRunNumber)
+                },
+                makeSeed: { UInt32(nextRunNumber) }
+            )
+        )
+        let coordinator = AppCoordinator(environment: composition.environment)
+        await coordinator.bootstrap()
+
+        let firstConfiguration = try await launchConfiguration(from: coordinator)
+        let firstRun = makeNaturalRun(configuration: firstConfiguration)
+        clock.date = firstRun.endedAt.addingTimeInterval(1)
+        await coordinator.handleCompletedRun(firstRun)
+        guard case let .runResults(firstResults) = coordinator.currentDestination else {
+            return XCTFail("Expected first run results")
+        }
+        XCTAssertEqual(firstResults.signingBonusCoins, 250)
+        XCTAssertEqual(firstResults.signingBonusState, .pending)
+
+        coordinator.replayAfterResults()
+        guard case let .gameplay(secondConfiguration) = coordinator.currentDestination else {
+            return XCTFail("Expected replay gameplay")
+        }
+        let secondRun = makeNaturalRun(configuration: secondConfiguration)
+        clock.date = secondRun.endedAt.addingTimeInterval(1)
+        await coordinator.handleCompletedRun(secondRun)
+        guard case let .runResults(secondResults) = coordinator.currentDestination else {
+            return XCTFail("Expected second run results")
+        }
+
+        XCTAssertEqual(secondResults.completionCoins, 10)
+        XCTAssertEqual(secondResults.performanceCoins, 12)
+        XCTAssertEqual(secondResults.accuracyCoins, 5)
+        XCTAssertEqual(secondResults.signingBonusCoins, 0)
+        XCTAssertEqual(secondResults.totalEarnedCoins, 27)
+        XCTAssertEqual(secondResults.pendingCoins, 27)
+        XCTAssertEqual(secondResults.gameplayRewardState, .pending)
+        XCTAssertNil(secondResults.signingBonusState)
+        XCTAssertEqual(coordinator.state.pendingCoins, 304)
+    }
+
+    @MainActor
+    func testDuplicateSettlementReflectsExactRecordedLedgerStatesWithoutRecredit() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let account = PlayerAccountIdentity("results-recorded-account")
+        let deviceID = "results-recorded-device"
+        let sessionNonce = fixedUUID(480)
+        let clock = TestClock(Date(timeIntervalSince1970: 36_500))
+        let repository = LocalPlayerProfileRepository(
+            directoryURL: ProductionAppComposition.profileDirectoryURL(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: account
+            ),
+            deviceID: deviceID,
+            accountIdentity: account,
+            sessionNonce: sessionNonce,
+            economyMutationPolicy: .allowLocalTesting
+        )
+        let composition = ProductionAppComposition(
+            dependencies: ProductionAppDependencies(
+                applicationSupportDirectoryURL: root,
+                accountIdentity: account,
+                deviceID: deviceID,
+                sessionNonce: sessionNonce,
+                newProfileID: fixedUUID(481),
+                now: { clock.date },
+                makeRunID: { self.fixedRunID(482) },
+                makeSeed: { 482 }
+            ),
+            repository: repository
+        )
+        let environment = composition.environment
+        let coordinator = AppCoordinator(environment: environment)
+        await coordinator.bootstrap()
+        let configuration = try await launchConfiguration(from: coordinator)
+        let run = makeNaturalRun(configuration: configuration)
+        clock.date = run.endedAt.addingTimeInterval(1)
+        await coordinator.handleCompletedRun(run)
+        guard case let .runResults(pendingResults) = coordinator.currentDestination else {
+            return XCTFail("Expected pending first results")
+        }
+        XCTAssertEqual(pendingResults.pendingCoins, 277)
+
+        let pendingSnapshot = try await repository.snapshot()
+        let exactEntryIDs = Set(
+            [
+                CoinLedgerID.gameplay(runID: run.runID),
+                CoinLedgerID.signingBonus(
+                    version: PersistedEconomyRulesV1.signingBonusVersion
+                ),
+            ]
+        )
+        let exactEntries = Dictionary(
+            uniqueKeysWithValues: try exactEntryIDs.map { entryID in
+                (entryID, try XCTUnwrap(pendingSnapshot.ledger[entryID]))
+            }
+        )
+        let confirmationDate = clock.date.addingTimeInterval(1)
+        let confirmation = DurableEconomyConfirmation(
+            confirmationID: OperationID("results-recorded-confirmation"),
+            session: pendingSnapshot.session,
+            entries: exactEntries,
+            expectedEconomyRevision: pendingSnapshot.economyRevision,
+            confirmedBalanceBefore: pendingSnapshot.coinBalances.confirmed,
+            confirmedAt: confirmationDate,
+            authority: .localTest
+        )
+        _ = try await repository.confirmPendingCredits(
+            exactEntryIDs,
+            session: pendingSnapshot.session,
+            confirmation: confirmation,
+            savedAt: confirmationDate
+        )
+        clock.date = confirmationDate.addingTimeInterval(1)
+
+        let duplicate = try XCTUnwrap(environment.settleCompletedRun)
+        let duplicateResult = await duplicate(run)
+        guard case let .settled(snapshot, recordedResults?) = duplicateResult else {
+            return XCTFail("Expected duplicate settlement to return recorded results")
+        }
+
+        XCTAssertEqual(recordedResults.completionCoins, pendingResults.completionCoins)
+        XCTAssertEqual(recordedResults.performanceCoins, pendingResults.performanceCoins)
+        XCTAssertEqual(recordedResults.accuracyCoins, pendingResults.accuracyCoins)
+        XCTAssertEqual(recordedResults.signingBonusCoins, pendingResults.signingBonusCoins)
+        XCTAssertEqual(recordedResults.totalEarnedCoins, pendingResults.totalEarnedCoins)
+        XCTAssertEqual(recordedResults.pendingCoins, 0)
+        XCTAssertEqual(recordedResults.gameplayRewardState, .recorded)
+        XCTAssertEqual(recordedResults.signingBonusState, .recorded)
+        XCTAssertEqual(snapshot.state.confirmedCoins, 277)
+        XCTAssertEqual(snapshot.state.pendingCoins, 0)
+    }
+
+    @MainActor
+    func testRunResultsCoinProjectionUsesOnlyReceiptLedgerEntries() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let clock = TestClock(Date(timeIntervalSince1970: 36_000))
+        let coordinator = AppCoordinator(
+            environment: makeEnvironment(
+                root: root,
+                account: .local,
+                deviceID: "results-projection-device",
+                sessionNonce: fixedUUID(460),
+                newProfileID: fixedUUID(461),
+                clock: clock,
+                runID: fixedRunID(462)
+            )
+        )
+        await coordinator.bootstrap()
+        let configuration = try await launchConfiguration(from: coordinator)
+        let run = makeNaturalRun(configuration: configuration)
+        let recordedAt = run.endedAt.addingTimeInterval(1)
+        let gameplayID = CoinLedgerID.gameplay(runID: run.runID)
+        let signingID = CoinLedgerID.signingBonus(
+            version: PersistedEconomyRulesV1.signingBonusVersion
+        )
+        let adTransactionID = AdProviderTransactionID("results-unrelated-ad")
+        let adID = CoinLedgerID.rewardedAd(providerTransactionID: adTransactionID)
+        let ledger = [
+            gameplayID: CoinLedgerEntry(
+                id: gameplayID,
+                delta: 27,
+                reason: .gameplay(runID: run.runID, economyVersion: 1),
+                createdAt: recordedAt
+            ),
+            signingID: CoinLedgerEntry(
+                id: signingID,
+                delta: 250,
+                reason: .signingBonus(version: 1),
+                createdAt: PersistedEconomyRulesV1.signingBonusLedgerCreatedAt
+            ),
+            adID: CoinLedgerEntry(
+                id: adID,
+                delta: 100,
+                reason: .rewardedAd(
+                    offerID: RewardOfferID("results-unrelated-offer"),
+                    providerTransactionID: adTransactionID
+                ),
+                createdAt: recordedAt
+            ),
+        ]
+        let snapshot = replacing(
+            makeRepositorySnapshot(playerRevision: 1, economyRevision: 1),
+            coinBalances: CoinBalanceSummary(confirmed: 250, pending: 127),
+            ledger: ledger,
+            pendingLedgerEntryIDs: [gameplayID, adID]
+        )
+        let outcome = RunSettlementOutcome(
+            record: CompletedRunRecord(
+                run: run,
+                recordedAt: recordedAt,
+                rewardCoins: 27
+            ),
+            gameplayRewardEntryID: gameplayID,
+            signingBonusEntryID: signingID,
+            achievementUpdates: [],
+            rewardedOfferUnlocked: nil,
+            resultingPersonalBest: run.score
+        )
+
+        let projection = try RunResultsCoinProjection.make(
+            settlement: RunSettlementResult(outcome: outcome, wasAlreadySettled: false),
+            snapshot: snapshot
+        )
+
+        XCTAssertEqual(projection.completionCoins, 10)
+        XCTAssertEqual(projection.performanceCoins, 12)
+        XCTAssertEqual(projection.accuracyCoins, 5)
+        XCTAssertEqual(projection.signingBonusCoins, 250)
+        XCTAssertEqual(projection.totalEarnedCoins, 277)
+        XCTAssertEqual(projection.pendingCoins, 27)
+        XCTAssertEqual(projection.gameplayRewardState, .pending)
+        XCTAssertEqual(projection.signingBonusState, .recorded)
+
+        let laterOutcome = RunSettlementOutcome(
+            record: outcome.record,
+            gameplayRewardEntryID: gameplayID,
+            signingBonusEntryID: nil,
+            achievementUpdates: [],
+            rewardedOfferUnlocked: nil,
+            resultingPersonalBest: run.score
+        )
+        let laterProjection = try RunResultsCoinProjection.make(
+            settlement: RunSettlementResult(
+                outcome: laterOutcome,
+                wasAlreadySettled: false
+            ),
+            snapshot: snapshot
+        )
+        XCTAssertEqual(laterProjection.signingBonusCoins, 0)
+        XCTAssertNil(laterProjection.signingBonusState)
+        XCTAssertEqual(laterProjection.totalEarnedCoins, 27)
+        XCTAssertEqual(laterProjection.pendingCoins, 27)
+
+        var invalidLedger = ledger
+        invalidLedger[gameplayID] = CoinLedgerEntry(
+            id: gameplayID,
+            delta: 27,
+            reason: .storeKit(transactionID: 99, packID: CoinPackID("pocket")),
+            createdAt: recordedAt
+        )
+        let invalidSnapshot = replacing(
+            snapshot,
+            ledger: invalidLedger
+        )
+        XCTAssertThrowsError(
+            try RunResultsCoinProjection.make(
+                settlement: RunSettlementResult(
+                    outcome: outcome,
+                    wasAlreadySettled: false
+                ),
+                snapshot: invalidSnapshot
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? ProductionAppCompositionError,
+                .authoritativeLedgerEntryInvalid
+            )
+        }
     }
 
     @MainActor
@@ -920,6 +1247,7 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
         syncStatus: ProfileSyncStatus? = nil,
         coinBalances: CoinBalanceSummary? = nil,
         ledger: [LedgerEntryID: CoinLedgerEntry]? = nil,
+        pendingLedgerEntryIDs: Set<LedgerEntryID>? = nil,
         rewardedRunObservations: [RunID: RewardedRunObservation]? = nil
     ) -> LocalPlayerProfileSnapshot {
         let resolvedBalances = coinBalances ?? snapshot.coinBalances
@@ -941,7 +1269,8 @@ final class ProductionAppCompositionTests: XCTestCase, @unchecked Sendable {
             coinBalances: resolvedBalances,
             completedRuns: snapshot.completedRuns,
             ledger: ledger ?? snapshot.ledger,
-            pendingLedgerEntryIDs: snapshot.pendingLedgerEntryIDs,
+            pendingLedgerEntryIDs:
+                pendingLedgerEntryIDs ?? snapshot.pendingLedgerEntryIDs,
             rewardedRunObservations:
                 rewardedRunObservations ?? snapshot.rewardedRunObservations
         )

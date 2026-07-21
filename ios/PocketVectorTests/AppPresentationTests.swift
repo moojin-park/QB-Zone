@@ -355,8 +355,14 @@ final class AppPresentationTests: XCTestCase {
         )
         return RunResultsPresentation(
             completedRun: completedRun,
-            earnedCoins: 320,
+            completionCoins: 10,
+            performanceCoins: 12,
+            accuracyCoins: 5,
+            signingBonusCoins: 250,
+            totalEarnedCoins: 277,
             pendingCoins: 0,
+            gameplayRewardState: .recorded,
+            signingBonusState: .recorded,
             personalBest: 12_500,
             isNewPersonalBest: true,
             rewardedAdOffer: .progress(validRuns: 2, requiredRuns: 5)
