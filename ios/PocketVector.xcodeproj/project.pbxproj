@@ -993,6 +993,7 @@
 				CODE_SIGN_ENTITLEMENTS = PocketVector/PocketVector.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RBMXD4NS89;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketVector/Info.plist;
@@ -1021,6 +1022,7 @@
 				CODE_SIGN_ENTITLEMENTS = PocketVector/PocketVector.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = RBMXD4NS89;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketVector/Info.plist;
