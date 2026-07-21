@@ -255,6 +255,21 @@ in the game and an immediate second deliberate swipe exited. Independent review
 found one system-UI forwarding issue before acceptance; it was fixed and covered
 by the final root-containment regression, with no remaining P0-P3 finding.
 
+The Technical cinematic-presentation handoff `e1f4d94` (`Add countdown
+cinematic letterbox`) is integrated with full ancestry from shared baseline
+`d57714e`. Equal responsive black bars ease from zero to their completed height
+during the authoritative three-second countdown, remain presented through live
+play, final-ball resolution, and Pause, and clear before the retained Results
+field is shown. Reduce Motion presents the completed bars immediately. The
+field projection, actors, trajectories, scoring, and simulation remain
+unchanged; the only deliberate input delta rejects throw starts beneath the
+completed bottom bar. Two independent audits found no P0-P3 issue. The 73-test
+Technical focus and exact 879-test integrated simulator suite passed. PM live
+inspection passed compact-iPhone, regular-iPhone, and iPad active frames, the
+regular-iPhone standard countdown, and the retained Results field with the bars
+removed. Final Art-owned visual acceptance of the complete standard-motion,
+Reduce Motion, Pause, and Results sequence remains pending.
+
 The dormant StoreKit runtime foundation is versioned at `ce69388` (`Add dormant
 StoreKit runtime coordination`), player-scoped Game Center persistence and
 delivery at `9d749bc` (`Add player-scoped Game Center delivery`), the dormant
@@ -376,6 +391,7 @@ final codesigned entitlement payload; that remains a release-candidate gate.
 | Paused gameplay presentation                    | In progress         | Refined Art panel and Technical/PM snapshot, Resume, and confirmed-exit actions are integrated and pass combined tests; compact-iPhone, regular-iPhone, and iPad landscape visual approval remains |
 | Layered team-field assets                       | In progress         | Registered neutral, universal-marking, and eight-team paint layers are bundled and actively rendered in exact order; multi-device gameplay visual approval remains |
 | Scorebug reaction presentation                  | In progress         | Semantic one/two-line reactions, responsive geometry, reduced motion, lifecycle, and VoiceOver behavior pass automated gates; integrated-device Art visual approval remains |
+| Cinematic gameplay framing                      | In progress         | Technical's responsive countdown-to-gameplay letterbox is integrated and passes focused, full-suite, and PM multi-device live inspection; final Art sequence approval remains |
 | Eight-team presentation system                  | In progress         | Eight approved emblems, fields, and baked primary/alternate character sets are bundled and actively routed without palette projection; compact and wide gameplay visual approval remains |
 | Live Apple and advertising services             | In progress         | Cloud claim/hydration and online-only StoreKit composition are implemented and fail closed without complete configuration; permanent IDs, products, records, production schema, Game Center retention, authenticated ad transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
@@ -543,6 +559,9 @@ or runtime ownership boundaries.
 | 2026-07-21 | `d7d3eeb` | Physical Face ID root-gesture acceptance | On `Snow J` (iPhone 17 Pro Max, iOS 26.5.2), the final UIKit-root arrangement kept active gameplay open after the first upward Home swipe and allowed the immediate second deliberate swipe to exit. The SwiftUI/SpriteKit hierarchy and existing `GameScene` remained retained; no gameplay input, scoring, or simulation code changed |
 | 2026-07-21 | `d7d3eeb` | Final root-container simulator gates | Final containment/system-UI focused regression passed 1 of 1; complete suite passed 875 total: 874 passed, 0 failed, 1 existing conditional case-alias filesystem skip at `/Users/andypark/Library/Developer/Xcode/DerivedData/PocketVector-gzonknuffecczwcjjrtxgwzvubqz/Logs/Test/Test-PocketVector-2026.07.21_11-09-53--0700.xcresult`. Independent review's one P2 forwarding finding was fixed before acceptance, leaving no P0-P3 finding |
 | 2026-07-21 | `d7d3eeb` | Final root-container unsigned Release archive | Passed at `/tmp/PocketVector-RootGestureContainer-20260721.xcarchive`; generic arm64 iOS Release compiled with signing disabled. Final codesigned distribution-entitlement proof remains pending |
+| 2026-07-21 | `e1f4d94` | Technical cinematic framing integration | Technical commit `e1f4d943600c369146f935f16ef9550814359ada` fast-forwarded from exact shared baseline `d57714e`; all six production/documentation paths are Technical-owned and the two shared tests correspond to those paths. Ancestry, ownership, clean-worktree, diff-hygiene, and two independent audits passed with no P0-P3 finding |
+| 2026-07-21 | `e1f4d94` | Cinematic focused and full simulator gates | GameCore and GameplaySession focus passed 73 tests with 0 failures; exact integrated suite passed 879 total: 878 passed, 0 failed, 1 existing conditional case-alias filesystem skip at `/tmp/PocketVector-Cinematic-e1f4d94-full.xcresult`. This runtime-only Technical wave changed no resource, capability, app-composition, or Release configuration path, so no additional archive was required |
+| 2026-07-21 | `e1f4d94` | Cinematic multi-device PM visual gate | Compact-iPhone, regular-iPhone, and iPad active gameplay frames passed inspection; regular-iPhone standard countdown captures at `2` and `1` showed progressive bars, and the retained Results capture showed the bars removed. Evidence: `/tmp/PocketVector-Cinematic-e1f4d94-compact-active-landscape.png`, `/tmp/PocketVector-Cinematic-e1f4d94-regular-active-landscape.png`, `/tmp/PocketVector-Cinematic-e1f4d94-ipad-active-landscape.png`, `/tmp/PocketVector-Cinematic-e1f4d94-regular-countdown-2.png`, `/tmp/PocketVector-Cinematic-e1f4d94-regular-countdown-1.png`, and `/tmp/PocketVector-Cinematic-e1f4d94-regular-results.png`; final Art sequence approval remains pending |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
