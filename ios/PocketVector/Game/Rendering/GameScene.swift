@@ -111,7 +111,6 @@ final class GameScene: SKScene {
     private var previousUpdateTime: TimeInterval?
     private var accumulatedMilliseconds: CGFloat = 0
     private var renderedPhase: GamePhase?
-    private var lastCountdownValue = 3
     private var applicationIsActive = true
     private var viewport = GameViewport.canonical
     private var stageIsBuilt = false
@@ -145,7 +144,7 @@ final class GameScene: SKScene {
     private let aimMarkerNode = SKShapeNode()
 
     private var activeSamples: [TouchSample] = []
-    private var isAiming = false
+    private(set) var isAiming = false
 
     #if DEBUG
     private var hudPreviewState: GameState?
@@ -371,6 +370,11 @@ final class GameScene: SKScene {
     }
 
     var currentSnapshot: GameplaySceneSnapshot { session.snapshot }
+    var isGameplayMusicPlaying: Bool { audio.isMusicPlaying }
+
+    func isAudioCuePlaying(_ cue: GameAudioCue) -> Bool {
+        audio.isPlaying(cue)
+    }
 
     /// Resumes only an already-paused active run. Repeated requests are inert.
     @discardableResult
@@ -462,20 +466,9 @@ final class GameScene: SKScene {
         let step = session.advance(deltaMilliseconds: deltaMilliseconds, endedAt: now())
         let result = step.update
 
-        if phaseBefore == .countdown {
-            if session.state.phase == .countdown {
-                let countdownValue = max(
-                    1,
-                    Int(ceil(Double(session.state.countdownRemainingMilliseconds / 1_000)))
-                )
-                if countdownValue != lastCountdownValue {
-                    lastCountdownValue = countdownValue
-                    audio.play(.countdown)
-                }
-            } else if session.state.phase == .playing {
-                audio.startMusic()
-                audio.play(.snap)
-            }
+        if phaseBefore == .countdown, session.state.phase == .playing {
+            audio.startMusic()
+            audio.play(.snap)
         }
 
         if phaseBefore == .playing,
@@ -772,9 +765,6 @@ final class GameScene: SKScene {
             return
         }
         #endif
-        if applicationIsActive {
-            audio.play(.countdown)
-        }
         renderFrame()
     }
 

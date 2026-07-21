@@ -48,7 +48,8 @@ struct GameplaySceneSnapshot: Equatable, Sendable {
 
     init(state: GameState) {
         isPaused = state.phase == .paused
-        defersBottomSystemGestures = state.phase == .playing
+        defersBottomSystemGestures = state.phase == .countdown
+            || state.phase == .playing
             || state.phase == .resolvingFinalBall
         statistics = LiveGameplayStatisticsSnapshot(statistics: state.statistics)
     }
