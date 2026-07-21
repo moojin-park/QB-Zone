@@ -42,6 +42,7 @@ final class GameplaySessionTests: XCTestCase {
         let snapshot = GameplaySceneSnapshot(state: state)
 
         XCTAssertTrue(snapshot.isPaused)
+        XCTAssertFalse(snapshot.defersBottomSystemGestures)
         XCTAssertEqual(snapshot.statistics.attempts, 7)
         XCTAssertEqual(snapshot.statistics.successfulCompletions, 5)
         XCTAssertEqual(snapshot.statistics.completionPercentage, 71)
@@ -82,6 +83,46 @@ final class GameplaySessionTests: XCTestCase {
         XCTAssertEqual(statisticsChanged.statistics.successfulCompletions, 2)
         XCTAssertEqual(statisticsChanged.statistics.completionPercentage, 100)
         XCTAssertFalse(gate.accept(statisticsChanged))
+    }
+
+    func testSnapshotDefersBottomSystemGesturesOnlyDuringActivePlay() {
+        let expectations: [(phase: GamePhase, defers: Bool)] = [
+            (.title, false),
+            (.countdown, false),
+            (.playing, true),
+            (.resolvingFinalBall, true),
+            (.paused, false),
+            (.results, false),
+        ]
+
+        for expectation in expectations {
+            var state = GameState()
+            state.phase = expectation.phase
+            XCTAssertEqual(
+                GameplaySceneSnapshot(state: state).defersBottomSystemGestures,
+                expectation.defers,
+                "Unexpected bottom-edge deferral for \(expectation.phase)"
+            )
+        }
+    }
+
+    func testSnapshotPublicationGatePublishesLivePlayDeferralTransitions() {
+        var gate = GameplaySnapshotPublicationGate()
+        var state = GameState()
+        state.phase = .countdown
+
+        XCTAssertTrue(gate.accept(GameplaySceneSnapshot(state: state)))
+        state.phase = .playing
+        XCTAssertTrue(gate.accept(GameplaySceneSnapshot(state: state)))
+        XCTAssertFalse(gate.accept(GameplaySceneSnapshot(state: state)))
+        state.phase = .paused
+        XCTAssertTrue(gate.accept(GameplaySceneSnapshot(state: state)))
+        state.phase = .playing
+        XCTAssertTrue(gate.accept(GameplaySceneSnapshot(state: state)))
+        state.phase = .resolvingFinalBall
+        XCTAssertFalse(gate.accept(GameplaySceneSnapshot(state: state)))
+        state.phase = .results
+        XCTAssertTrue(gate.accept(GameplaySceneSnapshot(state: state)))
     }
 
     func testExplicitPauseAndResumeAreIdempotent() {
@@ -395,10 +436,15 @@ final class GameplaySessionTests: XCTestCase {
         for step in 1 ... 31 {
             scene.update(TimeInterval(step) / 10)
         }
+        XCTAssertEqual(snapshots.map(\.defersBottomSystemGestures), [false, true])
 
         XCTAssertTrue(scene.pause())
         XCTAssertTrue(scene.currentSnapshot.isPaused)
-        XCTAssertEqual(snapshots.map(\.isPaused), [false, true])
+        XCTAssertEqual(snapshots.map(\.isPaused), [false, false, true])
+        XCTAssertEqual(
+            snapshots.map(\.defersBottomSystemGestures),
+            [false, true, false]
+        )
         let pausedPublicationCount = snapshots.count
         XCTAssertFalse(scene.pause())
         XCTAssertEqual(snapshots.count, pausedPublicationCount)
@@ -412,10 +458,64 @@ final class GameplaySessionTests: XCTestCase {
 
         XCTAssertTrue(scene.resume())
         XCTAssertFalse(scene.currentSnapshot.isPaused)
-        XCTAssertEqual(snapshots.map(\.isPaused), [false, true, false])
+        XCTAssertEqual(snapshots.map(\.isPaused), [false, false, true, false])
+        XCTAssertEqual(
+            snapshots.map(\.defersBottomSystemGestures),
+            [false, true, false, true]
+        )
         let resumedPublicationCount = snapshots.count
         XCTAssertFalse(scene.resume())
         XCTAssertEqual(snapshots.count, resumedPublicationCount)
+
+        scene.willMove(from: view)
+    }
+
+    @MainActor
+    func testMountedSceneComposesWideThrowBandWithHUDExclusions() throws {
+        let configuration = makeConfiguration(seed: 810)
+        let scene = GameScene(
+            size: GameProjection.sceneSize,
+            configuration: configuration,
+            settings: PlayerSettings(isMuted: true, reducedMotion: true),
+            onCompletedRun: { _ in }
+        )
+        let view = SKView(frame: CGRect(origin: .zero, size: GameProjection.sceneSize))
+
+        scene.didMove(to: view)
+        let hud = try XCTUnwrap(
+            scene.childNode(withName: "broadcastHUD") as? BroadcastHUDNode
+        )
+
+        XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 300, y: 200)))
+        XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 700, y: 200)))
+        XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 512, y: 225)))
+        XCTAssertFalse(scene.containsThrowActivationPoint(CGPoint(x: 512, y: 225.001)))
+        XCTAssertFalse(
+            scene.containsThrowActivationPoint(
+                CGPoint(x: hud.muteHitFrame.midX, y: hud.muteHitFrame.midY)
+            )
+        )
+        XCTAssertFalse(
+            scene.containsThrowActivationPoint(
+                CGPoint(x: hud.pauseHitFrame.midX, y: hud.pauseHitFrame.midY)
+            )
+        )
+        XCTAssertFalse(
+            scene.containsThrowActivationPoint(
+                CGPoint(
+                    x: hud.layout.scorePlateFrame.midX,
+                    y: hud.layout.scorePlateFrame.midY
+                )
+            )
+        )
+        XCTAssertFalse(
+            scene.containsThrowActivationPoint(
+                CGPoint(
+                    x: hud.layout.feedbackTwoLineFrame.midX,
+                    y: hud.layout.feedbackTwoLineFrame.midY
+                )
+            )
+        )
 
         scene.willMove(from: view)
     }

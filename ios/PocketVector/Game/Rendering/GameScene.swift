@@ -221,7 +221,7 @@ final class GameScene: SKScene {
                 return
             }
             guard session.canThrow,
-                  projection.isPointOnQuarterback(point),
+                  containsThrowActivationPoint(point),
                   let initialSample else { return }
             isAiming = true
             activeSamples = [initialSample]
@@ -229,6 +229,18 @@ final class GameScene: SKScene {
         case .countdown:
             break
         }
+    }
+
+    /// Composes viewport-safe activation geometry with every lower-HUD
+    /// exclusion. Control actions retain priority in `handlePrimaryInputBegan`.
+    func containsThrowActivationPoint(_ point: CGPoint) -> Bool {
+        guard viewport.containsThrowActivationPoint(point),
+              broadcastHUD?.containsMuteControl(point) != true,
+              broadcastHUD?.containsPauseControl(point) != true,
+              broadcastHUD?.containsScoreReactionSurface(point) != true else {
+            return false
+        }
+        return true
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {

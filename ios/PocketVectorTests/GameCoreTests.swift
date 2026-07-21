@@ -475,12 +475,57 @@ final class GameCoreTests: XCTestCase {
     }
   }
 
-  func testQuarterbackHitTargetFollowsTheViewportCenter() {
-    let projection = GameProjection(viewportWidth: 1_664)
+  func testThrowActivationBandSpansSafeWidthThroughLogicalY225() {
+    let configurations = [
+      GameViewport.canonical,
+      GameViewport(
+        viewSize: CGSize(width: 832, height: 384),
+        safeAreaInsets: GameSafeAreaInsets(top: 0, left: 59, bottom: 21, right: 59)
+      ),
+      GameViewport(
+        viewSize: CGSize(width: 932, height: 430),
+        safeAreaInsets: GameSafeAreaInsets(top: 0, left: 62, bottom: 21, right: 62)
+      ),
+      GameViewport(
+        viewSize: CGSize(width: 1_366, height: 1_024),
+        safeAreaInsets: GameSafeAreaInsets(top: 0, left: 0, bottom: 20, right: 0)
+      ),
+    ]
 
-    XCTAssertEqual(projection.quarterbackHitFrame.midX, projection.centerX, accuracy: 0.000_001)
-    XCTAssertTrue(projection.isPointOnQuarterback(CGPoint(x: projection.centerX, y: 100)))
-    XCTAssertFalse(projection.isPointOnQuarterback(CGPoint(x: projection.centerX + 141, y: 100)))
+    for viewport in configurations {
+      let frame = viewport.throwActivationFrame
+      XCTAssertEqual(frame.minX, viewport.safeSceneFrame.minX, accuracy: 0.000_001)
+      XCTAssertEqual(frame.maxX, viewport.safeSceneFrame.maxX, accuracy: 0.000_001)
+      XCTAssertEqual(frame.minY, viewport.safeSceneFrame.minY, accuracy: 0.000_001)
+      XCTAssertEqual(frame.maxY, 225, accuracy: 0.000_001)
+      XCTAssertTrue(
+        viewport.containsThrowActivationPoint(
+          CGPoint(x: frame.minX, y: frame.midY)
+        )
+      )
+      XCTAssertTrue(
+        viewport.containsThrowActivationPoint(
+          CGPoint(x: frame.maxX, y: frame.maxY)
+        )
+      )
+      XCTAssertFalse(
+        viewport.containsThrowActivationPoint(
+          CGPoint(x: frame.midX, y: frame.maxY + 0.001)
+        )
+      )
+      XCTAssertFalse(
+        viewport.containsThrowActivationPoint(
+          CGPoint(x: frame.minX - 0.001, y: frame.midY)
+        )
+      )
+      if viewport.safeSceneFrame.minY > 0 {
+        XCTAssertFalse(
+          viewport.containsThrowActivationPoint(
+            CGPoint(x: frame.midX, y: frame.minY - 0.001)
+          )
+        )
+      }
+    }
   }
 
   func testCompactHUDStaysInsideTheSafeSceneFrame() {
@@ -1634,6 +1679,12 @@ final class GameCoreTests: XCTestCase {
     XCTAssertLessThanOrEqual(hud.muteHitFrame.maxX, hud.pauseHitFrame.minX)
     XCTAssertTrue(hud.muteHitFrame.contains(layout.muteButtonFrame.center))
     XCTAssertTrue(hud.pauseHitFrame.contains(layout.pauseButtonFrame.center))
+    XCTAssertEqual(
+      hud.scoreReactionExclusionFrame,
+      layout.scorePlateFrame.union(layout.feedbackTwoLineFrame)
+    )
+    XCTAssertTrue(hud.containsScoreReactionSurface(layout.scorePlateFrame.center))
+    XCTAssertTrue(hud.containsScoreReactionSurface(layout.feedbackTwoLineFrame.center))
   }
 
   @MainActor
