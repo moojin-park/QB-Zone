@@ -70,6 +70,15 @@ struct LegacyGameplayAdapterView: View {
         }
         .background(PocketVectorTheme.void)
         .ignoresSafeArea()
+        .defersSystemGestures(on: deferredSystemGestureEdges)
+    }
+
+    private var deferredSystemGestureEdges: Edge.Set {
+        GameplaySystemGestureDeferralPolicy.edges(
+            snapshot: gameplaySnapshot,
+            isSettling: isSettling,
+            settlementErrorMessage: settlementErrorMessage
+        )
     }
 
     private var pauseAccent: Color {
@@ -143,6 +152,22 @@ struct LegacyGameplayAdapterView: View {
             .padding(24)
         }
         .accessibilityElement(children: .contain)
+    }
+}
+
+struct GameplaySystemGestureDeferralPolicy {
+    static func edges(
+        snapshot: GameplaySceneSnapshot?,
+        isSettling: Bool,
+        settlementErrorMessage: String?
+    ) -> Edge.Set {
+        guard snapshot?.defersBottomSystemGestures == true,
+              !isSettling,
+              settlementErrorMessage == nil else {
+            return []
+        }
+
+        return .bottom
     }
 }
 

@@ -1,5 +1,6 @@
 import Foundation
 import SpriteKit
+import SwiftUI
 import UIKit
 import XCTest
 
@@ -823,6 +824,45 @@ final class LaunchVisualIdentityTests: XCTestCase {
         XCTAssertEqual(requestState.resumeRequestID, 2)
     }
 
+    func testGameplayBottomSystemGestureDeferralFollowsLivePlayTransitions() {
+        let transitions: [(
+            name: String,
+            snapshot: GameplaySceneSnapshot?,
+            isSettling: Bool,
+            settlementErrorMessage: String?,
+            expectedEdges: Edge.Set
+        )] = [
+            ("non-gameplay", nil, false, nil, []),
+            ("countdown", gameplaySnapshot(phase: .countdown), false, nil, []),
+            ("playing", gameplaySnapshot(phase: .playing), false, nil, .bottom),
+            ("paused", gameplaySnapshot(phase: .paused), false, nil, []),
+            ("resumed", gameplaySnapshot(phase: .playing), false, nil, .bottom),
+            ("settling", gameplaySnapshot(phase: .playing), true, nil, []),
+            ("settlement-error", gameplaySnapshot(phase: .playing), false, "Save failed", []),
+            ("empty-settlement-error", gameplaySnapshot(phase: .playing), false, "", []),
+            (
+                "resolving-final-ball",
+                gameplaySnapshot(phase: .resolvingFinalBall),
+                false,
+                nil,
+                .bottom
+            ),
+            ("results", gameplaySnapshot(phase: .results), false, nil, []),
+        ]
+
+        for transition in transitions {
+            XCTAssertEqual(
+                GameplaySystemGestureDeferralPolicy.edges(
+                    snapshot: transition.snapshot,
+                    isSettling: transition.isSettling,
+                    settlementErrorMessage: transition.settlementErrorMessage
+                ),
+                transition.expectedEdges,
+                "Unexpected deferred edges during \(transition.name)"
+            )
+        }
+    }
+
     func testPausedGameplayConfirmedExitIsGatedAndExactOnce() {
         var requestState = GameplayPauseRequestState()
 
@@ -832,6 +872,12 @@ final class LaunchVisualIdentityTests: XCTestCase {
         XCTAssertFalse(requestState.requestResume(whilePaused: true))
         XCTAssertEqual(requestState.confirmedExitRequestID, 1)
         XCTAssertTrue(requestState.confirmedExitRequestPending)
+    }
+
+    private func gameplaySnapshot(phase: GamePhase) -> GameplaySceneSnapshot {
+        var state = GameState()
+        state.phase = phase
+        return GameplaySceneSnapshot(state: state)
     }
 
     func testPausedGameplayExitConfirmationCancelLeavesRequestsUntouched() {
