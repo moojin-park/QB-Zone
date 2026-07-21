@@ -1,8 +1,9 @@
 # Scoring and run rewards
 
 `GameplayConfig`, `ScoringConfig`, and `GameSimulation.calculatePlayScore` are
-authoritative for points. `EconomyConfiguration` and `RunRewardCalculator` are
-authoritative for coins. UI copy must present these rules without implementing
+authoritative for points. `CompletedRun.rewardBreakdown()` resolves the run's
+immutable economy version and is authoritative for its completion, performance,
+accuracy, and total coins. UI copy must present these rules without implementing
 a second calculation.
 
 ## Lane points
@@ -74,6 +75,12 @@ Abandoned and debug-preview runs receive no coins. One eligible run awards:
 The resulting range is 10–40 coins. The first eligible run also grants the
 one-time 250-coin signing bonus. Run and signing rewards use deterministic
 ledger IDs, so duplicate callbacks or retries cannot grant them twice.
+
+The per-run breakdown resolves `RunConfiguration.economyVersion` against the
+immutable supported rule set. Unsupported versions fail closed. For every
+supported version, `RunRewardBreakdown.totalCoins` must equal the reward total
+used by durable settlement. The one-time signing bonus is separate from this
+per-run breakdown.
 
 ## Rewarded-ad cadence
 

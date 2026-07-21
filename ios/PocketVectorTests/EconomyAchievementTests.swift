@@ -54,85 +54,182 @@ final class EconomyAchievementTests: XCTestCase {
         }
     }
 
-    func testRunRewardBoundariesAndCap() {
-        XCTAssertEqual(
-            RunRewardCalculator.calculate(for: makeRun(score: 999)).totalCoins,
-            10
-        )
-        XCTAssertEqual(
-            RunRewardCalculator.calculate(for: makeRun(score: 1_000)).totalCoins,
-            11
-        )
+    func testCompletedRunRewardBreakdownUsesScoreFloorAndCap() throws {
+        let expectations: [(score: Int, performanceCoins: Int64)] = [
+            (0, 0),
+            (999, 0),
+            (1_000, 1),
+            (1_999, 1),
+            (2_000, 2),
+            (24_999, 24),
+            (25_000, 25),
+            (25_001, 25),
+            (1_000_000, 25),
+        ]
 
-        let accurate = RunStatisticsSnapshot(
-            attempts: 10,
-            completions: 7,
-            incompletions: 3
-        )
-        let atCap = RunRewardCalculator.calculate(
-            for: makeRun(score: 25_000, statistics: accurate)
-        )
-        let aboveCap = RunRewardCalculator.calculate(
-            for: makeRun(score: 99_000, statistics: accurate)
-        )
+        for expectation in expectations {
+            let breakdown = try makeRun(score: expectation.score).rewardBreakdown()
 
-        XCTAssertEqual(atCap.completionCoins, 10)
-        XCTAssertEqual(atCap.performanceCoins, 25)
-        XCTAssertEqual(atCap.accuracyCoins, 5)
-        XCTAssertEqual(atCap.totalCoins, 40)
-        XCTAssertEqual(aboveCap.totalCoins, 40)
+            XCTAssertTrue(breakdown.isEligible, "score: \(expectation.score)")
+            XCTAssertEqual(breakdown.completionCoins, 10, "score: \(expectation.score)")
+            XCTAssertEqual(
+                breakdown.performanceCoins,
+                expectation.performanceCoins,
+                "score: \(expectation.score)"
+            )
+            XCTAssertEqual(breakdown.accuracyCoins, 0, "score: \(expectation.score)")
+            XCTAssertEqual(
+                breakdown.totalCoins,
+                10 + expectation.performanceCoins,
+                "score: \(expectation.score)"
+            )
+        }
     }
 
-    func testAccuracyBonusUsesExactThresholdAndMinimumAttempts() {
-        let belowPercent = RunStatisticsSnapshot(
-            attempts: 100,
-            completions: 69,
-            incompletions: 31
-        )
-        let tooFewAttempts = RunStatisticsSnapshot(
-            attempts: 9,
-            completions: 9
-        )
-        let threshold = RunStatisticsSnapshot(
-            attempts: 10,
-            completions: 7,
-            incompletions: 3
-        )
+    func testCompletedRunRewardBreakdownUsesExactAccuracyThresholds() throws {
+        let expectations: [(statistics: RunStatisticsSnapshot, accuracyCoins: Int64)] = [
+            (
+                RunStatisticsSnapshot(attempts: 9, completions: 9),
+                0
+            ),
+            (
+                RunStatisticsSnapshot(attempts: 10, completions: 6, incompletions: 4),
+                0
+            ),
+            (
+                RunStatisticsSnapshot(attempts: 10, completions: 7, incompletions: 3),
+                5
+            ),
+            (
+                RunStatisticsSnapshot(attempts: 99, completions: 69, incompletions: 30),
+                0
+            ),
+            (
+                RunStatisticsSnapshot(attempts: 100, completions: 70, incompletions: 30),
+                5
+            ),
+            (
+                RunStatisticsSnapshot(
+                    attempts: 10,
+                    completions: 5,
+                    touchdowns: 2,
+                    incompletions: 3
+                ),
+                5
+            ),
+            (
+                RunStatisticsSnapshot(
+                    attempts: Int.max,
+                    completions: Int.max,
+                    touchdowns: Int.max
+                ),
+                0
+            ),
+        ]
 
-        XCTAssertEqual(
-            RunRewardCalculator.calculate(
-                for: makeRun(score: 0, statistics: belowPercent)
-            ).accuracyCoins,
-            0
-        )
-        XCTAssertEqual(
-            RunRewardCalculator.calculate(
-                for: makeRun(score: 0, statistics: tooFewAttempts)
-            ).accuracyCoins,
-            0
-        )
-        XCTAssertEqual(
-            RunRewardCalculator.calculate(
-                for: makeRun(score: 0, statistics: threshold)
-            ).accuracyCoins,
-            5
-        )
+        for expectation in expectations {
+            let breakdown = try makeRun(
+                score: 0,
+                statistics: expectation.statistics
+            ).rewardBreakdown()
+
+            XCTAssertEqual(
+                breakdown.accuracyCoins,
+                expectation.accuracyCoins,
+                "statistics: \(expectation.statistics)"
+            )
+        }
     }
 
-    func testIneligibleRunsEarnNothing() {
-        let twoAttempts = RunStatisticsSnapshot(attempts: 2, completions: 2)
+    func testCompletedRunRewardBreakdownEligibilityAndIneligibleRuns() throws {
+        let eligible = try makeRun(score: 0).rewardBreakdown()
+        XCTAssertTrue(makeRun(score: 0).isNaturallyCompleted)
+        XCTAssertTrue(makeRun(score: 0).isRewardEligible)
         XCTAssertEqual(
-            RunRewardCalculator.calculate(
-                for: makeRun(score: 25_000, statistics: twoAttempts)
-            ),
-            .ineligible
+            eligible,
+            RunRewardBreakdown(
+                isEligible: true,
+                completionCoins: 10,
+                performanceCoins: 0,
+                accuracyCoins: 0
+            )
         )
-        XCTAssertEqual(
-            RunRewardCalculator.calculate(
-                for: makeRun(score: 25_000, finishReason: .abandoned)
+
+        let ineligibleRuns = [
+            makeRun(
+                score: 25_000,
+                statistics: RunStatisticsSnapshot(
+                    attempts: 2,
+                    completions: 2
+                )
             ),
-            .ineligible
-        )
+            makeRun(score: 25_000, finishReason: .abandoned),
+            makeRun(score: 25_000, finishReason: .debugPreview),
+            makeRun(score: 25_000, elapsedGameplayMilliseconds: 59_999),
+            makeRun(score: 25_000, elapsedGameplayMilliseconds: 60_001),
+        ]
+
+        for run in ineligibleRuns {
+            XCTAssertFalse(run.isRewardEligible)
+            XCTAssertEqual(try run.rewardBreakdown(), .ineligible)
+        }
+    }
+
+    func testCompletedRunRewardBreakdownRejectsUnsupportedEconomyVersions() {
+        XCTAssertEqual(RunRewardCalculator.supportedEconomyVersions, [1])
+
+        for economyVersion in [0, 2] {
+            let run = makeRun(score: 0, economyVersion: economyVersion)
+
+            XCTAssertFalse(run.isRewardEligible)
+            XCTAssertThrowsError(try run.rewardBreakdown()) { error in
+                XCTAssertEqual(
+                    error as? RunRewardBreakdownError,
+                    .unsupportedEconomyVersion(economyVersion)
+                )
+            }
+        }
+    }
+
+    func testCompletedRunRewardBreakdownMatchesSettlementForEverySupportedVersion() throws {
+        let scenarios: [(
+            score: Int,
+            statistics: RunStatisticsSnapshot,
+            finishReason: RunFinishReason,
+            elapsed: Int
+        )] = [
+            (0, RunStatisticsSnapshot(attempts: 3, completions: 2, incompletions: 1), .timerExpired, 60_000),
+            (999, RunStatisticsSnapshot(attempts: 3, completions: 2, incompletions: 1), .timerExpired, 60_000),
+            (1_000, RunStatisticsSnapshot(attempts: 3, completions: 2, incompletions: 1), .timerExpired, 60_000),
+            (24_999, RunStatisticsSnapshot(attempts: 10, completions: 7, incompletions: 3), .timerExpired, 60_000),
+            (25_000, RunStatisticsSnapshot(attempts: 10, completions: 7, incompletions: 3), .timerExpired, 60_000),
+            (99_000, RunStatisticsSnapshot(attempts: 10, completions: 6, incompletions: 4), .timerExpired, 60_000),
+            (25_000, RunStatisticsSnapshot(attempts: 2, completions: 2), .timerExpired, 60_000),
+            (25_000, RunStatisticsSnapshot(attempts: 3, completions: 2, incompletions: 1), .abandoned, 30_000),
+            (25_000, RunStatisticsSnapshot(attempts: 3, completions: 2, incompletions: 1), .debugPreview, 60_000),
+            (25_000, RunStatisticsSnapshot(attempts: 3, completions: 2, incompletions: 1), .timerExpired, 59_999),
+            (25_000, RunStatisticsSnapshot(attempts: 3, completions: 2, incompletions: 1), .timerExpired, 60_001),
+        ]
+
+        for economyVersion in RunRewardCalculator.supportedEconomyVersions {
+            for scenario in scenarios {
+                let run = makeRun(
+                    score: scenario.score,
+                    finishReason: scenario.finishReason,
+                    statistics: scenario.statistics,
+                    economyVersion: economyVersion,
+                    elapsedGameplayMilliseconds: scenario.elapsed
+                )
+                let breakdown = try run.rewardBreakdown()
+
+                XCTAssertEqual(
+                    breakdown.totalCoins,
+                    try CompletedRunValidator.rewardCoins(for: run),
+                    "economy v\(economyVersion), score \(scenario.score), "
+                        + "finish \(scenario.finishReason), elapsed \(scenario.elapsed)"
+                )
+            }
+        }
     }
 
     func testEightAchievementCatalogTotals600Points() {
@@ -266,7 +363,9 @@ final class EconomyAchievementTests: XCTestCase {
             incompletions: 1
         ),
         lanes: Set<LaneID> = [],
-        bonusTouchdowns: Int = 0
+        bonusTouchdowns: Int = 0,
+        economyVersion: Int = EconomyConfiguration.currentVersion,
+        elapsedGameplayMilliseconds: Int = 60_000
     ) -> CompletedRun {
         let startedAt = Date(timeIntervalSince1970: 1_000)
         return CompletedRun(
@@ -278,11 +377,11 @@ final class EconomyAchievementTests: XCTestCase {
                 defenseTeamID: LaunchTeamID.highMesaHelions,
                 defenseJerseyID: JerseyID("jersey.high_mesa_helions.primary"),
                 footballID: LaunchFootballID.standard,
-                economyVersion: EconomyConfiguration.currentVersion,
+                economyVersion: economyVersion,
                 startedAt: startedAt
             ),
             endedAt: startedAt.addingTimeInterval(60),
-            elapsedGameplayMilliseconds: 60_000,
+            elapsedGameplayMilliseconds: elapsedGameplayMilliseconds,
             finishReason: finishReason,
             score: score,
             statistics: statistics,

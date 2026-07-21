@@ -183,7 +183,7 @@ struct CompletedRun: Codable, Equatable, Sendable {
     }
 
     var isRewardEligible: Bool {
-        isNaturallyCompleted && statistics.attempts >= EconomyConfiguration.minimumRewardAttempts
+        RunRewardCalculator.isRewardEligible(self)
     }
 }
 
