@@ -260,6 +260,148 @@ final class GameCoreTests: XCTestCase {
     XCTAssertEqual(slow.end, fast.end)
   }
 
+  func testForegroundQuarterbackPoseTimingPreservesAllFourFrames() {
+    let viewports = [
+      GameViewport(viewSize: CGSize(width: 667, height: 375), safeAreaInsets: .zero),
+      GameViewport(viewSize: CGSize(width: 932, height: 430), safeAreaInsets: .zero),
+      GameViewport(viewSize: CGSize(width: 1_366, height: 1_024), safeAreaInsets: .zero),
+    ]
+    for viewport in viewports {
+      let position = ForegroundQuarterbackPresentation.position(
+        for: viewport.projection
+      )
+      XCTAssertEqual(position.x, viewport.projection.centerX, accuracy: 0.000_001)
+      XCTAssertEqual(position.y, -310, accuracy: 0.000_001)
+    }
+
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.pose(
+        isAiming: false,
+        ballElapsedMilliseconds: nil
+      ),
+      .idle
+    )
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.pose(
+        isAiming: true,
+        ballElapsedMilliseconds: nil
+      ),
+      .aim
+    )
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.pose(
+        isAiming: false,
+        ballElapsedMilliseconds: 0
+      ),
+      .throwing
+    )
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.pose(
+        isAiming: false,
+        ballElapsedMilliseconds: 179.999
+      ),
+      .throwing
+    )
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.pose(
+        isAiming: false,
+        ballElapsedMilliseconds: 180
+      ),
+      .recovery
+    )
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.pose(
+        isAiming: false,
+        ballElapsedMilliseconds: 519.999
+      ),
+      .recovery
+    )
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.pose(
+        isAiming: false,
+        ballElapsedMilliseconds: 520
+      ),
+      .idle
+    )
+  }
+
+  func testRenderedFootballReleasesAtRaisedHandThenRejoinsSimulationPath() {
+    let projection = GameProjection.classic
+    let simulatedStart = projection.worldToScene(GameplayConfig.quarterbackStart)
+    let expectedReleasePoint = CGPoint(
+      x: simulatedStart.x,
+      y: simulatedStart.y + ForegroundQuarterbackPresentation.releaseVerticalOffset
+    )
+
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.releaseOffset(elapsedMilliseconds: 0),
+      60,
+      accuracy: 0.000_001
+    )
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.releaseOffset(elapsedMilliseconds: 90),
+      30,
+      accuracy: 0.000_001
+    )
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.releaseOffset(elapsedMilliseconds: 180),
+      0,
+      accuracy: 0.000_001
+    )
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.releaseOffset(elapsedMilliseconds: 520),
+      0,
+      accuracy: 0.000_001
+    )
+
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.renderedBallPosition(
+        simulatedPosition: simulatedStart,
+        elapsedMilliseconds: 0
+      ),
+      expectedReleasePoint
+    )
+
+    let simulatedMidFlight = CGPoint(x: simulatedStart.x + 140, y: simulatedStart.y + 90)
+    let halfAligned = ForegroundQuarterbackPresentation.renderedBallPosition(
+      simulatedPosition: simulatedMidFlight,
+      elapsedMilliseconds: 90
+    )
+    XCTAssertEqual(halfAligned.x, simulatedMidFlight.x, accuracy: 0.000_001)
+    XCTAssertEqual(halfAligned.y, simulatedMidFlight.y + 30, accuracy: 0.000_001)
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.renderedBallPosition(
+        simulatedPosition: simulatedMidFlight,
+        elapsedMilliseconds: 180
+      ),
+      simulatedMidFlight
+    )
+    XCTAssertEqual(
+      ForegroundQuarterbackPresentation.renderedBallPosition(
+        simulatedPosition: simulatedMidFlight,
+        elapsedMilliseconds: 520
+      ),
+      simulatedMidFlight
+    )
+
+    let target = WorldPoint(x: 0.45, depth: 0.74, height: 0)
+    let authoritativeBall = Trajectory.makeBall(
+      id: 7,
+      target: target,
+      releaseSpeedPixelsPerMillisecond: 0.9,
+      aimMarker: .zero
+    )
+    let ballBeforeVisualProjection = authoritativeBall
+    _ = ForegroundQuarterbackPresentation.renderedBallPosition(
+      simulatedPosition: projection.worldToScene(authoritativeBall.current),
+      elapsedMilliseconds: authoritativeBall.elapsedMilliseconds
+    )
+    XCTAssertEqual(authoritativeBall, ballBeforeVisualProjection)
+    XCTAssertEqual(authoritativeBall.start, GameplayConfig.quarterbackStart)
+    XCTAssertEqual(authoritativeBall.current, GameplayConfig.quarterbackStart)
+    XCTAssertEqual(authoritativeBall.previous, GameplayConfig.quarterbackStart)
+  }
+
   func testTrajectoryReachesHorizontalEndpointAtCatchProgress() {
     let start = WorldPoint(x: -0.2, depth: 0.05, height: 0.56)
     let end = WorldPoint(x: 0.65, depth: 0.87, height: 0.45)
