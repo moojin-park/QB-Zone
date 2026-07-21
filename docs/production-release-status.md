@@ -237,6 +237,22 @@ focused tests, the exact 872-test simulator suite, compact/regular/iPad standard
 and Accessibility 5 evidence, and an unsigned generic-iOS Release archive all
 passed. This completes the retained-gameplay Results visual acceptance gate.
 
+The root-controller system-gesture correction is implemented at `e1c0f9a`
+(`Make gameplay gesture deferral root authoritative`). The application now
+installs a PM-owned `UIHostingController` as the actual window root for both new
+and restored scene sessions. That controller returns `.bottom` only when the
+active app, current gameplay destination, matching run ID, and live gameplay
+snapshot all authorize deferral, and it calls
+`setNeedsUpdateOfScreenEdgesDeferringSystemGestures()` on every effective
+transition. Countdown, pause, Results, settlement, settlement error,
+backgrounding, frozen presentation, other screens, stale runs, and replay
+countdown all clear the preference. Four focused regressions, the exact
+875-test simulator suite, an in-place existing-install launch smoke, and the
+unsigned generic-iOS Release archive passed with no P0-P2 code finding. Release
+acceptance remains withheld until the owner repeats the reported gesture on a
+connected Face ID iPhone and confirms that active play requires a second
+deliberate upward swipe; the currently registered device was unavailable.
+
 The dormant StoreKit runtime foundation is versioned at `ce69388` (`Add dormant
 StoreKit runtime coordination`), player-scoped Game Center persistence and
 delivery at `9d749bc` (`Add player-scoped Game Center delivery`), the dormant
@@ -519,6 +535,9 @@ or runtime ownership boundaries.
 | 2026-07-21 | `3acbf4c` | Retained Results focused integration gate | 26 passed, 0 failed, 0 skipped across AppPresentation, coordinator, gameplay-HUD, production-composition, gesture-deferral, and exact native asset-manifest coverage; result bundle `/Users/andypark/Library/Developer/Xcode/DerivedData/PocketVector-gzonknuffecczwcjjrtxgwzvubqz/Logs/Test/Test-PocketVector-2026.07.21_02-41-39--0700.xcresult` |
 | 2026-07-21 | `3acbf4c` | Exact integrated full simulator suite | 872 total: 871 passed, 0 failed, 1 existing conditional case-alias filesystem skip; result bundle `/Users/andypark/Library/Developer/Xcode/DerivedData/PocketVector-gzonknuffecczwcjjrtxgwzvubqz/Logs/Test/Test-PocketVector-2026.07.21_02-43-34--0700.xcresult` |
 | 2026-07-21 | `3acbf4c` | Retained Results visual and archive gates | Compact iPhone, regular iPhone, and iPad standard and Accessibility 5 evidence passed PM inspection at `/tmp/pocket-vector-results-retained-final`; unsigned generic-iOS Release archive passed at `/tmp/PocketVector-RetainedResults-20260721.xcarchive`. Final codesigned distribution-entitlement proof remains pending |
+| 2026-07-21 | `e1c0f9a` | Root-controller bottom-gesture correction | The window's actual `PocketVectorRootHostingController` now owns `preferredScreenEdgesDeferringSystemGestures`, invalidates UIKit's preference only on effective transitions, and requires active-app, active-gameplay, matching-run, live-snapshot authority. Countdown, pause, Results, settlement/error, frozen presentation, backgrounding, non-gameplay routes, and stale/replay runs fail closed. Existing scene-session installation is covered by a scene-notification fallback. Independent review found no P0-P2 code issue |
+| 2026-07-21 | `e1c0f9a` | Root gesture focused and full simulator gates | Four focused root-controller, lifecycle-policy, and snapshot-policy tests passed at `/tmp/PocketVectorRootGestureFocused/Logs/Test/Test-PocketVector-2026.07.21_10-32-17--0700.xcresult`; complete serial suite passed 875 total: 874 passed, 0 failed, 1 existing conditional case-alias filesystem skip at `/tmp/PocketVectorRootGestureFull/Logs/Test/Test-PocketVector-2026.07.21_10-33-52--0700.xcresult` |
+| 2026-07-21 | `e1c0f9a` | Root gesture launch and archive gates | An in-place upgrade over the existing simulator installation cold-launched successfully through the custom root controller without deleting app data. Unsigned generic-iOS Release archive passed at `/tmp/PocketVector-RootGesture-20260721.xcarchive`. Physical Face ID iPhone one-swipe protection and second-deliberate-swipe exit remain pending because device `Snow J` was unavailable |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -643,13 +662,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in the integrated code and automated gates; retained-gameplay Results accessibility-size and multi-device visual acceptance pass with one accepted P3 compact label wrap |
+| Known P0/P1 defects                  |      0 | 0 open in integrated code and automated gates; root-controller gesture correction has no P0-P2 code finding, but physical Face ID one-swipe acceptance remains pending |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud history, initial publication, hydration, online-only catalog debit/ownership, and StoreKit durable delivery pass internal tests; external sandbox/device gates remain |
-| Clean-checkout archive               |   Pass | Unsigned generic-iOS archive for retained-gameplay Results integration commit `3acbf4c` passed; final codesigned entitlement/export proof remains |
+| Clean-checkout archive               |   Pass | Unsigned generic-iOS archive for root-controller gesture integration commit `e1c0f9a` passed; final codesigned entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
