@@ -157,6 +157,27 @@ white illumination, and a multi-step steel bezel rather than a launch-team hue.
   text, and compact-iPhone, regular-iPhone, and iPad landscape layouts keep all
   headers, balances, scrolling content, and primary actions inside safe areas.
 
+## Run Results
+
+Run Results uses a split stadium-scoreboard composition over the completed
+field: a centered score marquee, stat wing at leading, coin ledger wing at
+trailing, optional-bonus rail, and the existing Main Menu and Play Again
+actions. The center lane remains open so the field reads as the continuation
+of the run rather than a hard cut to another menu.
+
+- Results panels use translucent championship navy with authored steel bezel
+  rasters, clipped corners, bolts, and restrained cyan status lights.
+- Attempts, Completions, Accuracy, and Touchdowns use dedicated neutral pixel
+  icons; currency continues to use the exact main-menu coin.
+- Coin sources appear in settlement order with a gold total. Optional rewarded
+  ad coins remain visually separate from the coins won in the completed run.
+- Decorative field and hardware are hidden from accessibility. At accessibility
+  text sizes the split boards reflow into one scrollable semantic stack with
+  both actions reachable.
+- The retained final gameplay surface is frozen and noninteractive. A composed
+  same-team field-layer background is the visual fallback when no final frame
+  is supplied by app presentation.
+
 ## Source and runtime boundaries
 
 Editable sources live under `ios/AssetSources/`; regeneration tools live under
