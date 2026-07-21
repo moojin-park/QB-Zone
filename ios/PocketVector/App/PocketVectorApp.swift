@@ -32,8 +32,8 @@ final class PocketVectorApp: UIResponder, UIApplicationDelegate {
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(sceneWillDeactivate(_:)),
-            name: UIScene.willDeactivateNotification,
+            selector: #selector(sceneDidEnterBackground(_:)),
+            name: UIScene.didEnterBackgroundNotification,
             object: nil
         )
         NotificationCenter.default.addObserver(
@@ -60,7 +60,7 @@ final class PocketVectorApp: UIResponder, UIApplicationDelegate {
 
     func installRootWindow(in windowScene: UIWindowScene) {
         if window?.windowScene === windowScene,
-           window?.rootViewController is PocketVectorRootHostingController {
+           window?.rootViewController is PocketVectorRootViewController {
             return
         }
         guard let runtime, let systemGestureDeferralState else { return }
@@ -69,7 +69,7 @@ final class PocketVectorApp: UIResponder, UIApplicationDelegate {
             runtime: runtime,
             systemGestureDeferralState: systemGestureDeferralState
         )
-        let rootController = PocketVectorRootHostingController(
+        let rootController = PocketVectorRootViewController(
             rootView: AnyView(rootView),
             systemGestureDeferralState: systemGestureDeferralState
         )
@@ -90,7 +90,7 @@ final class PocketVectorApp: UIResponder, UIApplicationDelegate {
         systemGestureDeferralState?.setApplicationActive(true)
     }
 
-    @objc private func sceneWillDeactivate(_ notification: Notification) {
+    @objc private func sceneDidEnterBackground(_ notification: Notification) {
         systemGestureDeferralState?.setApplicationActive(false)
     }
 
@@ -170,27 +170,61 @@ enum RootSystemGestureDeferralPresentationPolicy {
 }
 
 @MainActor
-class PocketVectorRootHostingController: UIHostingController<AnyView> {
+class PocketVectorRootViewController: UIViewController {
     private let systemGestureDeferralState: RootSystemGestureDeferralState
+    private let contentController: UIHostingController<AnyView>
 
     init(
         rootView: AnyView,
         systemGestureDeferralState: RootSystemGestureDeferralState
     ) {
         self.systemGestureDeferralState = systemGestureDeferralState
-        super.init(rootView: rootView)
+        contentController = UIHostingController(rootView: rootView)
+        super.init(nibName: nil, bundle: nil)
         systemGestureDeferralState.onEffectiveDeferralChanged = { [weak self] in
             self?.requestScreenEdgesDeferralUpdate()
         }
     }
 
     @available(*, unavailable)
-    required dynamic init?(coder aDecoder: NSCoder) {
+    required init?(coder aDecoder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        addChild(contentController)
+        contentController.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(contentController.view)
+        NSLayoutConstraint.activate([
+            contentController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            contentController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            contentController.view.topAnchor.constraint(equalTo: view.topAnchor),
+            contentController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        contentController.didMove(toParent: self)
+    }
+
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
-        systemGestureDeferralState.defersBottomSystemGestures ? .bottom : []
+        systemGestureDeferralState.defersBottomSystemGestures
+            ? .bottom
+            : []
+    }
+
+    override var childForScreenEdgesDeferringSystemGestures: UIViewController? {
+        nil
+    }
+
+    override var childForStatusBarHidden: UIViewController? {
+        contentController
+    }
+
+    override var childForStatusBarStyle: UIViewController? {
+        contentController
+    }
+
+    override var childForHomeIndicatorAutoHidden: UIViewController? {
+        contentController
     }
 
     func requestScreenEdgesDeferralUpdate() {

@@ -504,9 +504,9 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testRootHostingControllerIsAuthoritativeForBottomGestureDeferral() {
+    func testRootViewControllerIsAuthoritativeForBottomGestureDeferral() {
         let state = RootSystemGestureDeferralState()
-        let controller = RecordingRootHostingController(
+        let controller = RecordingRootViewController(
             rootView: AnyView(Color.clear),
             systemGestureDeferralState: state
         )
@@ -519,6 +519,12 @@ final class AppPresentationTests: XCTestCase {
         }
 
         XCTAssertTrue(window.rootViewController === controller)
+        XCTAssertEqual(controller.children.count, 1)
+        XCTAssertTrue(controller.children[0] is UIHostingController<AnyView>)
+        XCTAssertNil(controller.childForScreenEdgesDeferringSystemGestures)
+        XCTAssertTrue(controller.childForStatusBarHidden === controller.children[0])
+        XCTAssertTrue(controller.childForStatusBarStyle === controller.children[0])
+        XCTAssertTrue(controller.childForHomeIndicatorAutoHidden === controller.children[0])
         XCTAssertEqual(controller.preferredScreenEdgesDeferringSystemGestures, [])
         XCTAssertEqual(controller.screenEdgeUpdateRequestCount, 0)
 
@@ -994,7 +1000,7 @@ final class AppPresentationTests: XCTestCase {
 }
 
 @MainActor
-private final class RecordingRootHostingController: PocketVectorRootHostingController {
+private final class RecordingRootViewController: PocketVectorRootViewController {
     private(set) var screenEdgeUpdateRequestCount = 0
 
     override func requestScreenEdgesDeferralUpdate() {
