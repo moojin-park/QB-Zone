@@ -11,11 +11,47 @@ final class EconomyAchievementTests: XCTestCase {
         XCTAssertEqual(EconomyConfiguration.lockedTeamPrice, 1_500)
         XCTAssertEqual(EconomyConfiguration.alternateJerseyPrice, 500)
         XCTAssertEqual(EconomyConfiguration.alternateFootballPrice, 750)
-        XCTAssertEqual(EconomyConfiguration.coinPacks.map(\.coins), [500, 1_650, 3_600, 6_500])
+        XCTAssertEqual(EconomyConfiguration.coinPacks.map(\.coins), [750, 2_500, 6_000, 11_000])
         XCTAssertEqual(
             EconomyConfiguration.coinPacks.map(\.proposedUSPrice),
             [Decimal(string: "0.99")!, Decimal(string: "2.99")!, Decimal(string: "5.99")!, Decimal(string: "9.99")!]
         )
+    }
+
+    func testCoinPackValueStrictlyImprovesAtEveryTier() {
+        let packs = EconomyConfiguration.coinPacks
+
+        for (lower, higher) in zip(packs, packs.dropFirst()) {
+            let higherValue = Decimal(higher.coins) * lower.proposedUSPrice
+            let lowerValue = Decimal(lower.coins) * higher.proposedUSPrice
+            XCTAssertGreaterThan(
+                higherValue,
+                lowerValue,
+                "\(higher.displayName) must provide more coins per dollar than \(lower.displayName)"
+            )
+        }
+    }
+
+    func testNoLowerTierCombinationBeatsVaultAtOrBelowItsPrice() {
+        let lowerPacks = Array(EconomyConfiguration.coinPacks.dropLast())
+        let vault = EconomyConfiguration.coinPacks.last!
+
+        for pocketCount in 0 ... 10 {
+            for teamCount in 0 ... 3 {
+                for bundleCount in 0 ... 1 {
+                    let counts = [pocketCount, teamCount, bundleCount]
+                    let price = zip(lowerPacks, counts).reduce(Decimal.zero) {
+                        $0 + ($1.0.proposedUSPrice * Decimal($1.1))
+                    }
+                    let coins = zip(lowerPacks, counts).reduce(Int64.zero) {
+                        $0 + ($1.0.coins * Int64($1.1))
+                    }
+                    if price <= vault.proposedUSPrice {
+                        XCTAssertLessThan(coins, vault.coins)
+                    }
+                }
+            }
+        }
     }
 
     func testRunRewardBoundariesAndCap() {

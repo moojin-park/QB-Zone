@@ -291,7 +291,7 @@ final class AppPresentationTests: XCTestCase {
     func testCoinPackPresentationMatchesApprovedLaunchSurface() {
         XCTAssertEqual(
             EconomyConfiguration.coinPacks.map(\.coins),
-            [500, 1_650, 3_600, 6_500]
+            [750, 2_500, 6_000, 11_000]
         )
         XCTAssertEqual(
             EconomyConfiguration.coinPacks.map {
@@ -299,7 +299,7 @@ final class AppPresentationTests: XCTestCase {
             },
             ["$0.99", "$2.99", "$5.99", "$9.99"]
         )
-        XCTAssertEqual(AppPresentation.coinText(6_500), "6,500")
+        XCTAssertEqual(AppPresentation.coinText(11_000), "11,000")
     }
 
     @MainActor

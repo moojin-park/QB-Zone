@@ -25,25 +25,25 @@ enum EconomyConfiguration {
         CoinPackDescriptor(
             id: CoinPackID("pocket"),
             displayName: "Pocket",
-            coins: 500,
+            coins: 750,
             proposedUSPrice: 0.99
         ),
         CoinPackDescriptor(
             id: CoinPackID("team"),
             displayName: "Team",
-            coins: 1_650,
+            coins: 2_500,
             proposedUSPrice: 2.99
         ),
         CoinPackDescriptor(
             id: CoinPackID("bundle"),
             displayName: "Bundle",
-            coins: 3_600,
+            coins: 6_000,
             proposedUSPrice: 5.99
         ),
         CoinPackDescriptor(
             id: CoinPackID("vault"),
             displayName: "Vault",
-            coins: 6_500,
+            coins: 11_000,
             proposedUSPrice: 9.99
         ),
     ]
