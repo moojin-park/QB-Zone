@@ -10,14 +10,13 @@ struct AppShellView: View {
         ZStack(alignment: .topTrailing) {
             PocketVectorBackdrop()
 
-            destinationView
-                .id(destinationIdentity)
+            presentedDestination
                 .transition(.opacity)
                 .disabled(
                     coordinator.isRequestInFlight && !coordinator.isRunSettlementInFlight
                 )
 
-            if coordinator.isRequestInFlight {
+            if coordinator.isRequestInFlight && retainedRunPresentation?.isResultsPresented != true {
                 ProgressView("Working")
                     .tint(PocketVectorTheme.cyan)
                     .padding(.horizontal, 14)
@@ -54,6 +53,21 @@ struct AppShellView: View {
     }
 
     @ViewBuilder
+    private var presentedDestination: some View {
+        if let retainedRunPresentation {
+            RetainedRunSurface(
+                presentation: retainedRunPresentation,
+                settings: gameplaySettings,
+                coordinator: coordinator
+            )
+            .id(retainedRunPresentation.sceneIdentity)
+        } else {
+            destinationView
+                .id(destinationIdentity)
+        }
+    }
+
+    @ViewBuilder
     private var destinationView: some View {
         switch coordinator.bootstrapState {
         case .loading:
@@ -86,23 +100,15 @@ struct AppShellView: View {
                 TutorialView(coordinator: coordinator)
             case .privacySupport:
                 PrivacySupportView(coordinator: coordinator)
-            case let .gameplay(configuration):
-                LegacyGameplayAdapterView(
-                    configuration: configuration,
-                    settings: gameplaySettings,
-                    isSettling: coordinator.isRunSettlementInFlight,
-                    settlementErrorMessage: coordinator.settlementErrorMessage,
-                    onCompletedRun: { completedRun in
-                        Task { await coordinator.handleCompletedRun(completedRun) }
-                    },
-                    onRetrySettlement: {
-                        Task { await coordinator.retryCompletedRunSettlement() }
-                    }
-                )
-            case let .runResults(results):
-                RunResultsView(results: results, coordinator: coordinator)
+            case .gameplay, .runResults:
+                EmptyView()
             }
         }
+    }
+
+    private var retainedRunPresentation: RetainedRunPresentation? {
+        guard coordinator.bootstrapState == .ready else { return nil }
+        return RetainedRunPresentation(destination: coordinator.currentDestination)
     }
 
     private var destinationIdentity: String {
@@ -147,6 +153,63 @@ struct AppShellView: View {
             reducedMotion: systemReducedMotion || saved.reducedMotion,
             tutorialCompleted: saved.tutorialCompleted
         )
+    }
+}
+
+struct RetainedRunPresentation: Equatable {
+    let configuration: RunConfiguration
+    let results: RunResultsPresentation?
+
+    init?(destination: AppDestination) {
+        switch destination {
+        case let .gameplay(configuration):
+            self.configuration = configuration
+            results = nil
+        case let .runResults(results):
+            configuration = results.completedRun.configuration
+            self.results = results
+        default:
+            return nil
+        }
+    }
+
+    var sceneIdentity: RunID { configuration.runID }
+    var isResultsPresented: Bool { results != nil }
+    var freezesGameplay: Bool { isResultsPresented }
+    var allowsGameplayInteraction: Bool { !isResultsPresented }
+    var hidesGameplayFromAccessibility: Bool { isResultsPresented }
+}
+
+@MainActor
+struct RetainedRunSurface: View {
+    let presentation: RetainedRunPresentation
+    let settings: PlayerSettings
+    @Bindable var coordinator: AppCoordinator
+
+    var body: some View {
+        ZStack {
+            LegacyGameplayAdapterView(
+                configuration: presentation.configuration,
+                settings: settings,
+                isSettling: coordinator.isRunSettlementInFlight,
+                settlementErrorMessage: coordinator.settlementErrorMessage,
+                freezesPresentation: presentation.freezesGameplay,
+                onCompletedRun: { completedRun in
+                    Task { await coordinator.handleCompletedRun(completedRun) }
+                },
+                onRetrySettlement: {
+                    Task { await coordinator.retryCompletedRunSettlement() }
+                }
+            )
+            .id(presentation.sceneIdentity)
+            .allowsHitTesting(presentation.allowsGameplayInteraction)
+            .accessibilityHidden(presentation.hidesGameplayFromAccessibility)
+
+            if let results = presentation.results {
+                RunResultsView(results: results, coordinator: coordinator)
+                    .transition(.opacity)
+            }
+        }
     }
 }
 
