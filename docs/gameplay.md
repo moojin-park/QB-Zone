@@ -112,6 +112,15 @@ consecutive: any non-touchdown outcome resets that separate counter. A new
 throw may begin immediately after resolution clears the single authoritative
 football; a second throw remains blocked while the prior ball is airborne.
 
+The gameplay run recorder also owns two Version 1.1 achievement facts. A deep
+completion increments only from the same authoritative `.completion` plus
+`.deep` resolution that presentation later uses for deep-completion feedback and
+audio. A Maximum Overdrive touchdown increments only when one resolved
+touchdown's score result has TD Bonus active and the capped 3× multiplier on
+that same play. Presentation delivery is downstream and never authoritative.
+Legacy completed runs default both exact counts to zero because their lane set,
+score, bonus count, and touchdown streak cannot reconstruct those facts.
+
 When regulation expires, no new throw can start. An already airborne ball may
 finish within the bounded final-ball grace period; otherwise the run ends.
 

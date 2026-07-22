@@ -82,6 +82,8 @@ extension RunStatistics {
 struct GameplayRunRecorder: Equatable {
     private(set) var completedLaneIDs: Set<LaneID> = []
     private(set) var bonusTouchdownCount = 0
+    private(set) var deepCompletionCount = 0
+    private(set) var maximumOverdriveTouchdownCount = 0
 
     mutating func record(
         update: UpdateResult,
@@ -94,8 +96,21 @@ struct GameplayRunRecorder: Equatable {
             completedLaneIDs.insert(laneID)
         }
 
+        if outcome == .completion, update.laneID == .deep {
+            deepCompletionCount += 1
+        }
+
         if outcome == .touchdown, playScore?.bonusWasActive == true {
             bonusTouchdownCount += 1
+        }
+
+        if outcome == .touchdown,
+           playScore?.outcome == outcome,
+           playScore?.laneID == update.laneID,
+           playScore?.bonusWasActive == true,
+           playScore?.touchdownMultiplier
+                == ScoringConfig.touchdownMultipliers.last {
+            maximumOverdriveTouchdownCount += 1
         }
     }
 
@@ -116,7 +131,9 @@ struct GameplayRunRecorder: Equatable {
             score: max(0, state.score),
             statistics: state.statistics.completedRunSnapshot,
             completedLaneIDs: completedLaneIDs,
-            bonusTouchdownCount: bonusTouchdownCount
+            bonusTouchdownCount: bonusTouchdownCount,
+            deepCompletionCount: deepCompletionCount,
+            maximumOverdriveTouchdownCount: maximumOverdriveTouchdownCount
         )
     }
 }
