@@ -91,14 +91,17 @@ final class PocketVectorApp: UIResponder, UIApplicationDelegate {
            let rootController = window?.rootViewController as? PocketVectorRootViewController {
             rootController.requestSystemUIUpdate()
         }
+        runtime?.applicationDidBecomeActive()
     }
 
     @objc private func sceneDidEnterBackground(_ notification: Notification) {
         systemGestureDeferralState?.setApplicationActive(false)
+        runtime?.applicationDidEnterBackground()
     }
 
     @objc private func sceneDidDisconnect(_ notification: Notification) {
         systemGestureDeferralState?.setApplicationActive(false)
+        runtime?.applicationDidEnterBackground()
         window?.isHidden = true
         window = nil
     }
@@ -142,6 +145,11 @@ struct PocketVectorRootView: View {
         }
         .onChange(of: allowedGameplayRunID, initial: true) { _, runID in
             systemGestureDeferralState.setAllowedGameplayRunID(runID)
+        }
+        .onChange(of: runtime.coordinator.bootstrapState, initial: true) {
+            _, state in
+            guard state == .ready else { return }
+            runtime.gameCenterDidEnterForeground()
         }
     }
 

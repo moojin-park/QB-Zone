@@ -311,7 +311,32 @@ no P0-P3 issue. The exact simulator suite passed 900 total tests with 899
 passes, no failures, and the one established conditional filesystem skip; an
 unsigned generic arm64 iOS Release archive also passed. Build 158 remains the
 last signed App Store export until build 159 receives its separate distribution
-archive and upload gate.
+archive and upload gate; build 160 now supersedes that unfinished distribution
+attempt.
+
+Build 160 is the Apple-services release candidate. It retains the authenticated
+Game Center runtime for the process lifetime, derives and atomically claims the
+first Game Center owner from the authoritative private-cloud account, moves
+unbound queue evidence into that exact player bucket before submission, and
+preserves the existing branded exactly-once acknowledgement path. App-active
+generation gates serialize authentication, presentation, foreground delivery,
+and account refresh; backgrounding cancels UI work without losing durable
+delivery, and rapid reactivation drains the predecessor before the newest
+generation retries. Shipping configuration now names the exact permanent
+CloudKit, leaderboard, achievement, and StoreKit identifiers, records the
+approved privacy and support destinations, and validates the checked-in
+Production CloudKit schema. Rewarded ads remain intentionally excluded from
+this candidate. Independent final review found no P0-P2 issue. The exact final
+simulator suite passed 914 total tests with 913 passes, no failures, and the one
+established conditional filesystem skip. Release product analysis and the
+unsigned generic arm64 archive passed. The Cloud Managed Apple Distribution
+export then passed, Transporter delivered the package, and App Store Connect
+processed it to Ready to Submit. Build 160 is attached to the empty `Pocket
+Vector External Beta` group and is waiting for TestFlight Beta App Review. The
+group is empty, so no tester notification or invitation was dispatched. No
+external tester was added or invited. The support URL is saved, and after the
+owner's explicit legal accuracy attestation, the exact five App Privacy data
+types were published.
 
 The Technical cinematic-presentation handoff `e1f4d94` (`Add countdown
 cinematic letterbox`) is integrated with full ancestry from shared baseline
@@ -428,12 +453,13 @@ committed-association recovery, authoritative checkpoint refresh, account-
 scoped runtime, private-cloud economy, and online-only StoreKit composition are
 now implemented. The runtime enables private-cloud sync and purchases only for
 complete validated CloudKit and StoreKit configuration; the repository's
-missing release contact values and service dictionaries therefore remain fail
-closed until the owner publishes the destinations and creates the permanent
-App Store records. Player-scoped Game Center delivery and rewarded-ad
-verification/recovery remain unavailable in the live app. Build 158 completes
-the final codesigned distribution-entitlement proof, but live service records,
-privacy answers, TestFlight metrics, and submission metadata remain external
+validated production configuration is incomplete. The approved contact values,
+CloudKit schema, StoreKit product identifiers, leaderboard, and eight
+achievement identifiers are now configured. Player-scoped Game Center delivery
+is retained in the live app with account-bound ownership and lifecycle gates.
+Rewarded-ad verification/recovery remains unavailable by design for build 160.
+Signed distribution export, App Store Connect upload/processing, external
+TestFlight review, and physical sandbox/device service validation remain
 release-candidate gates.
 
 ## Delivery board
@@ -454,9 +480,9 @@ release-candidate gates.
 | Scorebug reaction presentation                  | Complete            | Semantic one/two-line reactions, responsive geometry, reduced motion, lifecycle, VoiceOver, integrated simulator, and owner release acceptance pass |
 | Cinematic gameplay framing                      | Complete            | Responsive countdown-to-gameplay bars are presentation-only; multi-device live inspection, physical bottom-edge input, complete-suite, and owner release acceptance pass |
 | Eight-team presentation system                  | Complete            | Eight emblems, fields, and baked primary/alternate character sets are bundled and actively routed without palette projection; exact resource and owner release acceptance pass |
-| Live Apple and advertising services             | In progress         | Cloud claim/hydration and online-only StoreKit composition are implemented and fail closed without complete configuration; permanent IDs, products, records, production schema, Game Center retention, authenticated ad transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
+| Live Apple and advertising services             | In progress         | Production CloudKit schema, permanent StoreKit/Game Center records, retained Game Center runtime, private-cloud composition, and online-only purchase gates are configured; physical sandbox/device validation remains, while rewarded ads are intentionally excluded from build 160 |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
-| TestFlight release candidate                    | In progress         | Build 159 is the current verified code baseline with complete tests and unsigned archive; build 158 remains the last App Store distribution export. Permanent live-service configuration, TestFlight metadata, build 159 signing/upload/processing, and sandbox/device gates remain |
+| TestFlight release candidate                    | Waiting for review  | Build 160 passed tests, analysis, unsigned archive, signed export, Transporter delivery, processing, support/privacy configuration, and App Privacy publication; it is in the empty external group waiting for Beta App Review. No tester was added or invited; sandbox/device gates remain |
 | App Store submission                            | Queued              | Signed archive, privacy report, metadata, review notes, screenshots, and owner approval complete                                      |
 
 ## Active ownership lanes
@@ -636,6 +662,10 @@ or runtime ownership boundaries.
 | 2026-07-22 | `f7fd070` / build 159 | Achievement V2 integration and review | Technical handoff `f7fd0708fd9432c4e969f6c9498ea3015038f708` integrated from exact build 158 baseline. PM transition covers V1-V4 profile sources, authoritative stricter recomputation, affected Game Center queue and receipt rebuilding, protected lineage and in-flight hydration recovery, explicit Cloud scope revocation/bootstrap, and exact permanent Game Center ID enforcement. Technical focus passed 20 tests; independent final review found no P0-P3 issue; diff hygiene passed |
 | 2026-07-22 | build 159 | Exact complete simulator suite | iPhone 17 Pro suite passed 900 total: 899 passed, 0 failed, and 1 established conditional case-alias filesystem skip at `/tmp/PocketVector-build159-achievement-v2-full-final.xcresult` |
 | 2026-07-22 | build 159 | Unsigned generic-iOS Release archive | Generic arm64 iOS Release archive passed with signing disabled at `/tmp/PocketVector-build159-achievement-v2-final.xcarchive`; version 1.0 (159), bundle `com.pocketvector.game`, iOS 17 minimum, privacy manifest, and native asset manifest verified. Build 158 remains the last signed App Store export |
+| 2026-07-22 | build 160 | Apple-service runtime review and simulator gates | Retained Game Center authentication/delivery/presentation, immutable private-cloud owner claim, durable unbound attribution, account/scene lifecycle gates, rapid-reactivation draining, and shipping configuration received independent final review with no P0-P2 finding. The exact final iPhone 17 Pro suite passed 914 total: 913 passed, 0 failed, and 1 established conditional filesystem skip at `/tmp/PocketVector-build160-full-final.xcresult` |
+| 2026-07-22 | build 160 | Release analysis and unsigned archive | The shipping app target passed arm64 Release analysis. The generic arm64 iOS archive passed with signing disabled at `/tmp/PocketVector-build160-unsigned.xcarchive`; version 1.0 (160), bundle `com.pocketvector.game`, iOS 17 minimum, iPhone/iPad families, privacy manifest, exact 620-asset manifest, and clean payload were verified |
+| 2026-07-22 | build 160 | App Store distribution export and delivery | `/tmp/PocketVector-build160-AppStore-export/PocketVector.ipa` exported using Cloud Managed Apple Distribution. Signature verification passed; final entitlements are `RBMXD4NS89.com.pocketvector.game`, `get-task-allow = false`, Production `iCloud.com.pocketvector.game`, Game Center, and no APS. SHA-256 is `4ceb206ffafe3b2d55a6990b8cd1b873bf69ded8298d9304090a6d6ab7509a4c`. Transporter delivered the package at 08:55 PDT and App Store Connect processed it to Ready to Submit |
+| 2026-07-22 | build 160 | External TestFlight review setup | Saved support URL `https://gridironchronicle.com/pocket-vector/privacy`; verified TestFlight description, feedback email, privacy URL, and review contact. Created empty `Pocket Vector External Beta`, attached build 160, supplied build-specific test notes, and submitted only the beta build for review. Status is Waiting for Review with 0 testers; no tester notification or invitation was dispatched, and no public link or App Store-version submission occurred. After explicit owner approval of Apple's accuracy attestation, the five configured App Privacy answers were published |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -674,26 +704,27 @@ Release behavior. A wave is not complete merely because its files exist.
    delivery acknowledgement becomes persisted authority. The barrier remains
    through ambiguous delivery and clears only after sealed exact durable
    completion or an authenticated terminal rejection.
-7. **Complete internal composition; external Cloud configuration pending:** the
+7. **Complete production composition and Cloud configuration:** the
    automatic first-association claim, same-account offline reopening, account-
    switch isolation, outbound initial publication, checkpoint refresh, and
    crash-safe hydration are composed in the account-scoped runtime while
    preserving generation, checkpoint, journal, lineage, and final durability
-   rechecks.
-8. **Complete Game Center foundation; live integration pending:** V4 persistence,
-   exact player buckets, unbound quarantine, and capability-bound single-flight
-   delivery are implemented. Add the trusted Release factory, retained
-   authentication/foreground/presentation composition, App Store Connect
-   records, a proof-bearing settlement attribution path, and the approved
-   durable exactly-once claim of unbound maxima to the first authenticated
-   player. A later player may never claim the same values.
-9. **Complete internal StoreKit composition; external products pending:** localized product
+   rechecks. The exact six custom Production record types and `payload` field
+   are deployed; physical multi-device and account-switch validation remains.
+8. **Complete Game Center composition and records; device validation pending:**
+   V4 persistence, exact player buckets, unbound quarantine, capability-bound
+   delivery, the trusted Release factory, retained authentication/foreground/
+   presentation runtime, permanent App Store Connect records, and the durable
+   exactly-once first-player claim are implemented. Physical sandbox leaderboard,
+   achievement, offline-queue, and account-switch validation remains.
+9. **Complete StoreKit composition and product records; sandbox validation pending:** localized product
    validation, verified updates, unfinished recovery, durable finish gating,
    account-generation retirement, and serialized purchases are implemented.
    Live account-session sourcing, private-cloud economy composition, retained
    lifecycle, transaction-boundary revalidation, and bounded presentation state
-   are implemented. Permanent consumable identifiers and App Store product
-   records remain external release work.
+   are implemented. The four permanent consumable identifiers and App Store
+   product records are configured; physical sandbox purchase, interrupted
+   request, and restore/relaunch validation remains.
 10. **Complete rewarded-ad verification foundation; live integration pending:**
    exact challenge/status correlation, process-only verified claims, and
    crash-recoverable challenge journaling are implemented. Add authenticated
@@ -702,10 +733,10 @@ Release behavior. A wave is not complete merely because its files exist.
    authoritative presentation state. A client callback alone never grants
    coins.
 
-The Cloud claim/hydration and online-only StoreKit paths are now internally
-composed. The remaining service critical path is permanent CloudKit and App
-Store configuration plus signed-device validation, retained Game Center
-delivery, and rewarded-ad production transport/SDK/consent integration.
+The Cloud claim/hydration, online-only StoreKit, and retained Game Center paths
+are production-composed with their permanent Apple records. The remaining
+service critical path is signed-device sandbox validation. Rewarded-ad
+transport/SDK/consent integration is intentionally excluded from build 160.
 
 ## Owner decisions and external dependencies
 

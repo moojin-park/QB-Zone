@@ -199,6 +199,20 @@ struct CloudKitCloudSyncConfiguration: Equatable, Sendable {
         ]
     }
 
+    /// Derives the same opaque account identifier used by the custom-zone
+    /// transport. Separate private-database authorities (for example the
+    /// immutable Game Center owner claim in the default zone) use this to
+    /// prove they are still operating on the exact routed iCloud account.
+    func accountID(forProviderRecordName recordName: String) -> CloudAccountID {
+        CloudAccountID(
+            CloudKitOpaqueIdentifier.make(
+                namespace: accountIdentifierNamespace,
+                kind: CloudKitCloudSchema.accountAddressKind,
+                value: recordName
+            )
+        )
+    }
+
     private static func isValidSchemaIdentifier(_ value: String) -> Bool {
         guard let first = value.unicodeScalars.first,
               CharacterSet.letters.union(CharacterSet(charactersIn: "_")).contains(first)
@@ -1504,13 +1518,7 @@ actor CloudKitCloudSyncTransport: CloudSyncTransport, CloudSyncChangeFetching {
     }
 
     private func accountID(forProviderRecordName recordName: String) -> CloudAccountID {
-        CloudAccountID(
-            CloudKitOpaqueIdentifier.make(
-                namespace: configuration.accountIdentifierNamespace,
-                kind: CloudKitCloudSchema.accountAddressKind,
-                value: recordName
-            )
-        )
+        configuration.accountID(forProviderRecordName: recordName)
     }
 
     private func operationMarkerName(for operationID: OperationID) -> String {

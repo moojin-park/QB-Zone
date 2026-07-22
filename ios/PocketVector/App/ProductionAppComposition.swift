@@ -373,6 +373,8 @@ final class ProductionAppComposition {
             "The completed run could not be verified and saved. Retry before leaving the run."
         static let gameCenterUnavailable =
             "Game Center is not connected in this build."
+        static let gameCenterAccountMismatch =
+            "This saved profile is linked to a different Game Center account."
         static let onlinePurchaseWarning =
             ProductionAccountRuntimeRouter.onlinePurchaseWarning
         static let purchaseFailed =
@@ -387,6 +389,7 @@ final class ProductionAppComposition {
     private let diagnosticsSink: AppleDiagnosticsSink?
     private let commerceRequestService:
         (any ProductionCommerceRequestServicing)?
+    private let gameCenterRuntime: ProductionGameCenterRuntime?
     private var currentSnapshot: LocalPlayerProfileSnapshot?
     private var syncStatus: ProfileSyncStatus
     private var syncRevision: UInt64
@@ -398,12 +401,14 @@ final class ProductionAppComposition {
         repository: LocalPlayerProfileRepository? = nil,
         repositoryRouter: (any ProductionProfileRepositoryRouting)? = nil,
         commerceRequestService:
-            (any ProductionCommerceRequestServicing)? = nil
+            (any ProductionCommerceRequestServicing)? = nil,
+        gameCenterRuntime: ProductionGameCenterRuntime? = nil
     ) {
         self.dependencies = dependencies
         self.authoritativeStateChannel = authoritativeStateChannel
         self.diagnosticsSink = diagnosticsSink
         self.commerceRequestService = commerceRequestService
+        self.gameCenterRuntime = gameCenterRuntime
         syncStatus = .localOnly
         syncRevision = 0
         let initialRepository = repository ?? LocalPlayerProfileRepository(
@@ -488,6 +493,27 @@ final class ProductionAppComposition {
         } catch {
             return .failed(message: Message.loadFailed)
         }
+    }
+
+    /// Loads the source repository before the retained account graph attempts
+    /// first-run private-cloud association. This is intentionally the same
+    /// idempotent load path used by App bootstrap so no second source of truth
+    /// is introduced.
+    func prepareRepositoryForAccountActivation() async -> Bool {
+        if currentSnapshot != nil { return true }
+        if case .loaded = await loadInitialState() { return true }
+        return false
+    }
+
+    /// Reprojects a newly activated account route and carries the sealed
+    /// adoption proof needed by AppCoordinator when it is already running.
+    func accountRuntimeRefreshResult() async -> AppExternalRequestResult? {
+        guard let refreshed = await refreshAuthoritativeStateFromRepository(
+            allowVerifiedSessionAdoption: true
+        ) else {
+            return nil
+        }
+        return externalResult(refreshed, message: nil)
     }
 
     /// Reprojects the repository only after its caller has committed durable
@@ -592,7 +618,17 @@ final class ProductionAppComposition {
             }
 
         case .showLeaderboard:
-            return .failed(message: Message.gameCenterUnavailable)
+            guard let gameCenterRuntime else {
+                return .failed(message: Message.gameCenterUnavailable)
+            }
+            switch await gameCenterRuntime.presentLeaderboard() {
+            case .completed:
+                return .completed
+            case .ownedByDifferentPlayer:
+                return .failed(message: Message.gameCenterAccountMismatch)
+            case .unavailable:
+                return .failed(message: Message.gameCenterUnavailable)
+            }
 
         case let .requestCatalogUnlock(itemID):
             return await performCommerce(.catalogUnlock(itemID))
@@ -741,6 +777,7 @@ final class ProductionAppComposition {
             )
             let snapshot = try await route.repository.snapshot()
             let accepted = try accept(snapshot, publishUpdate: true)
+            gameCenterRuntime?.scheduleDelivery()
             let authoritativeSnapshot = authoritativeSnapshot(from: accepted)
 
             guard run.finishReason == .timerExpired else {

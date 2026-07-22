@@ -36,6 +36,43 @@ final class ProductionServiceConfigurationTests: XCTestCase {
             reasonsByCategory["NSPrivacyAccessedAPICategoryUserDefaults"],
             ["CA92.1"]
         )
+
+        XCTAssertEqual(manifest["NSPrivacyTracking"] as? Bool, false)
+        XCTAssertEqual(
+            manifest["NSPrivacyTrackingDomains"] as? [String],
+            []
+        )
+        let collected = try XCTUnwrap(
+            manifest["NSPrivacyCollectedDataTypes"] as? [[String: Any]]
+        )
+        let collectedByType = Dictionary(
+            uniqueKeysWithValues: try collected.map { entry in
+                (
+                    try XCTUnwrap(
+                        entry["NSPrivacyCollectedDataType"] as? String
+                    ),
+                    entry
+                )
+            }
+        )
+        XCTAssertEqual(
+            Set(collectedByType.keys),
+            [
+                "NSPrivacyCollectedDataTypeGameplayContent",
+                "NSPrivacyCollectedDataTypeUserID",
+                "NSPrivacyCollectedDataTypeDeviceID",
+                "NSPrivacyCollectedDataTypePurchaseHistory",
+                "NSPrivacyCollectedDataTypeProductInteraction",
+            ]
+        )
+        for entry in collectedByType.values {
+            XCTAssertEqual(entry["NSPrivacyCollectedDataTypeLinked"] as? Bool, true)
+            XCTAssertEqual(entry["NSPrivacyCollectedDataTypeTracking"] as? Bool, false)
+            XCTAssertEqual(
+                entry["NSPrivacyCollectedDataTypePurposes"] as? [String],
+                ["NSPrivacyCollectedDataTypePurposeAppFunctionality"]
+            )
+        }
     }
 
     func testShippingEntitlementsExcludeUnusedPushCapability() throws {
@@ -51,6 +88,126 @@ final class ProductionServiceConfigurationTests: XCTestCase {
             entitlements["com.apple.developer.icloud-container-identifiers"] as? [String],
             ["iCloud.com.pocketvector.game"]
         )
+    }
+
+    func testShippingInfoPlistContainsCompleteBuild160ProductionConfiguration() throws {
+        let info = try loadPropertyList(
+            at: sourceRoot
+                .appendingPathComponent("PocketVector")
+                .appendingPathComponent("Info.plist")
+        )
+
+        XCTAssertEqual(
+            info["PocketVectorPrivacyPolicyURL"] as? String,
+            "https://gridironchronicle.com/pocket-vector/privacy"
+        )
+        XCTAssertEqual(
+            info["PocketVectorSupportURL"] as? String,
+            "https://gridironchronicle.com/pocket-vector/privacy"
+        )
+        XCTAssertEqual(
+            info["PocketVectorSupportEmail"] as? String,
+            "andy@gridironchronicle.com"
+        )
+
+        let configuration = ProductionServiceConfiguration.parse(
+            infoDictionary: info
+        )
+        guard case let .validated(gameCenter) = configuration.gameCenter,
+              case let .validated(cloudWrite) = configuration.cloudWrite,
+              case let .validated(storeKit) = configuration.storeKit else {
+            return XCTFail("The shipping service dictionaries must validate")
+        }
+
+        XCTAssertEqual(
+            gameCenter.leaderboardIdentifier,
+            "com.pocketvector.game.leaderboard.highscore.v1"
+        )
+        XCTAssertEqual(
+            gameCenter.achievementIdentifiers,
+            Dictionary(
+                uniqueKeysWithValues: AchievementCatalog.launch.map {
+                    ($0.id, $0.id.rawValue)
+                }
+            )
+        )
+        XCTAssertEqual(
+            cloudWrite.transport.containerIdentifier,
+            "iCloud.com.pocketvector.game"
+        )
+        XCTAssertEqual(
+            cloudWrite.transport.zoneName,
+            "PocketVectorPrivateZone"
+        )
+        XCTAssertEqual(cloudWrite.transport.payloadFieldName, "payload")
+        XCTAssertEqual(
+            cloudWrite.transport.operationRecordType,
+            "OperationMarker"
+        )
+        XCTAssertEqual(cloudWrite.economy.recordID.rawValue, "economy-head-v1")
+        XCTAssertEqual(cloudWrite.economy.recordType, "EconomyHead")
+        XCTAssertEqual(cloudWrite.profile.rootRecordType, "ProfileRoot")
+        XCTAssertEqual(cloudWrite.profile.settingsRecordType, "ProfileSettings")
+        XCTAssertEqual(cloudWrite.profile.selectionRecordType, "ProfileSelection")
+        XCTAssertEqual(cloudWrite.profile.runRecordType, "ProfileRun")
+
+        let actualProducts = try Dictionary(
+            uniqueKeysWithValues: EconomyConfiguration.coinPacks.map {
+                ($0.id, try storeKit.productIdentifier(for: $0.id))
+            }
+        )
+        XCTAssertEqual(
+            actualProducts,
+            [
+                CoinPackID("pocket"): "com.pocketvector.game.coins.pocket",
+                CoinPackID("team"): "com.pocketvector.game.coins.team",
+                CoinPackID("bundle"): "com.pocketvector.game.coins.bundle",
+                CoinPackID("vault"): "com.pocketvector.game.coins.vault",
+            ]
+        )
+    }
+
+    func testTrackedProductionCloudKitSchemaMatchesShippingRecordTypes() throws {
+        let schemaURL = sourceRoot
+            .appendingPathComponent("CloudKit")
+            .appendingPathComponent("PocketVectorProduction.ckdb")
+        let schema = try String(contentsOf: schemaURL, encoding: .utf8)
+        let expression = try NSRegularExpression(
+            pattern: #"RECORD TYPE\s+([A-Za-z][A-Za-z0-9]*)\s*\("#
+        )
+        let range = NSRange(schema.startIndex..., in: schema)
+        let matchedRecordTypes: [String] = expression.matches(
+            in: schema,
+            range: range
+        ).compactMap { match in
+                guard let swiftRange = Range(match.range(at: 1), in: schema)
+                else { return nil }
+                return String(schema[swiftRange])
+        }
+        let recordTypes = Set<String>(matchedRecordTypes)
+
+        XCTAssertEqual(
+            recordTypes,
+            [
+                "Users",
+                "OperationMarker",
+                "EconomyHead",
+                "ProfileRoot",
+                "ProfileSettings",
+                "ProfileSelection",
+                "ProfileRun",
+            ]
+        )
+        for recordType in recordTypes.subtracting(Set(["Users"])) {
+            let marker = "RECORD TYPE \(recordType) ("
+            let recordRange = try XCTUnwrap(schema.range(of: marker))
+            let remainder = schema[recordRange.lowerBound...]
+            let end = try XCTUnwrap(remainder.range(of: ");")?.upperBound)
+            XCTAssertTrue(
+                remainder[..<end].contains("payload         BYTES"),
+                "\(recordType) must use the deployed payload Bytes field"
+            )
+        }
     }
 
     func testAbsentServicesFailClosedWithEveryRequiredFieldReported() {

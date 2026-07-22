@@ -61,10 +61,14 @@ unsigned generic-iOS archive. Use the command in the root `README.md`.
 
 ## Release dependencies
 
-Build 159 is the current code baseline and passes the complete simulator suite
-and unsigned Release archive; build 158 remains the last App Store distribution
-export. Live CloudKit and StoreKit records, Game Center runtime composition,
-rewarded-ad verification, service-aware privacy answers, build 159 signing and
-upload, TestFlight metrics, and App Store metadata remain gated work.
+Build 160 is the current release candidate and passes the complete simulator
+suite, Release analysis, and unsigned generic-iOS archive. Production CloudKit,
+the permanent StoreKit and Game Center records, privacy/support configuration,
+and the retained Game Center runtime are configured. The signed build 160 IPA
+is delivered to App Store Connect and is waiting for TestFlight Beta App Review
+in an empty external group. The owner-approved App Privacy responses are
+published; no testers have been added or invited. Physical sandbox service
+validation and the intentionally excluded rewarded-ad integration remain gated
+work.
 See `../docs/production-release-status.md` for current evidence and dependency
 order.

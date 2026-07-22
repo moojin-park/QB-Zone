@@ -71,6 +71,244 @@ final class ProductionAppRuntimeTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func testStartCoordinatorBootsLocallyThenRefreshesAccountGraphWithoutCommerce()
+        async throws
+    {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let events = AccountRuntimeEventRecorder()
+        let discovery = AccountRuntimeDiscovery(
+            states: [.signedOut],
+            events: events
+        )
+        let router = ProductionAccountRuntimeRouter(
+            accountDiscovery: discovery,
+            accountClaimer: AccountRuntimeClaimer(
+                claims: [:],
+                events: events
+            ),
+            runtimeBuilder: AccountRuntimeBuilder(events: events)
+        )
+        let diagnostics = makeDiagnostics(
+            recorder: RuntimeTelemetryCapture(),
+            reporter: RuntimeDiagnosticsCapture()
+        )
+        let channel = ProductionAuthoritativeStateChannel()
+        let composition = makeComposition(
+            root: root,
+            channel: channel,
+            sink: diagnostics.sink
+        )
+        let runtime = ProductionAppRuntime(
+            coordinator: AppCoordinator(environment: composition.environment),
+            presentationHandoff: UIKitGameKitPresentationHandoff(),
+            serviceConfiguration: .parse(infoDictionary: [:]),
+            runtimeCapabilities: .appleDiagnosticsOnly,
+            composition: composition,
+            authoritativeStateChannel: channel,
+            diagnostics: diagnostics,
+            accountRuntimeRouter: router
+        )
+
+        runtime.startCoordinator()
+        runtime.applicationDidBecomeActive()
+        var refreshed = false
+        for _ in 0 ..< 200 {
+            if await events.snapshot().contains("discover:signedOut") {
+                refreshed = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(runtime.coordinator.bootstrapState, .ready)
+        XCTAssertTrue(refreshed)
+        await runtime.shutdownAccountRuntime()
+    }
+
+    @MainActor
+    func testBackgroundedAccountRefreshCannotStartGameCenterAndNextActivationRetries()
+        async throws
+    {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let accountID = CloudAccountID("account-v1-background-lifecycle")
+        let claim = try await makeVerifiedAccountClaim(
+            root: root,
+            accountID: accountID,
+            nonce: fixedUUID(581)
+        )
+        let gate = AccountRuntimeTestGate()
+        let events = AccountRuntimeEventRecorder()
+        let discovery = AccountRuntimeDiscovery(
+            states: Array(repeating: .available(accountID), count: 8),
+            events: events
+        )
+        let router = ProductionAccountRuntimeRouter(
+            accountDiscovery: discovery,
+            accountClaimer: AccountRuntimeClaimer(
+                claims: [accountID: claim],
+                events: events,
+                gate: gate
+            ),
+            runtimeBuilder: AccountRuntimeBuilder(events: events)
+        )
+        let diagnostics = makeDiagnostics(
+            recorder: RuntimeTelemetryCapture(),
+            reporter: RuntimeDiagnosticsCapture()
+        )
+        let channel = ProductionAuthoritativeStateChannel()
+        let composition = makeComposition(
+            root: root,
+            channel: channel,
+            sink: diagnostics.sink
+        )
+        let gameCenterService = LifecycleGameCenterServiceDouble()
+        let gameCenterCoordinator = GameCenterDeliveryCoordinator.makeForProduction(
+            submissionChannel: LifecycleGameCenterSubmissionChannelDouble(),
+            service: gameCenterService
+        )
+        let gameCenterConfiguration = try GameKitGameCenterConfiguration(
+            leaderboardIdentifier:
+                "com.pocketvector.game.leaderboard.highscore.v1",
+            achievementIdentifiers: Dictionary(
+                uniqueKeysWithValues: AchievementCatalog.launch.map {
+                    ($0.id, $0.id.rawValue)
+                }
+            )
+        )
+        let gameCenterRuntime = ProductionGameCenterRuntime(
+            configuration: gameCenterConfiguration,
+            coordinator: gameCenterCoordinator
+        )
+        let runtime = ProductionAppRuntime(
+            coordinator: AppCoordinator(environment: composition.environment),
+            presentationHandoff: UIKitGameKitPresentationHandoff(),
+            serviceConfiguration: .parse(infoDictionary: [:]),
+            runtimeCapabilities: .appleDiagnosticsOnly,
+            composition: composition,
+            authoritativeStateChannel: channel,
+            diagnostics: diagnostics,
+            accountRuntimeRouter: router,
+            gameCenterRuntime: gameCenterRuntime
+        )
+
+        await runtime.coordinator.bootstrap()
+        runtime.applicationDidBecomeActive()
+        let refreshReachedGate = await eventually {
+            await events.snapshot().contains(
+                "claim:\(accountID.rawValue)"
+            )
+        }
+        XCTAssertTrue(refreshReachedGate)
+
+        runtime.applicationDidEnterBackground()
+        await gate.open()
+        try await Task.sleep(for: .milliseconds(100))
+        let backgroundAuthenticationCount = await gameCenterService
+            .authenticationCount()
+        let backgroundPresentationCount = await gameCenterService
+            .presentationCount()
+        XCTAssertEqual(backgroundAuthenticationCount, 0)
+        XCTAssertEqual(backgroundPresentationCount, 0)
+
+        runtime.applicationDidBecomeActive()
+        let retriedInForeground = await eventually {
+            await gameCenterService.authenticationCount() == 1
+        }
+        let foregroundPresentationCount = await gameCenterService
+            .presentationCount()
+        XCTAssertTrue(retriedInForeground)
+        XCTAssertEqual(foregroundPresentationCount, 0)
+        await runtime.shutdownAccountRuntime()
+    }
+
+    @MainActor
+    func testRapidReactivationDrainsProjectionBeforeStartingNewestForegroundWork()
+        async throws
+    {
+        let root = try makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(root) }
+        let events = AccountRuntimeEventRecorder()
+        let router = ProductionAccountRuntimeRouter(
+            accountDiscovery: AccountRuntimeDiscovery(
+                states: [.signedOut],
+                events: events
+            ),
+            accountClaimer: AccountRuntimeClaimer(
+                claims: [:],
+                events: events
+            ),
+            runtimeBuilder: AccountRuntimeBuilder(events: events)
+        )
+        let diagnostics = makeDiagnostics(
+            recorder: RuntimeTelemetryCapture(),
+            reporter: RuntimeDiagnosticsCapture()
+        )
+        let channel = ProductionAuthoritativeStateChannel()
+        let composition = makeComposition(
+            root: root,
+            channel: channel,
+            sink: diagnostics.sink
+        )
+        let gameCenterService = LifecycleGameCenterServiceDouble()
+        let gameCenterRuntime = ProductionGameCenterRuntime(
+            configuration: try GameKitGameCenterConfiguration(
+                leaderboardIdentifier:
+                    "com.pocketvector.game.leaderboard.highscore.v1",
+                achievementIdentifiers: Dictionary(
+                    uniqueKeysWithValues: AchievementCatalog.launch.map {
+                        ($0.id, $0.id.rawValue)
+                    }
+                )
+            ),
+            coordinator: GameCenterDeliveryCoordinator.makeForProduction(
+                submissionChannel:
+                    LifecycleGameCenterSubmissionChannelDouble(),
+                service: gameCenterService
+            )
+        )
+        let projectionGate = AccountRuntimeTestGate()
+        let runtime = ProductionAppRuntime(
+            coordinator: AppCoordinator(environment: composition.environment),
+            presentationHandoff: UIKitGameKitPresentationHandoff(),
+            serviceConfiguration: .parse(infoDictionary: [:]),
+            runtimeCapabilities: .appleDiagnosticsOnly,
+            composition: composition,
+            authoritativeStateChannel: channel,
+            diagnostics: diagnostics,
+            accountRuntimeRouter: router,
+            gameCenterRuntime: gameCenterRuntime,
+            beforeApplyingForegroundAccountProjection: {
+                await projectionGate.wait()
+            }
+        )
+
+        await runtime.coordinator.bootstrap()
+        runtime.applicationDidBecomeActive()
+        let projectionSuspended = await eventually {
+            await projectionGate.waiterCount() == 1
+        }
+        XCTAssertTrue(projectionSuspended)
+
+        runtime.applicationDidEnterBackground()
+        runtime.applicationDidBecomeActive()
+        let authenticationBeforeDrain = await gameCenterService
+            .authenticationCount()
+        XCTAssertEqual(authenticationBeforeDrain, 0)
+
+        await projectionGate.open()
+        let newestForegroundDelivered = await eventually {
+            await gameCenterService.authenticationCount() == 1
+        }
+        XCTAssertTrue(newestForegroundDelivered)
+        let finalAuthenticationCount = await gameCenterService
+            .authenticationCount()
+        XCTAssertEqual(finalAuthenticationCount, 1)
+        await runtime.shutdownAccountRuntime()
+    }
+
+    @MainActor
     func testValidStoreIdentifiersStillCannotPurchaseUnlockRewardOrAdvertiseServices() async throws {
         let root = try makeTemporaryDirectory()
         defer { removeTemporaryDirectory(root) }
@@ -1514,6 +1752,61 @@ private actor AccountRuntimeTestGate {
         for waiter in currentWaiters {
             waiter.resume()
         }
+    }
+
+    func waiterCount() -> Int {
+        waiters.count
+    }
+}
+
+private actor LifecycleGameCenterSubmissionChannelDouble:
+    GameCenterSubmissionChannel
+{
+    func prepareGameCenterSubmission(
+        for playerID: GameCenterPlayerID
+    ) async throws -> LocalGameCenterPreparedSubmissionV1? {
+        nil
+    }
+
+    func acknowledgeGameCenterSubmission(
+        _ submission: LocalGameCenterPreparedSubmissionV1,
+        successfulResult: GameCenterSuccessfulSubmissionV1,
+        at date: Date
+    ) async throws -> LocalPlayerProfileSnapshot {
+        throw ProductionGameCenterSubmissionChannelError.staleAcknowledgement
+    }
+}
+
+private actor LifecycleGameCenterServiceDouble: GameCenterServicing {
+    private let playerID = GameCenterPlayerID("lifecycle-player")
+    private var authenticationCalls = 0
+    private var presentationCalls = 0
+    private var state: GameCenterAuthenticationState = .notRequested
+
+    func authenticationState() -> GameCenterAuthenticationState {
+        state
+    }
+
+    func authenticate() -> GameCenterAuthenticationState {
+        authenticationCalls += 1
+        state = .authenticated(playerID)
+        return state
+    }
+
+    func submit(_ batch: GameCenterSubmissionBatch) throws {}
+
+    func requestPresentation(
+        _ destination: GameCenterPresentationDestination
+    ) throws {
+        presentationCalls += 1
+    }
+
+    func authenticationCount() -> Int {
+        authenticationCalls
+    }
+
+    func presentationCount() -> Int {
+        presentationCalls
     }
 }
 

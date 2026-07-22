@@ -16,6 +16,59 @@ protocol GameCenterSubmissionRepository: Actor {
 
 extension LocalPlayerProfileRepository: GameCenterSubmissionRepository {}
 
+protocol GameCenterSubmissionChannel: Actor {
+    func prepareGameCenterSubmission(
+        for playerID: GameCenterPlayerID
+    ) async throws -> LocalGameCenterPreparedSubmissionV1?
+
+    func acknowledgeGameCenterSubmission(
+        _ submission: LocalGameCenterPreparedSubmissionV1,
+        successfulResult: GameCenterSuccessfulSubmissionV1,
+        at date: Date
+    ) async throws -> LocalPlayerProfileSnapshot
+}
+
+/// A channel may surface this marker only when durable ownership evidence
+/// proves that the active profile belongs to another Game Center player.
+protocol GameCenterSubmissionOwnershipConflictError: Error {}
+
+private actor FixedSessionGameCenterSubmissionChannel:
+    GameCenterSubmissionChannel
+{
+    private let repository: any GameCenterSubmissionRepository
+    private let session: ProfileSessionToken
+
+    init(
+        repository: any GameCenterSubmissionRepository,
+        session: ProfileSessionToken
+    ) {
+        self.repository = repository
+        self.session = session
+    }
+
+    func prepareGameCenterSubmission(
+        for playerID: GameCenterPlayerID
+    ) async throws -> LocalGameCenterPreparedSubmissionV1? {
+        try await repository.prepareGameCenterSubmission(
+            for: playerID,
+            session: session
+        )
+    }
+
+    func acknowledgeGameCenterSubmission(
+        _ submission: LocalGameCenterPreparedSubmissionV1,
+        successfulResult: GameCenterSuccessfulSubmissionV1,
+        at date: Date
+    ) async throws -> LocalPlayerProfileSnapshot {
+        try await repository.acknowledgeGameCenterSubmission(
+            submission,
+            successfulResult: successfulResult,
+            session: session,
+            at: date
+        )
+    }
+}
+
 /// A process-only success brand. Only this file can mint it, and the delivery
 /// coordinator does so only after `submit` returns and the same Game Center
 /// player is revalidated. Repository acknowledgement additionally verifies the
@@ -36,6 +89,7 @@ enum GameCenterDeliveryRetentionReason: Equatable, Sendable {
     case cancelled
     case playerChanged
     case submissionFailed
+    case ownershipConflict
     case repositoryRejected
 }
 
@@ -53,32 +107,28 @@ enum GameCenterDeliveryCoordinatorError: Error, Equatable, Sendable {
     case playerChanged
 }
 
-/// Dormant, dependency-injected orchestration for one exact profile session.
-/// It starts no task and owns no retry timer: the future retained app runtime
-/// must explicitly call authentication, foreground, delivery, or presentation
-/// entry points. Actor state makes delivery single-flight across suspension.
+/// Dependency-injected orchestration for one authenticated Game Center player.
+/// It starts no task and owns no retry timer: the retained app runtime calls
+/// foreground, delivery, and presentation entry points explicitly. Actor state
+/// makes delivery single-flight across suspension.
 actor GameCenterDeliveryCoordinator {
-    private let repository: any GameCenterSubmissionRepository
+    private let submissionChannel: any GameCenterSubmissionChannel
     private let service: any GameCenterServicing
-    private let session: ProfileSessionToken
     private let now: @Sendable () -> Date
     private var deliveryIsInProgress = false
 
     private init(
-        repository: any GameCenterSubmissionRepository,
+        submissionChannel: any GameCenterSubmissionChannel,
         service: any GameCenterServicing,
-        session: ProfileSessionToken,
         now: @escaping @Sendable () -> Date = Date.init
     ) {
-        self.repository = repository
+        self.submissionChannel = submissionChannel
         self.service = service
-        self.session = session
         self.now = now
     }
 
     #if DEBUG
-    /// Explicit test-only injection surface. Release builds intentionally have
-    /// no construction path until a trusted in-file GameKit factory is added.
+    /// Explicit fixed-session injection surface for focused tests.
     static func makeForTesting(
         repository: any GameCenterSubmissionRepository,
         service: any GameCenterServicing,
@@ -86,13 +136,27 @@ actor GameCenterDeliveryCoordinator {
         now: @escaping @Sendable () -> Date = Date.init
     ) -> GameCenterDeliveryCoordinator {
         GameCenterDeliveryCoordinator(
-            repository: repository,
+            submissionChannel: FixedSessionGameCenterSubmissionChannel(
+                repository: repository,
+                session: session
+            ),
             service: service,
-            session: session,
             now: now
         )
     }
     #endif
+
+    static func makeForProduction(
+        submissionChannel: any GameCenterSubmissionChannel,
+        service: any GameCenterServicing,
+        now: @escaping @Sendable () -> Date = Date.init
+    ) -> GameCenterDeliveryCoordinator {
+        GameCenterDeliveryCoordinator(
+            submissionChannel: submissionChannel,
+            service: service,
+            now: now
+        )
+    }
 
     func authenticate() async -> GameCenterAuthenticationState {
         await service.authenticate()
@@ -151,13 +215,13 @@ actor GameCenterDeliveryCoordinator {
 
         let submission: LocalGameCenterPreparedSubmissionV1
         do {
-            guard let prepared = try await repository.prepareGameCenterSubmission(
-                for: playerID,
-                session: session
-            ) else {
+            guard let prepared = try await submissionChannel
+                .prepareGameCenterSubmission(for: playerID) else {
                 return .noPendingSubmission(playerID)
             }
             submission = prepared
+        } catch is GameCenterSubmissionOwnershipConflictError {
+            return .retained(.ownershipConflict)
         } catch {
             return .retained(.repositoryRejected)
         }
@@ -189,10 +253,9 @@ actor GameCenterDeliveryCoordinator {
         )
         guard !Task.isCancelled else { return .retained(.cancelled) }
         do {
-            _ = try await repository.acknowledgeGameCenterSubmission(
+            _ = try await submissionChannel.acknowledgeGameCenterSubmission(
                 submission,
                 successfulResult: successfulResult,
-                session: session,
                 at: now()
             )
         } catch is CancellationError {

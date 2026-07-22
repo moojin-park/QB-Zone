@@ -54,15 +54,15 @@ ProductionAppRuntime (one retained process graph)
             <- one CompletedRun callback
   -> owned AppleDiagnosticsRuntime task
        -> privacy-safe OSLog and MetricKit adapters
-  -> UIKit GameKit presentation handoff (retained seam; not connected)
+  -> owned ProductionGameCenterRuntime
+       -> private-default-zone immutable iCloud/Game Center owner claim
+       -> exact player-bucket attribution, submission, and acknowledgement
+       -> UIKit GameKit presentation handoff
 ```
 
 The following foundations remain outside the retained live runtime graph:
 
 ```text
-GameCenterDeliveryCoordinator
-  -> exact player-bucket preparation, single-flight submission,
-     same-player revalidation, and capability-bound acknowledgement
 RewardedAdVerificationClient
   -> challenge preparation, server-status correlation,
      process-only verified claim, and durable-delivery request
@@ -73,9 +73,11 @@ RewardedAdRecoveryCoordinator
 
 `ProductionAppRuntime` advertises purchases and private-cloud sync only when
 the complete validated CloudKit and StoreKit configuration can construct the
-concrete account runtime graph. Missing or invalid configuration keeps both
-capabilities unavailable without blocking local gameplay. Game Center and
-rewarded-ad coordinators are not yet retained.
+concrete account runtime graph. Game Center is retained only when that same
+private-cloud account graph and the exact launch GameKit identifiers are both
+valid. Missing or invalid configuration keeps the affected capability
+unavailable without blocking local gameplay. Rewarded-ad orchestration is not
+yet retained.
 
 - SwiftUI owns launch, navigation, menus, settings, locker, store, results, and
   service presentation.
@@ -267,8 +269,8 @@ exposed.
 | Spend coins or unlock a new item                 | Requires current iCloud economy state                                          |
 | Buy a coin pack                                  | Requires current private-iCloud authority; no StoreKit sheet opens offline                                              |
 | Watch and receive a rewarded advertisement       | Not enabled; dormant recovery is implemented, while live delivery requires consent, SDK readiness, authenticated server verification, retained orchestration, and current private-iCloud economy authority |
-| Game Center authentication                       | Not connected; future authentication remains optional and never blocks gameplay                                      |
-| Leaderboard and achievements                     | Exact player-bound maxima may later submit; release policy also authorizes one durable claim of unbound maxima to the first authenticated player |
+| Game Center authentication                       | Foreground-only and optional; unavailable authentication never blocks gameplay                                        |
+| Leaderboard and achievements                     | Maxima remain durably queued offline and deliver after a current iCloud route, immutable owner proof, and authenticated matching Game Center player are all available |
 
 An iCloud account change closes the current sync context and opens a separate
 account-scoped profile. A known profile from one iCloud identity is never
@@ -277,13 +279,18 @@ automatically claimed on its first iCloud association, and offline changes
 automatically reconcile whenever that same account returns. Source profiles
 remain preserved until the claimed or merged cloud state is durably verified.
 
-Game Center bound buckets are scoped to the exact authenticated player. The
-current foundation keeps unknown-provenance work in a separate unbound
-quarantine and exposes no claim API yet. Release policy authorizes that future
-live integration to claim the unbound score and achievement maxima exactly once
-to the first successfully authenticated player, durably preventing a later
-player from claiming the same values. Offline work carrying a known player
-identity remains player-bound and queues for later submission.
+Game Center bound buckets are scoped to the exact authenticated player.
+Unknown-provenance work stays in a separate unbound quarantine until the live
+runtime reads or creates an immutable owner claim in the active iCloud
+account's private default zone. The claim record name is derived from the
+opaque iCloud account identifier, its canonical payload binds that account,
+durable profile binding, and exact Game Center player, and create races resolve
+only through an exact readback. A sealed process proof then authorizes one
+durable attribution of unbound maxima to that player. Submission revalidates
+the routed repository and both Apple identities around every boundary;
+acknowledgement removes only the exact successfully delivered maxima. Offline
+work carrying a known player identity remains player-bound and queues for a
+later foreground delivery.
 
 ## Cloud merge rules
 
@@ -538,13 +545,16 @@ unbound work for an authenticated player.
 
 ## Platform service contracts
 
-- Game Center foundation, dormant: canonical V4 stores sparse maxima under
-  exact Game Center player IDs plus a separate unbound quarantine. Preparation
-  freezes one exact player bucket; delivery is single-flight, revalidates the
-  player before and after submission, and acknowledges only with the exact
-  process capability. Unbound work is never submitted. Release exposes no
-  delivery-coordinator construction path until a trusted in-file GameKit
-  factory and retained composition are added.
+- Game Center live composition: canonical V4 stores sparse maxima under exact
+  Game Center player IDs plus a separate unbound quarantine. A private-default-
+  zone immutable claim binds the active iCloud account and durable profile to
+  its first authenticated player before unbound work can be attributed.
+  Preparation freezes one exact player bucket; delivery is foreground-only,
+  single-flight, revalidates the player and routed cloud profile before and
+  after provider calls, and acknowledges only with the exact process
+  capability. Scene backgrounding cancels and drains active account and
+  GameKit work; rapid reactivation coalesces one retry for the newest active
+  generation, and UIKit presentation fails closed while inactive.
 - StoreKit online-commerce composition: the runtime owns exactly one account/session
   generation, installs transaction updates before unfinished recovery, loads
   the exact four configured consumables, serializes purchase presentation,
@@ -571,13 +581,13 @@ unbound work for an authenticated player.
   privacy-safe `OSLog` categories and Apple MetricKit delivery. Version 1 uses
   Apple-only crash diagnostics and does not add a third-party crash SDK.
 
-Integration state is service-specific. The StoreKit SDK adapter is retained by
-the configured production account graph, while GameKit delivery is not. The Game Center
-success-capable fake and delivery-coordinator constructor are Debug-only.
+Integration state is service-specific. The configured production account graph
+retains StoreKit, and the app runtime retains GameKit delivery and presentation
+only when the exact CloudKit and Game Center configuration is complete.
 Rewarded-ad verification has a transport protocol and Debug injection seam but
 no authenticated production transport; its recovery coordinator is also not
-retained. Menus therefore continue to expose explicit unavailable states
-without blocking gameplay.
+retained. Unavailable services continue to fail closed without blocking
+gameplay.
 
 ## Integration guardrails
 
@@ -586,9 +596,10 @@ without blocking gameplay.
 - Each implementation wave lands with focused tests and a full native-suite run.
 - Resource, capability, dependency, or Release-composition changes also require
   an unsigned archive before commit.
-- Production IDs, entitlements, SDK credentials, ad units, CloudKit schema, and
-  App Store Connect records remain injected configuration, never test literals
-  embedded in a Release build.
+- Production IDs, entitlements, CloudKit schema names, and release contact
+  destinations are explicit shipping configuration validated against the
+  tracked launch contract. SDK credentials and ad units must remain outside
+  source control, and App Store Connect records remain external provider state.
 - An unsigned archive may prove that Release compilation selected the
   Production CloudKit condition, but it does not prove codesigned entitlements.
   Before TestFlight, inspect the signed/exported app and verify the Production

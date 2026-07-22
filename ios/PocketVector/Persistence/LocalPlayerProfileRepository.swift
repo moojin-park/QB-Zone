@@ -24,6 +24,11 @@ enum LocalGameCenterSubmissionError: Error, Equatable, Sendable {
     case unsupportedPendingAchievementIDs([AchievementID])
 }
 
+enum LocalGameCenterAttributionError: Error, Equatable, Sendable {
+    case ownershipProofMismatch
+    case playerBucketLimitReached
+}
+
 /// Pure fail-closed planning shared by durable repository preparation and
 /// focused validation tests. It accepts only the exact eight launch IDs and
 /// never mutates the queue it inspects.
@@ -594,6 +599,49 @@ actor LocalPlayerProfileRepository {
             session: session,
             batch: batch
         )
+    }
+
+    /// Durably assigns previously unbound maxima only after the immutable
+    /// private-cloud owner claim has been read back for this exact profile and
+    /// Game Center player. A failed or mismatched proof leaves every byte
+    /// unchanged. Later gameplay may enqueue new unbound maxima, which are
+    /// attributed through the same boundary on the next explicit delivery.
+    @discardableResult
+    func attributeUnboundGameCenterPending(
+        to playerID: GameCenterPlayerID,
+        ownershipProof: ProductionGameCenterOwnershipProof,
+        session: ProfileSessionToken,
+        at date: Date = Date()
+    ) throws -> LocalPlayerProfileSnapshot {
+        try Task.checkCancellation()
+        var next = try requireActiveDocument()
+        try validateSession(session, against: next)
+        try rejectMutationDuringHydration()
+        guard ownershipProof.authorizes(
+            playerID: playerID,
+            session: session
+        ) else {
+            throw LocalGameCenterAttributionError.ownershipProofMismatch
+        }
+
+        let unbound = next.player.pendingGameCenter.unboundPending
+        guard !unbound.isEmpty else { return try makeSnapshot(for: next) }
+        guard next.player.pendingGameCenter.pendingByPlayerID[playerID] != nil
+                || next.player.pendingGameCenter.pendingByPlayerID.count
+                    < PlayerScopedGameCenterQueueV1.maximumPlayerBucketCount else {
+            throw LocalGameCenterAttributionError.playerBucketLimitReached
+        }
+
+        var bound = next.player.pendingGameCenter.pendingByPlayerID[playerID]
+            ?? GameCenterPendingMaximaV1()
+        bound.mergeMaxima(from: unbound)
+        next.player.pendingGameCenter.pendingByPlayerID[playerID] = bound
+        next.player.pendingGameCenter.unboundPending =
+            GameCenterPendingMaximaV1()
+
+        try incrementRevisions(of: &next, economyChanged: false)
+        try persist(next, at: date)
+        return try makeSnapshot(for: next)
     }
 
     /// Removes only values proven submitted by the exact prepared capability.

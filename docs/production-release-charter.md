@@ -255,8 +255,10 @@ Required order:
 
 ## Open owner approvals
 
-- Choose the permanent bundle identifier.
-- Provide or approve the privacy and support domains before App Store setup.
+No launch-identity or release-contact approval remains open. The permanent
+bundle identifier is `com.pocketvector.game`; Privacy and Support use
+`https://gridironchronicle.com/pocket-vector/privacy`, with support email
+`andy@gridironchronicle.com`.
 
 ## Decision log
 
@@ -287,3 +289,6 @@ Required order:
 - **2026-07-17:** Approved Settings as the main-menu entry point for Privacy and
   Support. The destination remains required, but a separate Privacy and Support
   control on the main menu is not required.
+- **2026-07-22:** Approved `com.pocketvector.game` as the permanent bundle
+  identifier and the Gridiron Chronicle Pocket Vector page as both the Privacy
+  and Support destination.

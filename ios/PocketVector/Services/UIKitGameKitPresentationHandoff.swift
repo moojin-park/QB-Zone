@@ -115,6 +115,7 @@ final class UIKitGameKitPresentationHandoff: NSObject, GameKitPresentationHandof
     private let operations: UIKitGameKitPresentationOperations
     private weak var anchorViewController: UIViewController?
     private var activeSession: PresentationSession?
+    private var applicationIsActive = false
 
     override convenience init() {
         self.init(operations: .live)
@@ -139,6 +140,25 @@ final class UIKitGameKitPresentationHandoff: NSObject, GameKitPresentationHandof
         anchorViewController = nil
 
         guard let session = activeSession else { return }
+        switch session.kind {
+        case .authentication:
+            if session.authenticationContinuation != nil {
+                session.pendingAuthenticationDisposition = .declined
+            }
+        case .gameCenter:
+            if session.gameCenterContinuation != nil {
+                session.pendingGameCenterResult = .failure(.lifecycleEnded)
+            }
+        }
+        requestDismissal(of: session)
+    }
+
+    /// Scene activation is an explicit presentation prerequisite. The anchor
+    /// may remain attached while UIKit backgrounds its scene, so attachment
+    /// alone is not sufficient authority to show GameKit UI.
+    func setApplicationActive(_ isActive: Bool) {
+        applicationIsActive = isActive
+        guard !isActive, let session = activeSession else { return }
         switch session.kind {
         case .authentication:
             if session.authenticationContinuation != nil {
@@ -264,7 +284,8 @@ final class UIKitGameKitPresentationHandoff: NSObject, GameKitPresentationHandof
     }
 
     private func resolvedPresenter() -> UIViewController? {
-        guard let anchorViewController,
+        guard applicationIsActive,
+              let anchorViewController,
               let window = anchorViewController.viewIfLoaded?.window,
               let rootViewController = window.rootViewController else {
             return nil

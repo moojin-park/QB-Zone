@@ -36,6 +36,7 @@ final class UIKitGameKitPresentationHandoffTests: XCTestCase {
     func testUnavailableAnchorDeclinesAuthenticationAndThrowsTypedUnavailable() async {
         let driver = PresentationDriver()
         let handoff = UIKitGameKitPresentationHandoff(operations: driver.operations)
+        handoff.setApplicationActive(true)
         let detachedAnchor = UIViewController()
         detachedAnchor.loadViewIfNeeded()
         handoff.attach(anchor: detachedAnchor)
@@ -55,6 +56,7 @@ final class UIKitGameKitPresentationHandoffTests: XCTestCase {
     func testGameCenterDelegateDismissesBeforeResumingExactlyOnce() async {
         let driver = PresentationDriver()
         let handoff = UIKitGameKitPresentationHandoff(operations: driver.operations)
+        handoff.setApplicationActive(true)
         let harness = WindowHarness()
         defer { harness.close() }
         handoff.attach(anchor: harness.anchor)
@@ -88,6 +90,7 @@ final class UIKitGameKitPresentationHandoffTests: XCTestCase {
     func testBusyRequestsFailClosedAndDetachResumesLifecycleEndedAfterDismissal() async {
         let driver = PresentationDriver()
         let handoff = UIKitGameKitPresentationHandoff(operations: driver.operations)
+        handoff.setApplicationActive(true)
         let harness = WindowHarness()
         defer { harness.close() }
         handoff.attach(anchor: harness.anchor)
@@ -127,6 +130,7 @@ final class UIKitGameKitPresentationHandoffTests: XCTestCase {
     func testCurrentDetachOverridesPendingDelegateSuccessWithoutDoubleResume() async {
         let driver = PresentationDriver()
         let handoff = UIKitGameKitPresentationHandoff(operations: driver.operations)
+        handoff.setApplicationActive(true)
         let harness = WindowHarness()
         defer { harness.close() }
         handoff.attach(anchor: harness.anchor)
@@ -153,6 +157,7 @@ final class UIKitGameKitPresentationHandoffTests: XCTestCase {
     func testDetachDuringPresentationWaitsForDismissalAndReturnsLifecycleEnded() async {
         let driver = PresentationDriver()
         let handoff = UIKitGameKitPresentationHandoff(operations: driver.operations)
+        handoff.setApplicationActive(true)
         let harness = WindowHarness()
         defer { harness.close() }
         handoff.attach(anchor: harness.anchor)
@@ -192,6 +197,7 @@ final class UIKitGameKitPresentationHandoffTests: XCTestCase {
     func testAuthenticationDetachDuringPresentationWaitsForAcceptanceAndCompletesOnce() async {
         let driver = PresentationDriver()
         let handoff = UIKitGameKitPresentationHandoff(operations: driver.operations)
+        handoff.setApplicationActive(true)
         let harness = WindowHarness()
         defer { harness.close() }
         handoff.attach(anchor: harness.anchor)
@@ -230,6 +236,7 @@ final class UIKitGameKitPresentationHandoffTests: XCTestCase {
     func testDetachDuringRejectedPresentationsCompletesDirectlyWithoutDismissal() async {
         let driver = PresentationDriver()
         let handoff = UIKitGameKitPresentationHandoff(operations: driver.operations)
+        handoff.setApplicationActive(true)
         let harness = WindowHarness()
         defer { harness.close() }
         handoff.attach(anchor: harness.anchor)
@@ -266,6 +273,7 @@ final class UIKitGameKitPresentationHandoffTests: XCTestCase {
     func testStaleDetachKeepsReplacementAnchorAndUsesItsPresentedChain() async {
         let driver = PresentationDriver()
         let handoff = UIKitGameKitPresentationHandoff(operations: driver.operations)
+        handoff.setApplicationActive(true)
         let firstHarness = WindowHarness()
         let replacementHarness = WindowHarness()
         defer {
@@ -299,6 +307,7 @@ final class UIKitGameKitPresentationHandoffTests: XCTestCase {
     func testRejectedUIKitPresentationsFailClosedWithoutDismissal() async {
         let driver = PresentationDriver()
         let handoff = UIKitGameKitPresentationHandoff(operations: driver.operations)
+        handoff.setApplicationActive(true)
         let harness = WindowHarness()
         defer { harness.close() }
         handoff.attach(anchor: harness.anchor)
@@ -320,6 +329,27 @@ final class UIKitGameKitPresentationHandoffTests: XCTestCase {
 
         XCTAssertEqual(probe.outcomes, [.failure(.unavailable)])
         XCTAssertEqual(driver.dismissalCalls.count, 0)
+    }
+
+    func testInactiveApplicationRejectsAuthenticationAndGameCenterPresentation() async {
+        let driver = PresentationDriver()
+        let handoff = UIKitGameKitPresentationHandoff(operations: driver.operations)
+        let harness = WindowHarness()
+        defer { harness.close() }
+        handoff.attach(anchor: harness.anchor)
+
+        let authentication = await handoff.presentGameKitAuthentication(
+            UIViewController()
+        )
+        XCTAssertEqual(authentication, .declined)
+
+        do {
+            try await handoff.presentGameKit(makeGameCenterController())
+            XCTFail("An inactive application must not present Game Center")
+        } catch {
+            XCTAssertEqual(error as? UIKitGameKitPresentationError, .unavailable)
+        }
+        XCTAssertTrue(driver.presentationCalls.isEmpty)
     }
 
     private func observePresentation(

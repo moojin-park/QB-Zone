@@ -732,6 +732,32 @@ final class AppCoordinator {
         }
     }
 
+    /// Applies a retained account-activation projection without creating a
+    /// user request or presenting a notice. A concurrent foreground mutation
+    /// keeps priority and causes this advisory refresh to be retried later.
+    @discardableResult
+    func applyBackgroundAccountRefresh(
+        _ result: AppExternalRequestResult
+    ) -> Bool {
+        guard bootstrapState == .ready,
+              pendingRequest == nil,
+              !isRunSettlementInFlight else {
+            return false
+        }
+        switch result {
+        case let .applied(snapshot):
+            return applyAuthoritativeUpdate(snapshot).acceptsRepositorySuccess
+        case let .adoptedVerifiedPrivateCloud(snapshot, authority, message):
+            guard message == nil else { return false }
+            return applyVerifiedSessionAdoption(
+                snapshot,
+                authority: authority
+            ).acceptsRepositorySuccess
+        case .appliedWithNotice, .completed, .failed:
+            return false
+        }
+    }
+
     private func applyVerifiedSessionAdoption(
         _ authoritativeSnapshot: AuthoritativeAppStateSnapshot,
         authority: ProductionVerifiedSessionAdoption

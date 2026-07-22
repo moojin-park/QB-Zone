@@ -944,11 +944,19 @@ final class ProductionAppRuntime {
     let accountRuntimeRouter: ProductionAccountRuntimeRouter?
 
     private let composition: ProductionAppComposition?
+    private let gameCenterRuntime: ProductionGameCenterRuntime?
     private let authoritativeStateChannel: ProductionAuthoritativeStateChannel
     private let diagnostics: AppleDiagnosticsRuntime
     private var coordinatorTask: Task<Void, Never>?
     private var coordinatorTaskID: UUID?
     private var diagnosticsTask: Task<Void, Never>?
+    private var foregroundAccountTask: Task<Void, Never>?
+    private var foregroundAccountTaskID: UUID?
+    private var foregroundRefreshRequestedWhileActive = false
+    private var applicationIsActive = false
+    private var applicationActivationGeneration: UInt64 = 0
+    private let beforeApplyingForegroundAccountProjection:
+        (@MainActor () async -> Void)?
 
     init(
         coordinator: AppCoordinator,
@@ -958,19 +966,28 @@ final class ProductionAppRuntime {
         composition: ProductionAppComposition?,
         authoritativeStateChannel: ProductionAuthoritativeStateChannel,
         diagnostics: AppleDiagnosticsRuntime,
-        accountRuntimeRouter: ProductionAccountRuntimeRouter? = nil
+        accountRuntimeRouter: ProductionAccountRuntimeRouter? = nil,
+        gameCenterRuntime: ProductionGameCenterRuntime? = nil,
+        beforeApplyingForegroundAccountProjection:
+            (@MainActor () async -> Void)? = nil
     ) {
         self.coordinator = coordinator
         self.presentationHandoff = presentationHandoff
         self.serviceConfiguration = serviceConfiguration
         self.runtimeCapabilities = runtimeCapabilities
         self.composition = composition
+        self.gameCenterRuntime = gameCenterRuntime
         self.authoritativeStateChannel = authoritativeStateChannel
         self.diagnostics = diagnostics
         self.accountRuntimeRouter = accountRuntimeRouter
+        self.beforeApplyingForegroundAccountProjection =
+            beforeApplyingForegroundAccountProjection
         coordinatorTask = nil
         coordinatorTaskID = nil
         diagnosticsTask = nil
+        foregroundAccountTask = nil
+        foregroundAccountTaskID = nil
+        foregroundRefreshRequestedWhileActive = false
     }
 
     static func live(
@@ -1071,11 +1088,26 @@ final class ProductionAppRuntime {
         if let accountDiscovery = accountRuntimeAssembly.accountDiscovery {
             launchAccountDiscovery.install(accountDiscovery)
         }
+        let gameCenterRuntime: ProductionGameCenterRuntime?
+        if accountGraphIsComplete,
+           case let .validated(gameCenterConfiguration) =
+               serviceConfiguration.gameCenter,
+           case let .validated(cloudConfiguration) =
+               serviceConfiguration.cloudWrite {
+            gameCenterRuntime = ProductionGameCenterRuntime.live(
+                configuration: gameCenterConfiguration,
+                cloudConfiguration: cloudConfiguration,
+                repositoryRouter: repositoryRouter,
+                presentationHandoff: presentationHandoff
+            )
+        } else {
+            gameCenterRuntime = nil
+        }
         let runtimeCapabilities = ProductionRuntimeCapabilities(
             serviceAvailability: AppServiceAvailability(
                 rewardedAdsAreConfigured: false,
                 purchasesAreConfigured: accountGraphIsComplete,
-                gameCenterIsConfigured: false,
+                gameCenterIsConfigured: gameCenterRuntime != nil,
                 iCloudSyncIsConfigured: accountGraphIsComplete
             )
         )
@@ -1089,7 +1121,8 @@ final class ProductionAppRuntime {
             diagnosticsSink: diagnostics.sink,
             repository: sourceRepository,
             repositoryRouter: repositoryRouter,
-            commerceRequestService: accountRuntimeRouter
+            commerceRequestService: accountRuntimeRouter,
+            gameCenterRuntime: gameCenterRuntime
         )
         var environment = composition.environment
         environment.privacySupportConfiguration = privacySupportConfiguration
@@ -1105,7 +1138,8 @@ final class ProductionAppRuntime {
             composition: composition,
             authoritativeStateChannel: channel,
             diagnostics: diagnostics,
-            accountRuntimeRouter: accountRuntimeRouter
+            accountRuntimeRouter: accountRuntimeRouter,
+            gameCenterRuntime: gameCenterRuntime
         )
     }
 
@@ -1120,8 +1154,14 @@ final class ProductionAppRuntime {
         guard coordinatorTask == nil else { return }
         let taskID = UUID()
         let coordinator = self.coordinator
+        let composition = self.composition
         coordinatorTaskID = taskID
         coordinatorTask = Task { @MainActor [weak self] in
+            if let composition,
+               await composition.prepareRepositoryForAccountActivation() {
+                await coordinator.bootstrap()
+                self?.gameCenterDidEnterForeground()
+            }
             await coordinator.run()
             self?.coordinatorTaskDidFinish(taskID)
         }
@@ -1135,16 +1175,102 @@ final class ProductionAppRuntime {
         }
     }
 
+    /// The scene lifecycle is the authority for work that may invoke GameKit
+    /// authentication or presentation. A generation prevents a slow task from
+    /// an earlier foreground interval from publishing after backgrounding.
+    func applicationDidBecomeActive() {
+        guard !applicationIsActive else { return }
+        applicationIsActive = true
+        applicationActivationGeneration &+= 1
+        presentationHandoff.setApplicationActive(true)
+        gameCenterRuntime?.setApplicationActive(true)
+        gameCenterDidEnterForeground()
+    }
+
+    func applicationDidEnterBackground() {
+        applicationIsActive = false
+        applicationActivationGeneration &+= 1
+        presentationHandoff.setApplicationActive(false)
+        gameCenterRuntime?.setApplicationActive(false)
+        foregroundAccountTask?.cancel()
+        foregroundRefreshRequestedWhileActive = false
+    }
+
+    func gameCenterDidEnterForeground() {
+        guard applicationIsActive,
+              coordinator.bootstrapState == .ready else {
+            return
+        }
+        guard foregroundAccountTask == nil else {
+            foregroundRefreshRequestedWhileActive = true
+            return
+        }
+        foregroundRefreshRequestedWhileActive = false
+        let taskID = UUID()
+        let activationGeneration = applicationActivationGeneration
+        let coordinator = self.coordinator
+        let composition = self.composition
+        let accountRuntimeRouter = self.accountRuntimeRouter
+        let gameCenterRuntime = self.gameCenterRuntime
+        let beforeApplyingForegroundAccountProjection =
+            self.beforeApplyingForegroundAccountProjection
+        foregroundAccountTaskID = taskID
+        foregroundAccountTask = Task { @MainActor [weak self] in
+            defer { self?.foregroundAccountTaskDidFinish(taskID) }
+            _ = await accountRuntimeRouter?.refresh()
+            guard !Task.isCancelled else { return }
+            var accountProjectionIsReconciled = composition == nil
+            while !Task.isCancelled, let composition {
+                if coordinator.isRequestInFlight {
+                    try? await Task.sleep(for: .milliseconds(50))
+                    continue
+                }
+                guard let result = await composition
+                    .accountRuntimeRefreshResult() else {
+                    break
+                }
+                await beforeApplyingForegroundAccountProjection?()
+                guard !Task.isCancelled,
+                      self?.applicationIsActive == true,
+                      self?.applicationActivationGeneration
+                        == activationGeneration else {
+                    break
+                }
+                // The repository read may suspend while a foreground mutation
+                // starts. In that case retry after the blocker so composition
+                // and AppCoordinator cannot remain on different sessions.
+                guard !coordinator.isRequestInFlight else { continue }
+                accountProjectionIsReconciled = coordinator
+                    .applyBackgroundAccountRefresh(result)
+                break
+            }
+            if !Task.isCancelled,
+               self?.applicationIsActive == true,
+               self?.applicationActivationGeneration == activationGeneration,
+               accountProjectionIsReconciled {
+                gameCenterRuntime?.scheduleDelivery()
+            }
+        }
+    }
+
     /// Explicit owner shutdown for tests and future scene/process lifecycle
     /// integration. Deinit retains a best-effort fallback because it cannot
     /// itself await account-scoped producers.
     func shutdownAccountRuntime() async {
+        let foregroundTask = foregroundAccountTask
+        foregroundTask?.cancel()
+        foregroundAccountTask = nil
+        foregroundAccountTaskID = nil
+        foregroundRefreshRequestedWhileActive = false
+        await foregroundTask?.value
+        gameCenterRuntime?.shutdown()
         await accountRuntimeRouter?.shutdown()
     }
 
     deinit {
         coordinatorTask?.cancel()
         diagnosticsTask?.cancel()
+        foregroundAccountTask?.cancel()
         if let accountRuntimeRouter {
             Task {
                 await accountRuntimeRouter.shutdown()
@@ -1156,5 +1282,18 @@ final class ProductionAppRuntime {
         guard coordinatorTaskID == taskID else { return }
         coordinatorTask = nil
         coordinatorTaskID = nil
+    }
+
+    private func foregroundAccountTaskDidFinish(_ taskID: UUID) {
+        guard foregroundAccountTaskID == taskID else { return }
+        foregroundAccountTask = nil
+        foregroundAccountTaskID = nil
+        guard applicationIsActive,
+              foregroundRefreshRequestedWhileActive else {
+            foregroundRefreshRequestedWhileActive = false
+            return
+        }
+        foregroundRefreshRequestedWhileActive = false
+        gameCenterDidEnterForeground()
     }
 }
