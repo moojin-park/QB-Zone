@@ -232,10 +232,10 @@ final class EconomyAchievementTests: XCTestCase {
         }
     }
 
-    func testEightAchievementCatalogTotals600Points() {
-        XCTAssertEqual(AchievementCatalog.launch.count, 8)
-        XCTAssertEqual(Set(AchievementCatalog.launch.map(\.id)).count, 8)
-        XCTAssertEqual(AchievementCatalog.launch.reduce(0) { $0 + $1.points }, 600)
+    func testFourteenAchievementCatalogTotals1000Points() {
+        XCTAssertEqual(AchievementCatalog.launch.count, 14)
+        XCTAssertEqual(Set(AchievementCatalog.launch.map(\.id)).count, 14)
+        XCTAssertEqual(AchievementCatalog.launch.reduce(0) { $0 + $1.points }, 1_000)
 
         let definitions = Dictionary(
             uniqueKeysWithValues: AchievementCatalog.launch.map { ($0.id, $0) }
@@ -273,26 +273,94 @@ final class EconomyAchievementTests: XCTestCase {
         XCTAssertNil(
             definitions[AchievementID("achievement.century_of_connections.v1")]
         )
+        XCTAssertEqual(
+            [
+                LaunchAchievementID.perfectPocket.rawValue,
+                LaunchAchievementID.franchisePlayer.rawValue,
+                LaunchAchievementID.overcharged.rawValue,
+                LaunchAchievementID.deepThreat.rawValue,
+                LaunchAchievementID.untouchable.rawValue,
+                LaunchAchievementID.maximumOverdrive.rawValue,
+            ],
+            [
+                "achievement.perfect_pocket.v1",
+                "achievement.franchise_player.v1",
+                "achievement.overcharged.v1",
+                "achievement.deep_threat.v1",
+                "achievement.untouchable.v1",
+                "achievement.maximum_overdrive.v1",
+            ]
+        )
+
+        let additions: [AchievementID: AchievementDefinition] = [
+            LaunchAchievementID.perfectPocket: AchievementDefinition(
+                id: LaunchAchievementID.perfectPocket,
+                displayName: "Perfect Pocket",
+                detail: "Finish with 100% accuracy over at least 20 pass attempts.",
+                points: 75,
+                rule: .singleRunAccuracy(percent: 100, minimumAttempts: 20)
+            ),
+            LaunchAchievementID.franchisePlayer: AchievementDefinition(
+                id: LaunchAchievementID.franchisePlayer,
+                displayName: "Franchise Player",
+                detail: "Complete 50 natural runs.",
+                points: 50,
+                rule: .incrementalCareerCompletedRuns(50)
+            ),
+            LaunchAchievementID.overcharged: AchievementDefinition(
+                id: LaunchAchievementID.overcharged,
+                displayName: "Overcharged",
+                detail: "Score three TD Bonus touchdowns during one run.",
+                points: 50,
+                rule: .singleRunBonusTouchdowns(3)
+            ),
+            LaunchAchievementID.deepThreat: AchievementDefinition(
+                id: LaunchAchievementID.deepThreat,
+                displayName: "Deep Threat",
+                detail: "Complete five passes in the deep lane during one run.",
+                points: 50,
+                rule: .singleRunDeepCompletions(5)
+            ),
+            LaunchAchievementID.untouchable: AchievementDefinition(
+                id: LaunchAchievementID.untouchable,
+                displayName: "Untouchable",
+                detail: "Reach 100,000 points during one run.",
+                points: 100,
+                rule: .singleRunScore(100_000)
+            ),
+            LaunchAchievementID.maximumOverdrive: AchievementDefinition(
+                id: LaunchAchievementID.maximumOverdrive,
+                displayName: "Maximum Overdrive",
+                detail: "Score a touchdown with TD Bonus active and the capped 3× multiplier.",
+                points: 75,
+                rule: .singleRunMaximumOverdriveTouchdowns(1)
+            ),
+        ]
+        for (achievementID, expected) in additions {
+            XCTAssertEqual(definitions[achievementID], expected)
+        }
     }
 
-    func testEvaluatorCompletesAllEightAtExactRequirements() {
+    func testEvaluatorCompletesAllFourteenAtExactRequirements() {
         let statistics = RunStatisticsSnapshot(
             attempts: 25,
-            completions: 16,
-            touchdowns: 4,
-            incompletions: 5,
-            longestTouchdownStreak: 4
+            completions: 19,
+            touchdowns: 6,
+            longestTouchdownStreak: 6
         )
         let run = makeRun(
-            score: 65_000,
+            score: 100_000,
             statistics: statistics,
             lanes: Set(LaneID.allCases),
-            bonusTouchdowns: 1
+            bonusTouchdowns: 3,
+            deepCompletions: 5,
+            maximumOverdriveTouchdowns: 1
         )
         var career = CareerStatistics()
-        career.completions = 996
-        career.touchdowns = 4
-        career.bonusTouchdowns = 1
+        career.completedRuns = 50
+        career.completions = 994
+        career.touchdowns = 6
+        career.bonusTouchdowns = 3
         let evaluatedAt = Date(timeIntervalSince1970: 2_000)
 
         let updates = AchievementEvaluator.evaluate(
@@ -302,7 +370,7 @@ final class EconomyAchievementTests: XCTestCase {
             evaluatedAt: evaluatedAt
         )
 
-        XCTAssertEqual(updates.count, 8)
+        XCTAssertEqual(updates.count, 14)
         XCTAssertTrue(updates.allSatisfy { $0.current.percentComplete == 100 })
         XCTAssertTrue(updates.allSatisfy { $0.current.completedAt == evaluatedAt })
     }
@@ -383,6 +451,272 @@ final class EconomyAchievementTests: XCTestCase {
             evaluatedProgress(
                 run: makeRun(score: 0, statistics: belowEightyPercent)
             )[LaunchAchievementID.dialedIn]
+        )
+    }
+
+    func testPerfectPocketRequires20AttemptsAndExactly100PercentAccuracy() {
+        XCTAssertNil(
+            evaluatedProgress(
+                run: makeRun(
+                    score: 0,
+                    statistics: RunStatisticsSnapshot(
+                        attempts: 19,
+                        completions: 19
+                    )
+                )
+            )[LaunchAchievementID.perfectPocket]
+        )
+        XCTAssertNil(
+            evaluatedProgress(
+                run: makeRun(
+                    score: 0,
+                    statistics: RunStatisticsSnapshot(
+                        attempts: 20,
+                        completions: 19,
+                        incompletions: 1
+                    )
+                )
+            )[LaunchAchievementID.perfectPocket]
+        )
+        XCTAssertEqual(
+            evaluatedProgress(
+                run: makeRun(
+                    score: 0,
+                    statistics: RunStatisticsSnapshot(
+                        attempts: 20,
+                        completions: 20
+                    )
+                )
+            )[LaunchAchievementID.perfectPocket]?.percentComplete,
+            100
+        )
+    }
+
+    func testFranchisePlayerProgressesAt49AndCompletesAt50NaturalRuns() {
+        let run = makeRun(score: 0)
+        var career = CareerStatistics()
+        career.completedRuns = 49
+
+        XCTAssertEqual(
+            evaluatedProgress(
+                run: run,
+                career: career
+            )[LaunchAchievementID.franchisePlayer]?.percentComplete,
+            98
+        )
+
+        career.completedRuns = 50
+        XCTAssertEqual(
+            evaluatedProgress(
+                run: run,
+                career: career
+            )[LaunchAchievementID.franchisePlayer]?.percentComplete,
+            100
+        )
+
+        XCTAssertTrue(
+            AchievementEvaluator.evaluate(
+                run: makeRun(score: 0, finishReason: .abandoned),
+                careerAfter: career,
+                existing: [:],
+                evaluatedAt: Date(timeIntervalSince1970: 9_000)
+            ).isEmpty
+        )
+    }
+
+    func testOverchargedDeepThreatUntouchableAndMaximumOverdriveBoundaries() {
+        XCTAssertNil(
+            evaluatedProgress(
+                run: makeRun(score: 99_999, bonusTouchdowns: 2)
+            )[LaunchAchievementID.overcharged]
+        )
+        XCTAssertEqual(
+            evaluatedProgress(
+                run: makeRun(score: 99_999, bonusTouchdowns: 3)
+            )[LaunchAchievementID.overcharged]?.percentComplete,
+            100
+        )
+
+        XCTAssertNil(
+            evaluatedProgress(
+                run: makeRun(
+                    score: 99_999,
+                    statistics: RunStatisticsSnapshot(
+                        attempts: 4,
+                        completions: 4
+                    ),
+                    lanes: [.deep],
+                    deepCompletions: 4
+                )
+            )[LaunchAchievementID.deepThreat]
+        )
+        XCTAssertEqual(
+            evaluatedProgress(
+                run: makeRun(
+                    score: 99_999,
+                    statistics: RunStatisticsSnapshot(
+                        attempts: 5,
+                        completions: 5
+                    ),
+                    lanes: [.deep],
+                    deepCompletions: 5
+                )
+            )[LaunchAchievementID.deepThreat]?.percentComplete,
+            100
+        )
+        XCTAssertNil(
+            evaluatedProgress(
+                run: makeRun(score: 99_999, lanes: [.deep])
+            )[LaunchAchievementID.deepThreat]
+        )
+
+        XCTAssertNil(
+            evaluatedProgress(run: makeRun(score: 99_999))[
+                LaunchAchievementID.untouchable
+            ]
+        )
+        XCTAssertEqual(
+            evaluatedProgress(run: makeRun(score: 100_000))[
+                LaunchAchievementID.untouchable
+            ]?.percentComplete,
+            100
+        )
+
+        XCTAssertNil(
+            evaluatedProgress(
+                run: makeRun(
+                    score: 99_999,
+                    statistics: RunStatisticsSnapshot(
+                        attempts: 3,
+                        touchdowns: 3,
+                        longestTouchdownStreak: 3
+                    ),
+                    lanes: [.touchdown],
+                    bonusTouchdowns: 3,
+                    maximumOverdriveTouchdowns: 0
+                )
+            )[LaunchAchievementID.maximumOverdrive]
+        )
+        XCTAssertEqual(
+            evaluatedProgress(
+                run: makeRun(
+                    score: 99_999,
+                    statistics: RunStatisticsSnapshot(
+                        attempts: 1,
+                        touchdowns: 1,
+                        longestTouchdownStreak: 1
+                    ),
+                    lanes: [.touchdown],
+                    bonusTouchdowns: 1,
+                    maximumOverdriveTouchdowns: 1
+                )
+            )[LaunchAchievementID.maximumOverdrive]?.percentComplete,
+            100
+        )
+    }
+
+    func testCompletedRunDefaultsMissingVersion11FactsWithoutInference() throws {
+        let source = makeRun(
+            score: 100_000,
+            statistics: RunStatisticsSnapshot(
+                attempts: 20,
+                completions: 14,
+                touchdowns: 6,
+                longestTouchdownStreak: 6
+            ),
+            lanes: [.deep, .touchdown],
+            bonusTouchdowns: 3,
+            deepCompletions: 5,
+            maximumOverdriveTouchdowns: 1
+        )
+        let encoded = try JSONEncoder().encode(source)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "deepCompletionCount")
+        object.removeValue(forKey: "maximumOverdriveTouchdownCount")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(CompletedRun.self, from: legacyData)
+
+        XCTAssertEqual(decoded.deepCompletionCount, 0)
+        XCTAssertEqual(decoded.maximumOverdriveTouchdownCount, 0)
+        XCTAssertEqual(decoded.completedLaneIDs, [.deep, .touchdown])
+        XCTAssertEqual(decoded.bonusTouchdownCount, 3)
+        XCTAssertTrue(decoded.achievementFactsAreStructurallyValid)
+        XCTAssertNil(
+            evaluatedProgress(run: decoded)[LaunchAchievementID.deepThreat]
+        )
+        XCTAssertNil(
+            evaluatedProgress(run: decoded)[LaunchAchievementID.maximumOverdrive]
+        )
+    }
+
+    func testCompletedRunAchievementFactStructuralBoundaries() {
+        XCTAssertTrue(
+            makeRun(
+                score: 0,
+                statistics: RunStatisticsSnapshot(
+                    attempts: 2,
+                    completions: 1,
+                    touchdowns: 1
+                ),
+                lanes: [.deep, .touchdown],
+                bonusTouchdowns: 1,
+                deepCompletions: 1,
+                maximumOverdriveTouchdowns: 1
+            ).achievementFactsAreStructurallyValid
+        )
+        XCTAssertFalse(
+            makeRun(
+                score: 0,
+                statistics: RunStatisticsSnapshot(attempts: 2, completions: 2),
+                lanes: [.short],
+                deepCompletions: 1
+            ).achievementFactsAreStructurallyValid
+        )
+        XCTAssertFalse(
+            makeRun(
+                score: 0,
+                statistics: RunStatisticsSnapshot(
+                    attempts: 1,
+                    touchdowns: 1
+                ),
+                lanes: [.deep],
+                bonusTouchdowns: 1,
+                maximumOverdriveTouchdowns: 1
+            ).achievementFactsAreStructurallyValid
+        )
+
+        let invalidRun = makeRun(
+            score: 100_000,
+            statistics: RunStatisticsSnapshot(attempts: 2, completions: 2),
+            lanes: [.deep],
+            deepCompletions: 5
+        )
+        XCTAssertTrue(
+            AchievementEvaluator.evaluate(
+                run: invalidRun,
+                careerAfter: CareerStatistics(),
+                existing: [:],
+                evaluatedAt: Date(timeIntervalSince1970: 9_500)
+            ).isEmpty
+        )
+        XCTAssertFalse(
+            makeRun(
+                score: 0,
+                statistics: RunStatisticsSnapshot(attempts: 2, completions: 2),
+                lanes: [.deep],
+                deepCompletions: 3
+            ).achievementFactsAreStructurallyValid
+        )
+        XCTAssertFalse(
+            makeRun(
+                score: 0,
+                statistics: RunStatisticsSnapshot(attempts: 1, touchdowns: 1),
+                lanes: [.touchdown],
+                bonusTouchdowns: 0,
+                maximumOverdriveTouchdowns: 1
+            ).achievementFactsAreStructurallyValid
         )
     }
 
@@ -690,12 +1024,192 @@ final class EconomyAchievementTests: XCTestCase {
         )
     }
 
-    func testAchievementSemanticFingerprintIncludesV2TransitionContract() {
+    func testCatalogV2ToV3TransitionDeclaresExactAdditiveContract() {
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.sourceCatalogSemanticIdentifier,
+            "pocket-vector-launch-achievement-catalog-semantics-v2"
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.targetCatalogSemanticIdentifier,
+            "pocket-vector-launch-achievement-catalog-semantics-v3"
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.addedAchievementIDs,
+            [
+                LaunchAchievementID.perfectPocket,
+                LaunchAchievementID.franchisePlayer,
+                LaunchAchievementID.overcharged,
+                LaunchAchievementID.deepThreat,
+                LaunchAchievementID.untouchable,
+                LaunchAchievementID.maximumOverdrive,
+            ]
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3
+                .historicallyReplayableAchievementIDs,
+            [
+                LaunchAchievementID.perfectPocket,
+                LaunchAchievementID.franchisePlayer,
+                LaunchAchievementID.overcharged,
+                LaunchAchievementID.untouchable,
+            ]
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.nonretroactiveAchievementIDs,
+            [
+                LaunchAchievementID.deepThreat,
+                LaunchAchievementID.maximumOverdrive,
+            ]
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.legacyDeepCompletionCount,
+            0
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3
+                .legacyMaximumOverdriveTouchdownCount,
+            0
+        )
+    }
+
+    func testCatalogV2ToV3ReplaysOnlyProvableHistoricalAchievements() {
+        let firstDate = Date(timeIntervalSince1970: 10_000)
+        var records = (0 ..< 50).map { index in
+            CompletedRunRecord(
+                run: makeRun(score: 0),
+                recordedAt: firstDate.addingTimeInterval(Double(index)),
+                rewardCoins: 10
+            )
+        }
+        let qualifying = CompletedRunRecord(
+            run: makeRun(
+                score: 100_000,
+                statistics: RunStatisticsSnapshot(
+                    attempts: 20,
+                    completions: 14,
+                    touchdowns: 6,
+                    longestTouchdownStreak: 6
+                ),
+                lanes: [.deep, .touchdown],
+                bonusTouchdowns: 3
+            ),
+            recordedAt: firstDate.addingTimeInterval(-1),
+            rewardCoins: 40
+        )
+        records.append(qualifying)
+
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.recomputedPercent(
+                for: LaunchAchievementID.perfectPocket,
+                completedRuns: records
+            ),
+            100
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.recomputedPercent(
+                for: LaunchAchievementID.franchisePlayer,
+                completedRuns: Array(records.prefix(49))
+            ),
+            98
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.recomputedPercent(
+                for: LaunchAchievementID.franchisePlayer,
+                completedRuns: records
+            ),
+            100
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.recomputedPercent(
+                for: LaunchAchievementID.overcharged,
+                completedRuns: records
+            ),
+            100
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.recomputedPercent(
+                for: LaunchAchievementID.untouchable,
+                completedRuns: records
+            ),
+            100
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.recomputedPercent(
+                for: LaunchAchievementID.deepThreat,
+                completedRuns: records
+            ),
+            0
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.recomputedPercent(
+                for: LaunchAchievementID.maximumOverdrive,
+                completedRuns: records
+            ),
+            0
+        )
+        XCTAssertNil(
+            AchievementCatalogTransitionV2ToV3.recomputedCompletedAt(
+                for: LaunchAchievementID.deepThreat,
+                completedRuns: records
+            )
+        )
+        XCTAssertNil(
+            AchievementCatalogTransitionV2ToV3.recomputedCompletedAt(
+                for: LaunchAchievementID.maximumOverdrive,
+                completedRuns: records
+            )
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.recomputedCompletedAt(
+                for: LaunchAchievementID.perfectPocket,
+                completedRuns: records
+            ),
+            qualifying.recordedAt
+        )
+        XCTAssertNil(
+            AchievementCatalogTransitionV2ToV3.recomputedPercent(
+                for: LaunchAchievementID.firstRead,
+                completedRuns: records
+            )
+        )
+    }
+
+    func testCatalogV2ToV3DatesFranchiseAtFiftiethNaturalRun() {
+        let baseDate = Date(timeIntervalSince1970: 20_000)
+        let naturalRuns = (0 ..< 50).map { index in
+            CompletedRunRecord(
+                run: makeRun(score: 0),
+                recordedAt: baseDate.addingTimeInterval(Double(index)),
+                rewardCoins: 10
+            )
+        }
+        let abandoned = CompletedRunRecord(
+            run: makeRun(score: 100_000, finishReason: .abandoned),
+            recordedAt: baseDate.addingTimeInterval(-10),
+            rewardCoins: 0
+        )
+
+        XCTAssertNil(
+            AchievementCatalogTransitionV2ToV3.recomputedCompletedAt(
+                for: LaunchAchievementID.franchisePlayer,
+                completedRuns: Array(naturalRuns.prefix(49)) + [abandoned]
+            )
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV2ToV3.recomputedCompletedAt(
+                for: LaunchAchievementID.franchisePlayer,
+                completedRuns: Array(naturalRuns.reversed()) + [abandoned]
+            ),
+            naturalRuns[49].recordedAt
+        )
+    }
+
+    func testAchievementSemanticFingerprintIncludesFrozenV2AndAdditiveV3Contracts() {
         let material = AchievementCatalog.persistedFingerprintMaterial()
 
         XCTAssertEqual(
             AchievementCatalog.persistedSemanticIdentifier,
-            "pocket-vector-launch-achievement-catalog-semantics-v2"
+            "pocket-vector-launch-achievement-catalog-semantics-v3"
         )
         XCTAssertTrue(
             material.contains(
@@ -724,6 +1238,41 @@ final class EconomyAchievementTests: XCTestCase {
             material.contains(
                 AchievementCatalogTransitionV1ToV2
                     .settlementReceiptPreservationPolicyIdentifier
+            )
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.targetCatalogSemanticIdentifier,
+            "pocket-vector-launch-achievement-catalog-semantics-v2"
+        )
+        XCTAssertTrue(
+            material.contains(
+                AchievementCatalogTransitionV2ToV3.persistedSemanticIdentifier
+            )
+        )
+        XCTAssertTrue(
+            material.contains(
+                AchievementCatalogTransitionV2ToV3.legacyRunFactPolicyIdentifier
+            )
+        )
+        XCTAssertTrue(
+            material.contains(
+                AchievementCatalogTransitionV2ToV3.pendingQueuePolicyIdentifier
+            )
+        )
+        XCTAssertTrue(
+            material.contains(
+                AchievementCatalogTransitionV2ToV3.cloudScopePolicyIdentifier
+            )
+        )
+        XCTAssertTrue(material.contains(CompletedRun.deepCompletionCountPolicyIdentifier))
+        XCTAssertTrue(
+            material.contains(
+                AchievementEvaluator.achievementFactValidationPolicyIdentifier
+            )
+        )
+        XCTAssertTrue(
+            material.contains(
+                CompletedRun.maximumOverdriveTouchdownCountPolicyIdentifier
             )
         )
     }
@@ -782,6 +1331,8 @@ final class EconomyAchievementTests: XCTestCase {
         ),
         lanes: Set<LaneID> = [],
         bonusTouchdowns: Int = 0,
+        deepCompletions: Int = 0,
+        maximumOverdriveTouchdowns: Int = 0,
         economyVersion: Int = EconomyConfiguration.currentVersion,
         elapsedGameplayMilliseconds: Int = 60_000
     ) -> CompletedRun {
@@ -804,7 +1355,9 @@ final class EconomyAchievementTests: XCTestCase {
             score: score,
             statistics: statistics,
             completedLaneIDs: lanes,
-            bonusTouchdownCount: bonusTouchdowns
+            bonusTouchdownCount: bonusTouchdowns,
+            deepCompletionCount: deepCompletions,
+            maximumOverdriveTouchdownCount: maximumOverdriveTouchdowns
         )
     }
 }

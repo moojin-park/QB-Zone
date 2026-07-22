@@ -135,9 +135,21 @@ struct RunStatisticsSnapshot: Codable, Equatable, Sendable {
 struct CompletedRun: Codable, Equatable, Sendable {
     static let achievementEligibilitySemanticIdentifier =
         "pocket-vector-completed-run-achievement-eligibility-v1"
+    static let achievementFactsSemanticIdentifier =
+        "pocket-vector-completed-run-achievement-facts-v1"
     static let naturalCompletionMinimumElapsedGameplayMilliseconds = 60_000
     static let naturalCompletionElapsedComparisonIdentifier =
         "greater-than-or-equal-v1"
+    static let deepCompletionCountPolicyIdentifier =
+        "count-authoritative-resolution-when-outcome-completion-and-lane-deep-v1"
+    static let maximumOverdriveTouchdownCountPolicyIdentifier =
+        "count-authoritative-same-play-touchdown-with-bonus-active-and-capped-three-x-multiplier-v1"
+    static let achievementNotificationAuthorityPolicyIdentifier =
+        "simulation-resolution-not-feedback-audio-or-ui-delivery-v1"
+    static let legacyAchievementFactsDefaultPolicyIdentifier =
+        "missing-deep-and-maximum-overdrive-facts-default-to-zero-without-inference-v1"
+    static let achievementFactsStructuralValidationPolicyIdentifier =
+        "deep-lte-completions-and-deep-lane-when-positive-maximum-overdrive-lte-touchdowns-and-bonus-and-touchdown-lane-when-positive-v1"
 
     let configuration: RunConfiguration
     let endedAt: Date
@@ -147,6 +159,8 @@ struct CompletedRun: Codable, Equatable, Sendable {
     let statistics: RunStatisticsSnapshot
     let completedLaneIDs: Set<LaneID>
     let bonusTouchdownCount: Int
+    let deepCompletionCount: Int
+    let maximumOverdriveTouchdownCount: Int
 
     enum CodingKeys: String, CodingKey, CaseIterable {
         case configuration
@@ -157,6 +171,8 @@ struct CompletedRun: Codable, Equatable, Sendable {
         case statistics
         case completedLaneIDs
         case bonusTouchdownCount
+        case deepCompletionCount
+        case maximumOverdriveTouchdownCount
     }
 
     static var persistedFieldManifest: String {
@@ -172,6 +188,127 @@ struct CompletedRun: Codable, Equatable, Sendable {
             "elapsedComparison",
             naturalCompletionElapsedComparisonIdentifier,
         ]
+    }
+
+    static var achievementFactsFingerprintMaterial: [String] {
+        [
+            achievementFactsSemanticIdentifier,
+            "deepCompletionCountPolicy", deepCompletionCountPolicyIdentifier,
+            "maximumOverdriveTouchdownCountPolicy",
+            maximumOverdriveTouchdownCountPolicyIdentifier,
+            "notificationAuthorityPolicy",
+            achievementNotificationAuthorityPolicyIdentifier,
+            "legacyDefaultPolicy", legacyAchievementFactsDefaultPolicyIdentifier,
+            "structuralValidationPolicy",
+            achievementFactsStructuralValidationPolicyIdentifier,
+            "legacyDeepCompletionCount", "0",
+            "legacyMaximumOverdriveTouchdownCount", "0",
+        ]
+    }
+
+    init(
+        configuration: RunConfiguration,
+        endedAt: Date,
+        elapsedGameplayMilliseconds: Int,
+        finishReason: RunFinishReason,
+        score: Int,
+        statistics: RunStatisticsSnapshot,
+        completedLaneIDs: Set<LaneID>,
+        bonusTouchdownCount: Int,
+        deepCompletionCount: Int = 0,
+        maximumOverdriveTouchdownCount: Int = 0
+    ) {
+        self.configuration = configuration
+        self.endedAt = endedAt
+        self.elapsedGameplayMilliseconds = elapsedGameplayMilliseconds
+        self.finishReason = finishReason
+        self.score = score
+        self.statistics = statistics
+        self.completedLaneIDs = completedLaneIDs
+        self.bonusTouchdownCount = bonusTouchdownCount
+        self.deepCompletionCount = max(0, deepCompletionCount)
+        self.maximumOverdriveTouchdownCount = max(
+            0,
+            maximumOverdriveTouchdownCount
+        )
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        configuration = try container.decode(
+            RunConfiguration.self,
+            forKey: .configuration
+        )
+        endedAt = try container.decode(Date.self, forKey: .endedAt)
+        elapsedGameplayMilliseconds = try container.decode(
+            Int.self,
+            forKey: .elapsedGameplayMilliseconds
+        )
+        finishReason = try container.decode(
+            RunFinishReason.self,
+            forKey: .finishReason
+        )
+        score = try container.decode(Int.self, forKey: .score)
+        statistics = try container.decode(
+            RunStatisticsSnapshot.self,
+            forKey: .statistics
+        )
+        completedLaneIDs = try container.decode(
+            Set<LaneID>.self,
+            forKey: .completedLaneIDs
+        )
+        bonusTouchdownCount = try container.decode(
+            Int.self,
+            forKey: .bonusTouchdownCount
+        )
+        deepCompletionCount = try container.decodeIfPresent(
+            Int.self,
+            forKey: .deepCompletionCount
+        ) ?? 0
+        maximumOverdriveTouchdownCount = try container.decodeIfPresent(
+            Int.self,
+            forKey: .maximumOverdriveTouchdownCount
+        ) ?? 0
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(configuration, forKey: .configuration)
+        try container.encode(endedAt, forKey: .endedAt)
+        try container.encode(
+            elapsedGameplayMilliseconds,
+            forKey: .elapsedGameplayMilliseconds
+        )
+        try container.encode(finishReason, forKey: .finishReason)
+        try container.encode(score, forKey: .score)
+        try container.encode(statistics, forKey: .statistics)
+        try container.encode(completedLaneIDs, forKey: .completedLaneIDs)
+        try container.encode(bonusTouchdownCount, forKey: .bonusTouchdownCount)
+        try container.encode(deepCompletionCount, forKey: .deepCompletionCount)
+        try container.encode(
+            maximumOverdriveTouchdownCount,
+            forKey: .maximumOverdriveTouchdownCount
+        )
+    }
+
+    /// Structural facts PM-owned persistence validation must enforce before
+    /// replaying achievement progress from decoded completed-run history.
+    var achievementFactsAreStructurallyValid: Bool {
+        guard deepCompletionCount >= 0,
+              deepCompletionCount <= statistics.completions,
+              maximumOverdriveTouchdownCount >= 0,
+              maximumOverdriveTouchdownCount <= statistics.touchdowns,
+              maximumOverdriveTouchdownCount <= bonusTouchdownCount else {
+            return false
+        }
+        if deepCompletionCount > 0, !completedLaneIDs.contains(.deep) {
+            return false
+        }
+        if maximumOverdriveTouchdownCount > 0,
+           !completedLaneIDs.contains(.touchdown) {
+            return false
+        }
+        return true
     }
 
     var runID: RunID { configuration.runID }

@@ -2,9 +2,11 @@ import Foundation
 
 enum AchievementEvaluator {
     static let persistedSemanticIdentifier =
-        "pocket-vector-achievement-evaluator-semantics-v1"
+        "pocket-vector-achievement-evaluator-semantics-v2"
     static let eligibleRunPolicyIdentifier =
         "naturally-completed-runs-only-v1"
+    static let achievementFactValidationPolicyIdentifier =
+        "reject-structurally-invalid-completed-run-achievement-facts-v1"
     static let evaluationOrderPolicyIdentifier =
         "achievement-id-utf8-ascending-v1"
     static let progressPolicyIdentifier =
@@ -18,6 +20,7 @@ enum AchievementEvaluator {
 
     static var persistedFingerprintMaterial: [String] {
         let completedRun = CompletedRun.achievementEligibilityFingerprintMaterial
+        let achievementFacts = CompletedRun.achievementFactsFingerprintMaterial
         let runStatistics =
             RunStatisticsSnapshot.achievementDependencyFingerprintMaterial
         let career = CareerStatistics.achievementDependencyFingerprintMaterial
@@ -25,6 +28,8 @@ enum AchievementEvaluator {
         return [
             persistedSemanticIdentifier,
             "eligibleRunPolicy", eligibleRunPolicyIdentifier,
+            "achievementFactValidationPolicy",
+            achievementFactValidationPolicyIdentifier,
             "evaluationOrderPolicy", evaluationOrderPolicyIdentifier,
             "progressPolicy", progressPolicyIdentifier,
             "binaryProgressPolicy", binaryProgressPolicyIdentifier,
@@ -32,6 +37,8 @@ enum AchievementEvaluator {
             "allLanesPolicy", allLanesPolicyIdentifier,
             "completedRunDependencyMaterialCount", String(completedRun.count),
         ] + completedRun + [
+            "achievementFactMaterialCount", String(achievementFacts.count),
+        ] + achievementFacts + [
             "runStatisticsDependencyMaterialCount", String(runStatistics.count),
         ] + runStatistics + [
             "careerDependencyMaterialCount", String(career.count),
@@ -46,7 +53,8 @@ enum AchievementEvaluator {
         existing: [AchievementID: AchievementProgress],
         evaluatedAt: Date
     ) -> [AchievementProgressUpdate] {
-        guard run.isNaturallyCompleted else { return [] }
+        guard run.isNaturallyCompleted,
+              run.achievementFactsAreStructurallyValid else { return [] }
 
         return AchievementCatalog.persistedEvaluationOrder(
             AchievementCatalog.launch
@@ -82,6 +90,9 @@ enum AchievementEvaluator {
         case let .incrementalCareerSuccessfulPasses(target):
             return scaledPercent(value: careerAfter.successfulPasses, target: target)
 
+        case let .incrementalCareerCompletedRuns(target):
+            return scaledPercent(value: careerAfter.completedRuns, target: target)
+
         case let .careerTouchdowns(target):
             return binaryPercent(value: careerAfter.touchdowns, target: target)
 
@@ -97,6 +108,18 @@ enum AchievementEvaluator {
                 percent: percent,
                 minimumAttempts: minimumAttempts
             ) ? 100 : 0
+
+        case let .singleRunBonusTouchdowns(target):
+            return binaryPercent(value: run.bonusTouchdownCount, target: target)
+
+        case let .singleRunDeepCompletions(target):
+            return binaryPercent(value: run.deepCompletionCount, target: target)
+
+        case let .singleRunMaximumOverdriveTouchdowns(target):
+            return binaryPercent(
+                value: run.maximumOverdriveTouchdownCount,
+                target: target
+            )
 
         case let .singleRunTouchdownStreak(target):
             return binaryPercent(

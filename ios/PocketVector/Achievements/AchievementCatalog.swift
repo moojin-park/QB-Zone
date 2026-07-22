@@ -11,6 +11,14 @@ enum LaunchAchievementID {
     static let millenniaOfConnections = AchievementID(
         "achievement.millenia_of_connections.v1"
     )
+    static let perfectPocket = AchievementID("achievement.perfect_pocket.v1")
+    static let franchisePlayer = AchievementID("achievement.franchise_player.v1")
+    static let overcharged = AchievementID("achievement.overcharged.v1")
+    static let deepThreat = AchievementID("achievement.deep_threat.v1")
+    static let untouchable = AchievementID("achievement.untouchable.v1")
+    static let maximumOverdrive = AchievementID(
+        "achievement.maximum_overdrive.v1"
+    )
 
     /// Source compatibility for presentation routing while Art adopts the new
     /// symbol. This alias resolves to the current permanent Game Center ID; it
@@ -19,8 +27,10 @@ enum LaunchAchievementID {
 }
 
 enum AchievementCatalog {
-    static let persistedSemanticIdentifier =
+    static let v2PersistedSemanticIdentifier =
         "pocket-vector-launch-achievement-catalog-semantics-v2"
+    static let persistedSemanticIdentifier =
+        "pocket-vector-launch-achievement-catalog-semantics-v3"
 
     static let launch: [AchievementDefinition] = [
         AchievementDefinition(
@@ -79,6 +89,48 @@ enum AchievementCatalog {
             points: 100,
             rule: .incrementalCareerSuccessfulPasses(1_000)
         ),
+        AchievementDefinition(
+            id: LaunchAchievementID.perfectPocket,
+            displayName: "Perfect Pocket",
+            detail: "Finish with 100% accuracy over at least 20 pass attempts.",
+            points: 75,
+            rule: .singleRunAccuracy(percent: 100, minimumAttempts: 20)
+        ),
+        AchievementDefinition(
+            id: LaunchAchievementID.franchisePlayer,
+            displayName: "Franchise Player",
+            detail: "Complete 50 natural runs.",
+            points: 50,
+            rule: .incrementalCareerCompletedRuns(50)
+        ),
+        AchievementDefinition(
+            id: LaunchAchievementID.overcharged,
+            displayName: "Overcharged",
+            detail: "Score three TD Bonus touchdowns during one run.",
+            points: 50,
+            rule: .singleRunBonusTouchdowns(3)
+        ),
+        AchievementDefinition(
+            id: LaunchAchievementID.deepThreat,
+            displayName: "Deep Threat",
+            detail: "Complete five passes in the deep lane during one run.",
+            points: 50,
+            rule: .singleRunDeepCompletions(5)
+        ),
+        AchievementDefinition(
+            id: LaunchAchievementID.untouchable,
+            displayName: "Untouchable",
+            detail: "Reach 100,000 points during one run.",
+            points: 100,
+            rule: .singleRunScore(100_000)
+        ),
+        AchievementDefinition(
+            id: LaunchAchievementID.maximumOverdrive,
+            displayName: "Maximum Overdrive",
+            detail: "Score a touchdown with TD Bonus active and the capped 3× multiplier.",
+            points: 75,
+            rule: .singleRunMaximumOverdriveTouchdowns(1)
+        ),
     ]
 
     /// Achievement updates are persisted in settlement receipts. Declaration
@@ -117,12 +169,18 @@ enum AchievementCatalog {
             ])
             material.append(contentsOf: rule)
         }
-        let transition = AchievementCatalogTransitionV1ToV2
+        let transitionV1ToV2 = AchievementCatalogTransitionV1ToV2
             .persistedFingerprintMaterial
         material.append(contentsOf: [
-            "transitionMaterialCount", String(transition.count),
+            "transitionV1ToV2MaterialCount", String(transitionV1ToV2.count),
         ])
-        material.append(contentsOf: transition)
+        material.append(contentsOf: transitionV1ToV2)
+        let transitionV2ToV3 = AchievementCatalogTransitionV2ToV3
+            .persistedFingerprintMaterial
+        material.append(contentsOf: [
+            "transitionV2ToV3MaterialCount", String(transitionV2ToV3.count),
+        ])
+        material.append(contentsOf: transitionV2ToV3)
         return material
     }
 }
@@ -136,7 +194,7 @@ enum AchievementCatalogTransitionV1ToV2 {
     static let sourceCatalogSemanticIdentifier =
         "pocket-vector-launch-achievement-catalog-semantics-v1"
     static let targetCatalogSemanticIdentifier =
-        AchievementCatalog.persistedSemanticIdentifier
+        AchievementCatalog.v2PersistedSemanticIdentifier
 
     static let retiredCenturyOfConnections = AchievementID(
         "achievement.century_of_connections.v1"
@@ -328,6 +386,199 @@ enum AchievementCatalogTransitionV1ToV2 {
             }?.recordedAt
         case LaunchAchievementID.lightUpTheBoard:
             return ordered.first { $0.run.score >= 65_000 }?.recordedAt
+        default:
+            return nil
+        }
+    }
+
+    private static func orderedNaturalRuns(
+        _ completedRuns: [CompletedRunRecord]
+    ) -> [CompletedRunRecord] {
+        completedRuns
+            .filter { $0.run.isNaturallyCompleted }
+            .sorted {
+                if $0.recordedAt != $1.recordedAt {
+                    return $0.recordedAt < $1.recordedAt
+                }
+                return $0.run.runID.description.utf8.lexicographicallyPrecedes(
+                    $1.run.runID.description.utf8
+                )
+            }
+    }
+}
+
+/// Declarative Technical contract for the PM-owned durable transition from the
+/// shipped eight-achievement V2 catalog to the additive Version 1.1 V3 catalog.
+/// Persistence and cloud scope migration must apply this contract exactly once
+/// before validating a profile against the current catalog.
+enum AchievementCatalogTransitionV2ToV3 {
+    static let persistedSemanticIdentifier =
+        "pocket-vector-launch-achievement-catalog-transition-v2-to-v3"
+    static let sourceCatalogSemanticIdentifier =
+        AchievementCatalog.v2PersistedSemanticIdentifier
+    static let targetCatalogSemanticIdentifier =
+        AchievementCatalog.persistedSemanticIdentifier
+
+    static let addedAchievementIDsInPersistedOrder: [AchievementID] = [
+        LaunchAchievementID.deepThreat,
+        LaunchAchievementID.franchisePlayer,
+        LaunchAchievementID.maximumOverdrive,
+        LaunchAchievementID.overcharged,
+        LaunchAchievementID.perfectPocket,
+        LaunchAchievementID.untouchable,
+    ]
+    static let addedAchievementIDs = Set(addedAchievementIDsInPersistedOrder)
+    static let historicallyReplayableAchievementIDs: Set<AchievementID> = [
+        LaunchAchievementID.franchisePlayer,
+        LaunchAchievementID.overcharged,
+        LaunchAchievementID.perfectPocket,
+        LaunchAchievementID.untouchable,
+    ]
+    static let nonretroactiveAchievementIDs: Set<AchievementID> = [
+        LaunchAchievementID.deepThreat,
+        LaunchAchievementID.maximumOverdrive,
+    ]
+
+    static let legacyDeepCompletionCount = 0
+    static let legacyMaximumOverdriveTouchdownCount = 0
+    static let applicationPolicyIdentifier =
+        "apply-once-from-explicit-v2-source-to-v3-before-current-validation-idempotently-v1"
+    static let sourceStatePolicyIdentifier =
+        "reject-added-v3-ids-in-v2-progress-queues-or-receipts-v1"
+    static let completedRunUpgradePolicyIdentifier =
+        "upgrade-player-and-settlement-receipt-run-copies-identically-v1"
+    static let legacyRunFactPolicyIdentifier =
+        "default-both-new-run-facts-to-zero-without-lane-score-bonus-or-streak-inference-v1"
+    static let completedRunSourcePolicyIdentifier =
+        "naturally-completed-runs-ordered-by-recorded-at-then-run-id-v1"
+    static let replayPolicyIdentifier =
+        "replay-perfect-franchise-overcharged-untouchable-from-authoritative-v2-history-v1"
+    static let nonretroactivePolicyIdentifier =
+        "deep-threat-and-maximum-overdrive-remain-zero-for-v2-history-v1"
+    static let progressStatePolicyIdentifier =
+        "seed-all-six-ids-replace-only-six-preserve-original-eight-and-unrelated-v1"
+    static let pendingQueuePolicyIdentifier =
+        "preserve-existing-buckets-and-enqueue-positive-replayed-new-maxima-once-as-unbound-v1"
+    static let settlementReceiptPolicyIdentifier =
+        "stable-replay-and-replace-only-six-updates-by-run-id-v1"
+    static let settlementReceiptPreservationPolicyIdentifier =
+        "preserve-existing-eight-updates-and-all-nonachievement-receipt-fields-v1"
+    static let submissionPolicyIdentifier =
+        "durable-source-target-marker-prevents-requeue-or-duplicate-submission-after-ack-v1"
+    static let cloudScopePolicyIdentifier =
+        "freeze-v2-predecessor-scope-upgrade-run-payloads-recompute-digests-and-never-merge-scopes-v1"
+
+    static var persistedFingerprintMaterial: [String] {
+        let replayable = addedAchievementIDsInPersistedOrder.filter {
+            historicallyReplayableAchievementIDs.contains($0)
+        }
+        let nonretroactive = addedAchievementIDsInPersistedOrder.filter {
+            nonretroactiveAchievementIDs.contains($0)
+        }
+        var material = [
+            persistedSemanticIdentifier,
+            "sourceCatalog", sourceCatalogSemanticIdentifier,
+            "targetCatalog", targetCatalogSemanticIdentifier,
+            "addedAchievementCount", String(addedAchievementIDsInPersistedOrder.count),
+        ]
+        for achievementID in addedAchievementIDsInPersistedOrder {
+            material.append(contentsOf: [
+                "addedAchievement", achievementID.rawValue,
+            ])
+        }
+        material.append(contentsOf: [
+            "historicallyReplayableCount", String(replayable.count),
+        ])
+        for achievementID in replayable {
+            material.append(contentsOf: [
+                "historicallyReplayable", achievementID.rawValue,
+            ])
+        }
+        material.append(contentsOf: [
+            "nonretroactiveCount", String(nonretroactive.count),
+        ])
+        for achievementID in nonretroactive {
+            material.append(contentsOf: [
+                "nonretroactive", achievementID.rawValue,
+            ])
+        }
+        material.append(contentsOf: [
+            "legacyDeepCompletionCount", String(legacyDeepCompletionCount),
+            "legacyMaximumOverdriveTouchdownCount",
+            String(legacyMaximumOverdriveTouchdownCount),
+            "applicationPolicy", applicationPolicyIdentifier,
+            "sourceStatePolicy", sourceStatePolicyIdentifier,
+            "completedRunUpgradePolicy", completedRunUpgradePolicyIdentifier,
+            "legacyRunFactPolicy", legacyRunFactPolicyIdentifier,
+            "completedRunSourcePolicy", completedRunSourcePolicyIdentifier,
+            "replayPolicy", replayPolicyIdentifier,
+            "nonretroactivePolicy", nonretroactivePolicyIdentifier,
+            "progressStatePolicy", progressStatePolicyIdentifier,
+            "pendingQueuePolicy", pendingQueuePolicyIdentifier,
+            "settlementReceiptPolicy", settlementReceiptPolicyIdentifier,
+            "settlementReceiptPreservationPolicy",
+            settlementReceiptPreservationPolicyIdentifier,
+            "submissionPolicy", submissionPolicyIdentifier,
+            "cloudScopePolicy", cloudScopePolicyIdentifier,
+        ])
+        return material
+    }
+
+    /// Recomputes only the six additive V3 achievements from V2 history.
+    /// Deep Threat and Maximum Overdrive remain zero because V2 did not retain
+    /// the exact event multiplicity and same-play conjunction they require.
+    static func recomputedPercent(
+        for achievementID: AchievementID,
+        completedRuns: [CompletedRunRecord]
+    ) -> Int? {
+        let ordered = orderedNaturalRuns(completedRuns)
+        switch achievementID {
+        case LaunchAchievementID.perfectPocket:
+            return ordered.contains {
+                $0.run.statistics.meetsAccuracy(
+                    percent: 100,
+                    minimumAttempts: 20
+                )
+            } ? 100 : 0
+        case LaunchAchievementID.franchisePlayer:
+            return min(50, ordered.count) * 100 / 50
+        case LaunchAchievementID.overcharged:
+            return ordered.contains { $0.run.bonusTouchdownCount >= 3 }
+                ? 100 : 0
+        case LaunchAchievementID.untouchable:
+            return ordered.contains { $0.run.score >= 100_000 } ? 100 : 0
+        case LaunchAchievementID.deepThreat,
+             LaunchAchievementID.maximumOverdrive:
+            return 0
+        default:
+            return nil
+        }
+    }
+
+    static func recomputedCompletedAt(
+        for achievementID: AchievementID,
+        completedRuns: [CompletedRunRecord]
+    ) -> Date? {
+        let ordered = orderedNaturalRuns(completedRuns)
+        switch achievementID {
+        case LaunchAchievementID.perfectPocket:
+            return ordered.first {
+                $0.run.statistics.meetsAccuracy(
+                    percent: 100,
+                    minimumAttempts: 20
+                )
+            }?.recordedAt
+        case LaunchAchievementID.franchisePlayer:
+            return ordered.count >= 50 ? ordered[49].recordedAt : nil
+        case LaunchAchievementID.overcharged:
+            return ordered.first {
+                $0.run.bonusTouchdownCount >= 3
+            }?.recordedAt
+        case LaunchAchievementID.untouchable:
+            return ordered.first { $0.run.score >= 100_000 }?.recordedAt
+        case LaunchAchievementID.deepThreat,
+             LaunchAchievementID.maximumOverdrive:
+            return nil
         default:
             return nil
         }

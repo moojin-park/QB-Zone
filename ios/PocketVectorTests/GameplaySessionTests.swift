@@ -296,11 +296,183 @@ final class GameplaySessionTests: XCTestCase {
 
         XCTAssertEqual(run.completedLaneIDs, [.short, .touchdown])
         XCTAssertEqual(run.bonusTouchdownCount, 1)
+        XCTAssertEqual(run.deepCompletionCount, 0)
+        XCTAssertEqual(run.maximumOverdriveTouchdownCount, 0)
         XCTAssertEqual(run.statistics.attempts, 3)
         XCTAssertEqual(run.statistics.completions, 1)
         XCTAssertEqual(run.statistics.touchdowns, 1)
         XCTAssertEqual(run.statistics.interceptions, 1)
         XCTAssertEqual(run.statistics.successfulPasses, 2)
+    }
+
+    func testRecorderCountsOnlyAuthoritativeDeepCompletionResolutions() {
+        var recorder = GameplayRunRecorder()
+        let deepCompletion = GameSimulation.calculatePlayScore(
+            score: 0,
+            meter: 0,
+            streak: 0,
+            outcome: .completion,
+            laneID: .deep
+        )
+        for _ in 0 ..< 5 {
+            recorder.record(
+                update: UpdateResult(
+                    passResolved: .completion,
+                    laneID: .deep,
+                    scoreChanged: true,
+                    runFinished: false
+                ),
+                playScore: deepCompletion
+            )
+        }
+        recorder.record(
+            update: UpdateResult(
+                passResolved: .completion,
+                laneID: .medium,
+                scoreChanged: true,
+                runFinished: false
+            ),
+            playScore: deepCompletion
+        )
+        recorder.record(
+            update: UpdateResult(
+                passResolved: .touchdown,
+                laneID: .deep,
+                scoreChanged: true,
+                runFinished: false
+            ),
+            playScore: GameSimulation.calculatePlayScore(
+                score: 0,
+                meter: 0,
+                streak: 0,
+                outcome: .touchdown,
+                laneID: .deep
+            )
+        )
+        recorder.record(
+            update: UpdateResult(),
+            playScore: deepCompletion
+        )
+
+        XCTAssertEqual(recorder.deepCompletionCount, 5)
+
+        var state = GameState()
+        state.elapsedGameplayMilliseconds = 60_000
+        state.statistics = RunStatistics(
+            attempts: 7,
+            completions: 6,
+            touchdowns: 1
+        )
+        let run = recorder.makeCompletedRun(
+            configuration: makeConfiguration(seed: 6),
+            state: state,
+            finishReason: .timerExpired,
+            endedAt: Date(timeIntervalSince1970: 1_100)
+        )
+        XCTAssertEqual(run.deepCompletionCount, 5)
+        XCTAssertEqual(run.completedLaneIDs, [.medium, .deep])
+        XCTAssertTrue(run.achievementFactsAreStructurallyValid)
+        let abandoned = recorder.makeCompletedRun(
+            configuration: makeConfiguration(seed: 6),
+            state: state,
+            finishReason: .abandoned,
+            endedAt: Date(timeIntervalSince1970: 1_100)
+        )
+        XCTAssertEqual(abandoned.deepCompletionCount, 5)
+        XCTAssertFalse(abandoned.isNaturallyCompleted)
+    }
+
+    func testRecorderRequiresSamePlayBonusAndCappedMultiplierForMaximumOverdrive() {
+        var recorder = GameplayRunRecorder()
+        let bonusBelowCap = GameSimulation.calculatePlayScore(
+            score: 0,
+            meter: ScoringConfig.meterMaximum,
+            streak: 4,
+            outcome: .touchdown,
+            laneID: .touchdown
+        )
+        XCTAssertEqual(bonusBelowCap.touchdownMultiplier, 2.5)
+        recorder.record(
+            update: UpdateResult(
+                passResolved: .touchdown,
+                laneID: .touchdown,
+                scoreChanged: true,
+                runFinished: false
+            ),
+            playScore: bonusBelowCap
+        )
+
+        let cappedWithoutBonus = GameSimulation.calculatePlayScore(
+            score: bonusBelowCap.totalAfter,
+            meter: 0,
+            streak: 5,
+            outcome: .touchdown,
+            laneID: .touchdown
+        )
+        XCTAssertEqual(
+            cappedWithoutBonus.touchdownMultiplier,
+            3
+        )
+        recorder.record(
+            update: UpdateResult(
+                passResolved: .touchdown,
+                laneID: .touchdown,
+                scoreChanged: true,
+                runFinished: false
+            ),
+            playScore: cappedWithoutBonus
+        )
+        XCTAssertEqual(recorder.maximumOverdriveTouchdownCount, 0)
+
+        recorder.record(
+            update: UpdateResult(
+                passResolved: .touchdown,
+                laneID: .touchdown,
+                scoreChanged: true,
+                runFinished: false
+            ),
+            playScore: GameSimulation.calculatePlayScore(
+                score: cappedWithoutBonus.totalAfter,
+                meter: ScoringConfig.meterMaximum,
+                streak: 5,
+                outcome: .completion,
+                laneID: .deep
+            )
+        )
+        XCTAssertEqual(recorder.maximumOverdriveTouchdownCount, 0)
+
+        let qualifying = GameSimulation.calculatePlayScore(
+            score: cappedWithoutBonus.totalAfter,
+            meter: ScoringConfig.meterMaximum,
+            streak: 5,
+            outcome: .touchdown,
+            laneID: .touchdown
+        )
+        recorder.record(
+            update: UpdateResult(
+                passResolved: .touchdown,
+                laneID: .touchdown,
+                scoreChanged: true,
+                runFinished: false
+            ),
+            playScore: qualifying
+        )
+        recorder.record(update: UpdateResult(), playScore: qualifying)
+
+        XCTAssertEqual(recorder.maximumOverdriveTouchdownCount, 1)
+        XCTAssertEqual(recorder.bonusTouchdownCount, 3)
+
+        var state = GameState()
+        state.elapsedGameplayMilliseconds = 60_000
+        state.statistics = RunStatistics(attempts: 4, touchdowns: 4)
+        let run = recorder.makeCompletedRun(
+            configuration: makeConfiguration(seed: 7),
+            state: state,
+            finishReason: .timerExpired,
+            endedAt: Date(timeIntervalSince1970: 1_100)
+        )
+        XCTAssertEqual(run.maximumOverdriveTouchdownCount, 1)
+        XCTAssertTrue(run.achievementFactsAreStructurallyValid)
     }
 
     func testAbandonmentIsExactOnceAndNeverRewardEligible() throws {

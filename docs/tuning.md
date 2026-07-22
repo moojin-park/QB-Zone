@@ -56,7 +56,7 @@ for an already shipped ledger mutation or StoreKit product.
 
 ## Launch achievements
 
-`AchievementCatalog.launch` is the authoritative eight-achievement catalog.
+`AchievementCatalog.launch` is the authoritative fourteen-achievement catalog.
 Successful passes always include both completions and touchdowns.
 
 | Achievement | Permanent ID | Points | Requirement |
@@ -69,8 +69,14 @@ Successful passes always include both completions and touchdowns.
 | Hot Hand | `achievement.hot_hand.v1` | 100 | Score four consecutive touchdowns during one run. |
 | Light Up the Board | `achievement.light_up_the_board.v1` | 100 | Reach 65,000 points during one run. |
 | Millennia of Connections | `achievement.millenia_of_connections.v1` | 100 | Complete 1,000 career passes, including touchdowns. |
+| Perfect Pocket | `achievement.perfect_pocket.v1` | 75 | Finish with 100% accuracy over at least 20 pass attempts. |
+| Franchise Player | `achievement.franchise_player.v1` | 50 | Complete 50 natural runs. |
+| Overcharged | `achievement.overcharged.v1` | 50 | Score three TD Bonus touchdowns during one run. |
+| Deep Threat | `achievement.deep_threat.v1` | 50 | Complete five passes in the deep lane during one run. |
+| Untouchable | `achievement.untouchable.v1` | 100 | Reach 100,000 points during one run. |
+| Maximum Overdrive | `achievement.maximum_overdrive.v1` | 75 | Score a touchdown with TD Bonus active and the capped 3× multiplier on the same play. |
 
-The catalog totals 600 points. The permanent Game Center ID for Millennia of
+The catalog totals 1,000 points. The permanent Game Center ID for Millennia of
 Connections intentionally spells `millenia` with one `n`; do not correct or
 alias that persisted value.
 
@@ -117,6 +123,46 @@ The V2 catalog and transition material are part of the achievement semantic
 fingerprint. Activating it for an existing cloud replica scope requires the
 PM-owned checkpoint transition and persistence migration; Technical code must
 not silently reinterpret sealed profile or queue authority.
+
+### Catalog V2 to V3 persistence transition
+
+`AchievementCatalogTransitionV2ToV3` is the Version 1.1 Technical contract for
+the PM-owned additive migration. The V1-to-V2 target remains frozen to the
+literal V2 semantic identifier; introducing V3 must not mutate that predecessor
+contract.
+
+- Add and seed exactly the six new permanent IDs while preserving all eight V2
+  definitions, progress values, completion dates, Game Center work, and receipt
+  updates.
+- Replay naturally completed runs in `recordedAt`, then run-ID order. Perfect
+  Pocket, Franchise Player, Overcharged, and Untouchable may be recomputed from
+  authoritative V2 history. Franchise progress is
+  `floor(min(naturalRuns, 50) * 100 / 50)` and completes at the fiftieth natural
+  run.
+- V2 did not retain repeated deep-completion count or the same-play conjunction
+  of TD Bonus with the capped multiplier. Upgrade both the player history and
+  the duplicate run stored in settlement receipts with
+  `deepCompletionCount = 0` and `maximumOverdriveTouchdownCount = 0`. Never
+  infer either value from completed lanes, score, touchdowns, bonus touchdowns,
+  or longest touchdown streak. Deep Threat and Maximum Overdrive therefore
+  receive no retroactive V2 credit.
+- V2 cannot legitimately contain any of the six V3 IDs. Reject such source
+  state, seed all six current progress entries, and enqueue each positive
+  replayed maximum at most once in unbound Game Center work. Preserve every
+  existing bound/unbound bucket and high-score value; a durable source-to-target
+  marker must prevent acknowledged work from being recreated on a later decode.
+- Rebuild only the six new achievement updates in historical settlement
+  receipts using stable replay. Preserve the existing eight updates and every
+  non-achievement receipt field so duplicate settlement remains idempotent.
+- The new completed-run fields change canonical local and cloud payloads. PM
+  must freeze the complete V2 predecessor scope, migrate current payloads and
+  receipt copies identically, recompute run/checkpoint digests, and transition
+  the cloud scope without merging V2 and V3 authority.
+
+For current V3 runs, Deep Threat increments only on the authoritative resolved
+`.completion` plus `.deep` event. Maximum Overdrive increments only when one
+resolved touchdown's `PlayScoreResult` has TD Bonus active and the capped 3×
+multiplier. Feedback, audio, and UI delivery are never achievement authority.
 
 ## Verification workflow
 

@@ -34,10 +34,14 @@ private func requireExactPersistedGameCenterKeys(
 enum AchievementRule: Codable, Equatable, Hashable, Sendable {
     case careerSuccessfulPasses(Int)
     case incrementalCareerSuccessfulPasses(Int)
+    case incrementalCareerCompletedRuns(Int)
     case careerTouchdowns(Int)
     case careerBonusTouchdowns(Int)
     case allLanesInSingleRun
     case singleRunAccuracy(percent: Int, minimumAttempts: Int)
+    case singleRunBonusTouchdowns(Int)
+    case singleRunDeepCompletions(Int)
+    case singleRunMaximumOverdriveTouchdowns(Int)
     case singleRunTouchdownStreak(Int)
     case singleRunScore(Int)
 
@@ -54,6 +58,11 @@ enum AchievementRule: Codable, Equatable, Hashable, Sendable {
                 "rule", "incrementalCareerSuccessfulPasses",
                 "target", String(target),
             ]
+        case let .incrementalCareerCompletedRuns(target):
+            [
+                "rule", "incrementalCareerCompletedRuns",
+                "target", String(target),
+            ]
         case let .careerTouchdowns(target):
             ["rule", "careerTouchdowns", "target", String(target)]
         case let .careerBonusTouchdowns(target):
@@ -65,6 +74,15 @@ enum AchievementRule: Codable, Equatable, Hashable, Sendable {
                 "rule", "singleRunAccuracy",
                 "percent", String(percent),
                 "minimumAttempts", String(minimumAttempts),
+            ]
+        case let .singleRunBonusTouchdowns(target):
+            ["rule", "singleRunBonusTouchdowns", "target", String(target)]
+        case let .singleRunDeepCompletions(target):
+            ["rule", "singleRunDeepCompletions", "target", String(target)]
+        case let .singleRunMaximumOverdriveTouchdowns(target):
+            [
+                "rule", "singleRunMaximumOverdriveTouchdowns",
+                "target", String(target),
             ]
         case let .singleRunTouchdownStreak(target):
             ["rule", "singleRunTouchdownStreak", "target", String(target)]

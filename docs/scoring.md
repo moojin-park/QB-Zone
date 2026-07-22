@@ -63,6 +63,13 @@ back-to-back touchdown streak, bonus touchdowns, and final score. A normal
 completion breaks the back-to-back statistic even though it preserves the
 touchdown multiplier chain.
 
+Version 1.1 completed runs additionally record the exact count of successful
+deep-lane completions and the exact count of touchdowns that combined active TD
+Bonus with the capped 3× multiplier on the same resolved play. These facts are
+derived at deterministic resolution before feedback or audio delivery. Older
+runs default both counts to zero; neither can be inferred safely from aggregate
+statistics.
+
 ## Gameplay coin reward
 
 A natural run must contain at least three attempts to be reward eligible.
