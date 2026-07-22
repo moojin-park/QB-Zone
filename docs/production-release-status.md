@@ -228,46 +228,58 @@ The production gameplay adapter retains the exact `SKView` and `GameScene` for
 the completed run, freezes both render surfaces, removes the synthetic field
 fallback, and presents the transparent Results overlay above that stable final
 frame. The retained field is noninteractive and accessibility-hidden; gameplay
-HUD, paused/settlement chrome, and bottom-system-gesture deferral are suppressed
-while Results is visible. Existing Main Menu and Play Again coordinator routes
-remain unchanged. The misplaced root-level Art QA note was excluded from the
-merged tree. Independent review found no P0-P2 issue; the accepted P3 is the
+HUD, paused/settlement chrome, and the scene-local gameplay gesture request are
+suppressed while Results is visible. The owner-approved app-wide window-root
+exit policy remains in force. Existing Main Menu and Play Again coordinator
+routes remain unchanged. The misplaced root-level Art QA note was excluded from
+the merged tree. Independent review found no P0-P2 issue; the accepted P3 is the
 compact Accessibility 5 wrap of `OPTIONAL` as `OPTION-` / `AL`. Twenty-six
 focused tests, the exact 872-test simulator suite, compact/regular/iPad standard
 and Accessibility 5 evidence, and an unsigned generic-iOS Release archive all
 passed. This completes the retained-gameplay Results visual acceptance gate.
 
 The root-controller system-gesture correction was introduced at `e1c0f9a`
-(`Make gameplay gesture deferral root authoritative`) and physically corrected
-at `d7d3eeb` (`Make UIKit container own gesture deferral`). The application now
-installs a PM-owned plain `UIViewController` as the window root and retains the
-SwiftUI application in one child `UIHostingController`. The UIKit root keeps
-screen-edge authority for itself while forwarding status-bar and home-indicator
-appearance to SwiftUI. It returns `.bottom` only when the active app, current
-gameplay destination, matching run ID, and live gameplay snapshot all authorize
-deferral, and calls `setNeedsUpdateOfScreenEdgesDeferringSystemGestures()` on
-every effective transition. Countdown, pause, Results, settlement, settlement
-error, backgrounding, frozen presentation, other screens, stale runs, and replay
-countdown all clear the preference. The exact 875-test simulator suite and an
-unsigned generic-iOS Release archive passed. On physical device `Snow J`
-(iPhone 17 Pro Max, iOS 26.5.2), one upward swipe during active gameplay remained
-in the game and an immediate second deliberate swipe exited. Independent review
-found one system-UI forwarding issue before acceptance; it was fixed and covered
-by the final root-containment regression, with no remaining P0-P3 finding.
+(`Make gameplay gesture deferral root authoritative`), physically corrected at
+`d7d3eeb` (`Make UIKit container own gesture deferral`), and finalized under the
+owner-approved app-wide policy at `6e20347` (`Lock bottom gesture deferral
+app-wide`). The application installs a PM-owned plain `UIViewController` as the
+window root and retains the SwiftUI application in one child
+`UIHostingController`. The UIKit root is the sole screen-edge authority and
+always returns `.bottom`, so Main Menu, countdown, live play, final-ball
+resolution, Pause, Results, settlement, background transitions, and every other
+app surface require the deliberate repeated Home gesture. A one-touch root
+`UIPanGestureRecognizer` neither cancels nor delays content touches and permits
+simultaneous recognition, preserving SpriteKit throws and SwiftUI scrolling.
+The root reasserts system-UI authority after appearance, safe-area, and scene-
+activation changes. It hides the status bar directly and intentionally keeps
+Home-indicator auto-hide disabled; physical Face ID testing proved that taking
+auto-hide ownership reproduced the one-swipe exit regression. The internal
+run/snapshot policy remains covered for scene-local presentation behavior but
+cannot clear the window-root exit policy.
+
+Build 156 passed physical acceptance on `Snow J` (iPhone 17 Pro Max, iOS
+26.5.2): one swipe remained in Main Menu, the second deliberate swipe exited,
+one countdown swipe remained in the game, and one active-play swipe both stayed
+in the game and threw the pass. The owner accepted the final build, ordinary UI
+interactions, and normal Home-indicator presentation. The exact 880-test final
+simulator suite and unsigned generic-iOS Release archive passed. Independent
+review found no remaining P0-P3 issue after the explicit Home-indicator decision
+and simultaneous-recognition safeguard.
 
 The Technical cinematic-presentation handoff `e1f4d94` (`Add countdown
 cinematic letterbox`) is integrated with full ancestry from shared baseline
 `d57714e`. Equal responsive black bars ease from zero to their completed height
 during the authoritative three-second countdown, remain presented through live
 play, final-ball resolution, and Pause, and clear before the retained Results
-field is shown. Reduce Motion presents the completed bars immediately. The
-field projection, actors, trajectories, scoring, and simulation remain
-unchanged; the only deliberate input delta rejects throw starts beneath the
-completed bottom bar. Two independent audits found no P0-P3 issue. The 73-test
-Technical focus and exact 879-test integrated simulator suite passed. PM live
-inspection passed compact-iPhone, regular-iPhone, and iPad active frames, the
-regular-iPhone standard countdown, and the retained Results field with the bars
-removed. Final Art-owned visual acceptance of the complete standard-motion,
+field is shown. Reduce Motion presents the completed bars immediately. Technical
+follow-up merged at `9a86c76` makes both bars presentation-only, restores the
+countdown cues, and allows normal throw starts anywhere on the gameplay surface,
+including beneath the bottom bar after live play begins. Field projection,
+actors, trajectories, collision, scoring, and simulation remain unchanged. PM
+live inspection passed compact-iPhone, regular-iPhone, and iPad active frames,
+the regular-iPhone standard countdown, the retained Results field with the bars
+removed, and the physical bottom-edge throw under the final app-wide gesture
+policy. Final Art-owned visual acceptance of the complete standard-motion,
 Reduce Motion, Pause, and Results sequence remains pending.
 
 The dormant StoreKit runtime foundation is versioned at `ce69388` (`Add dormant
@@ -562,6 +574,10 @@ or runtime ownership boundaries.
 | 2026-07-21 | `e1f4d94` | Technical cinematic framing integration | Technical commit `e1f4d943600c369146f935f16ef9550814359ada` fast-forwarded from exact shared baseline `d57714e`; all six production/documentation paths are Technical-owned and the two shared tests correspond to those paths. Ancestry, ownership, clean-worktree, diff-hygiene, and two independent audits passed with no P0-P3 finding |
 | 2026-07-21 | `e1f4d94` | Cinematic focused and full simulator gates | GameCore and GameplaySession focus passed 73 tests with 0 failures; exact integrated suite passed 879 total: 878 passed, 0 failed, 1 existing conditional case-alias filesystem skip at `/tmp/PocketVector-Cinematic-e1f4d94-full.xcresult`. This runtime-only Technical wave changed no resource, capability, app-composition, or Release configuration path, so no additional archive was required |
 | 2026-07-21 | `e1f4d94` | Cinematic multi-device PM visual gate | Compact-iPhone, regular-iPhone, and iPad active gameplay frames passed inspection; regular-iPhone standard countdown captures at `2` and `1` showed progressive bars, and the retained Results capture showed the bars removed. Evidence: `/tmp/PocketVector-Cinematic-e1f4d94-compact-active-landscape.png`, `/tmp/PocketVector-Cinematic-e1f4d94-regular-active-landscape.png`, `/tmp/PocketVector-Cinematic-e1f4d94-ipad-active-landscape.png`, `/tmp/PocketVector-Cinematic-e1f4d94-regular-countdown-2.png`, `/tmp/PocketVector-Cinematic-e1f4d94-regular-countdown-1.png`, and `/tmp/PocketVector-Cinematic-e1f4d94-regular-results.png`; final Art sequence approval remains pending |
+| 2026-07-21 | `9a86c76` | Visual-only cinematic input integration | Technical commits `52d7b0a` and `28dcf8f` are merged with full ancestry. The cinematic bars no longer remove any gameplay input area, countdown input remains inert until live play, and countdown audio/visual cues remain synchronized. The PM countdown expectation is retained at `51a4278`; no art asset, scoring, collision, or simulation rule changed |
+| 2026-07-21 | `6e20347` | App-wide root gesture lock and build 156 | The PM-owned plain window root always defers `.bottom`, owns status-bar presentation, keeps Home-indicator auto-hide disabled, and uses a noncancelling, nondelaying one-touch pan recognizer with simultaneous recognition. Build metadata is pinned to 156 for Debug and Release. The root-containment regression covers Main Menu, countdown, Playing, final-ball resolution, Pause, frozen Results, settlement, and inactive-scene state. All changed paths are PM-owned app, release configuration, or cross-domain regression coverage |
+| 2026-07-21 | `6e20347` | Final build 156 focused and simulator gates | The final root-controller focus passed 1 of 1 at `/tmp/PocketVector-global-deferral-focused-156-final.xcresult`; the exact full iPhone 17 Pro simulator suite passed 880 total: 879 passed, 0 failed, 1 existing conditional case-alias filesystem skip at `/tmp/PocketVector-global-deferral-suite-156-final.xcresult`; diff hygiene passed |
+| 2026-07-21 | `6e20347` | Final build 156 physical and archive acceptance | On `Snow J` (iPhone 17 Pro Max, iOS 26.5.2), Main Menu required a second deliberate swipe to exit, countdown stayed after its first swipe, and active gameplay stayed while also throwing the pass. The owner accepted build 156 and normal Home-indicator/UI interaction behavior. The exact signed Debug build was installed; unsigned generic arm64 iOS Release archive passed at `/tmp/PocketVector-global-deferral-156-final.xcarchive` with `CFBundleVersion` 156. Independent final review found no remaining P0-P3 issue; final codesigned distribution-entitlement proof remains pending |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -654,25 +670,31 @@ account-independent service foundations above are complete:
    point for Privacy and Support. The destination remains required and must
    preserve its fail-closed configuration, but it does not require a separate
    main-menu control.
-5. Permanent bundle identifier, iCloud container, privacy URL, and support URL.
+5. **Owner-approved app-wide exit policy:** the window root defers the bottom
+   system gesture on every app surface. The first bottom-edge swipe remains
+   available to gameplay/UI input but cannot leave the app; a second deliberate
+   swipe exits. Keep Home-indicator auto-hide disabled and do not restore
+   scene-state blockers or child Home-indicator forwarding without a new
+   physical Face ID regression pass.
+6. Permanent bundle identifier, iCloud container, privacy URL, and support URL.
    Domain and email setup are tracked in the separate user-owned Codex task.
-6. Verified rewarded-ad infrastructure. The dormant correlation client,
+7. Verified rewarded-ad infrastructure. The dormant correlation client,
    process-only verified claim, and challenge-only recovery journal are
    complete, but an authenticated production transport and replay-stable
    server-side-verification endpoint, provider-transaction deduplication, the ad
    SDK, consent orchestration, and retained runtime integration remain. AdMob
    client callbacks alone never grant coins.
-7. **Owner-approved Apple-only diagnostics:** use OSLog, Apple crash reports,
+8. **Owner-approved Apple-only diagnostics:** use OSLog, Apple crash reports,
    and MetricKit without a third-party crash SDK. The release gate is zero known
    reproducible gameplay crashes, no recurring multi-tester crash signature,
    and completed Apple diagnostics review rather than an exact percentage.
-8. Final audience-policy declarations for AdMob and App Store privacy. The
+9. Final audience-policy declarations for AdMob and App Store privacy. The
    product remains general audience and outside Apple's Kids Category; the
    shipping SDK configuration and disclosures still require final review.
-9. Apple Developer enrollment, Paid Apps agreement, tax and banking, live
+10. Apple Developer enrollment, Paid Apps agreement, tax and banking, live
    consumable products, Game Center records, AdMob app/ad unit, UMP message,
    `app-ads.txt`, and production CloudKit schema deployment.
-10. Final codesigned-entitlement verification. After the permanent iCloud
+11. Final codesigned-entitlement verification. After the permanent iCloud
    container and signing profile exist, inspect the exported release candidate
    and confirm `com.apple.developer.icloud-container-environment` is
    `Production` and the expected iCloud container identifiers and services are
@@ -686,13 +708,13 @@ workflow reaches that gate.
 
 | Gate                                 | Target | Current                                         |
 | ------------------------------------ | -----: | ----------------------------------------------- |
-| Known P0/P1 defects                  |      0 | 0 open in integrated code and automated gates; root-controller gesture correction passed physical Face ID one-swipe/two-swipe acceptance with no remaining P0-P3 finding |
+| Known P0/P1 defects                  |      0 | 0 open in integrated code and automated gates; build 156 app-wide root policy passed physical Face ID one-swipe/two-swipe acceptance with no remaining P0-P3 finding |
 | TestFlight sessions                  |   200+ | Not started                                     |
 | Valid completed runs                 |   100+ | Not started                                     |
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud history, initial publication, hydration, online-only catalog debit/ownership, and StoreKit durable delivery pass internal tests; external sandbox/device gates remain |
-| Clean-checkout archive               |   Pass | Unsigned generic-iOS archive for final root-container correction `d7d3eeb` passed; final codesigned entitlement/export proof remains |
+| Clean-checkout archive               |   Pass | Unsigned generic-iOS build 156 archive for final app-wide root correction `6e20347` passed; final codesigned entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
