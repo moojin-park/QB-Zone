@@ -873,7 +873,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
         XCTAssertEqual(requestState.resumeRequestID, 2)
     }
 
-    func testGameplayBottomSystemGestureDeferralFollowsLivePlayTransitions() {
+    func testGameplayBottomSystemGestureDeferralFollowsActiveSurfaceTransitions() {
         let transitions: [(
             name: String,
             snapshot: GameplaySceneSnapshot?,
@@ -882,7 +882,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
             expectedEdges: Edge.Set
         )] = [
             ("non-gameplay", nil, false, nil, []),
-            ("countdown", gameplaySnapshot(phase: .countdown), false, nil, []),
+            ("countdown", gameplaySnapshot(phase: .countdown), false, nil, .bottom),
             ("playing", gameplaySnapshot(phase: .playing), false, nil, .bottom),
             ("paused", gameplaySnapshot(phase: .paused), false, nil, []),
             ("resumed", gameplaySnapshot(phase: .playing), false, nil, .bottom),

@@ -13,7 +13,7 @@ struct GameSafeAreaInsets: Equatable {
 /// Converts the physical SpriteKit view into the app's fixed-height logical canvas.
 ///
 /// The field is full bleed. Safe-area insets constrain HUD, controls, and the
-/// lower-field region where a throw may begin.
+/// horizontal extent of the lower-field region where a throw may begin.
 struct GameViewport: Equatable {
     let viewSize: CGSize
     let safeAreaInsets: GameSafeAreaInsets
@@ -26,15 +26,15 @@ struct GameViewport: Equatable {
     }
 
     /// The unobstructed lower-field band where a throw gesture may begin.
-    /// Release points remain free to travel beyond this frame.
+    /// Cinematic bars and the bottom safe-area inset are visual-only here;
+    /// release points remain free to travel beyond this frame.
     var throwActivationFrame: CGRect {
-        let top = min(safeSceneFrame.maxY, GameProjection.throwActivationTopY)
-        let bottom = max(safeSceneFrame.minY, letterboxLayout.finalSceneHeight)
+        let top = min(GameProjection.logicalHeight, GameProjection.throwActivationTopY)
         return CGRect(
             x: safeSceneFrame.minX,
-            y: bottom,
+            y: 0,
             width: safeSceneFrame.width,
-            height: max(0, top - bottom)
+            height: max(0, top)
         )
     }
 

@@ -85,10 +85,10 @@ final class GameplaySessionTests: XCTestCase {
         XCTAssertFalse(gate.accept(statisticsChanged))
     }
 
-    func testSnapshotDefersBottomSystemGesturesOnlyDuringActivePlay() {
+    func testSnapshotDefersBottomSystemGesturesAcrossCompleteActiveGameplaySurface() {
         let expectations: [(phase: GamePhase, defers: Bool)] = [
             (.title, false),
-            (.countdown, false),
+            (.countdown, true),
             (.playing, true),
             (.resolvingFinalBall, true),
             (.paused, false),
@@ -106,14 +106,14 @@ final class GameplaySessionTests: XCTestCase {
         }
     }
 
-    func testSnapshotPublicationGatePublishesLivePlayDeferralTransitions() {
+    func testSnapshotPublicationGateKeepsActiveTransitionsIdempotent() {
         var gate = GameplaySnapshotPublicationGate()
         var state = GameState()
         state.phase = .countdown
 
         XCTAssertTrue(gate.accept(GameplaySceneSnapshot(state: state)))
+        XCTAssertFalse(gate.accept(GameplaySceneSnapshot(state: state)))
         state.phase = .playing
-        XCTAssertTrue(gate.accept(GameplaySceneSnapshot(state: state)))
         XCTAssertFalse(gate.accept(GameplaySceneSnapshot(state: state)))
         state.phase = .paused
         XCTAssertTrue(gate.accept(GameplaySceneSnapshot(state: state)))
@@ -169,10 +169,21 @@ final class GameplaySessionTests: XCTestCase {
         )
 
         XCTAssertEqual(session.state.phase, .resolvingFinalBall)
+        XCTAssertTrue(session.snapshot.defersBottomSystemGestures)
+        XCTAssertFalse(session.canThrow)
         let ballBeforePause = try XCTUnwrap(session.state.ball)
         let graceBeforePause = session.state.finalBallGraceRemainingMilliseconds
+        XCTAssertFalse(
+            session.throwBall(
+                target: WorldPoint(x: 0, depth: 0.5, height: 0.5),
+                releaseSpeedPixelsPerMillisecond: 1,
+                aimMarker: .zero
+            )
+        )
+        XCTAssertEqual(session.state.ball, ballBeforePause)
 
         XCTAssertTrue(session.pause())
+        XCTAssertFalse(session.snapshot.defersBottomSystemGestures)
         _ = session.advance(
             deltaMilliseconds: 500,
             endedAt: configuration.startedAt.addingTimeInterval(63.5)
@@ -185,6 +196,7 @@ final class GameplaySessionTests: XCTestCase {
 
         XCTAssertTrue(session.resume())
         XCTAssertEqual(session.state.phase, .resolvingFinalBall)
+        XCTAssertTrue(session.snapshot.defersBottomSystemGestures)
         XCTAssertFalse(session.resume())
     }
 
@@ -436,14 +448,14 @@ final class GameplaySessionTests: XCTestCase {
         for step in 1 ... 31 {
             scene.update(TimeInterval(step) / 10)
         }
-        XCTAssertEqual(snapshots.map(\.defersBottomSystemGestures), [false, true])
+        XCTAssertEqual(snapshots.map(\.defersBottomSystemGestures), [true])
 
         XCTAssertTrue(scene.pause())
         XCTAssertTrue(scene.currentSnapshot.isPaused)
-        XCTAssertEqual(snapshots.map(\.isPaused), [false, false, true])
+        XCTAssertEqual(snapshots.map(\.isPaused), [false, true])
         XCTAssertEqual(
             snapshots.map(\.defersBottomSystemGestures),
-            [false, true, false]
+            [true, false]
         )
         let pausedPublicationCount = snapshots.count
         XCTAssertFalse(scene.pause())
@@ -458,10 +470,10 @@ final class GameplaySessionTests: XCTestCase {
 
         XCTAssertTrue(scene.resume())
         XCTAssertFalse(scene.currentSnapshot.isPaused)
-        XCTAssertEqual(snapshots.map(\.isPaused), [false, false, true, false])
+        XCTAssertEqual(snapshots.map(\.isPaused), [false, true, false])
         XCTAssertEqual(
             snapshots.map(\.defersBottomSystemGestures),
-            [false, true, false, true]
+            [true, false, true]
         )
         let resumedPublicationCount = snapshots.count
         XCTAssertFalse(scene.resume())
@@ -490,8 +502,9 @@ final class GameplaySessionTests: XCTestCase {
         )
 
         XCTAssertEqual(bottomBar.size.height, 32, accuracy: 0.000_001)
-        XCTAssertFalse(scene.containsThrowActivationPoint(CGPoint(x: 512, y: 31.999)))
-        XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 512, y: 32)))
+        XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 512, y: 0)))
+        XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 512, y: 1)))
+        XCTAssertFalse(scene.containsThrowActivationPoint(CGPoint(x: 512, y: -0.001)))
         XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 300, y: 200)))
         XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 700, y: 200)))
         XCTAssertTrue(scene.containsThrowActivationPoint(CGPoint(x: 512, y: 225)))
@@ -524,6 +537,117 @@ final class GameplaySessionTests: XCTestCase {
         )
 
         scene.willMove(from: view)
+    }
+
+    @MainActor
+    func testMountedCountdownCuesRemainAudibleAndGameplayInertForBothMotionModes() async throws {
+        for reducedMotion in [false, true] {
+            var snapshots: [GameplaySceneSnapshot] = []
+            let scene = GameScene(
+                size: GameProjection.sceneSize,
+                configuration: makeConfiguration(seed: reducedMotion ? 813 : 812),
+                settings: PlayerSettings(
+                    musicVolume: 1,
+                    sfxVolume: 1,
+                    isMuted: false,
+                    reducedMotion: reducedMotion
+                ),
+                onCompletedRun: { _ in },
+                onGameplaySnapshotChanged: { snapshots.append($0) }
+            )
+            let view = SKView(frame: CGRect(origin: .zero, size: GameProjection.sceneSize))
+            scene.didMove(to: view)
+
+            XCTAssertEqual(snapshots.map(\.defersBottomSystemGestures), [true])
+
+            let readinessDeadline = ProcessInfo.processInfo.systemUptime + 8
+            while scene.visualReadiness == .preparing,
+                  ProcessInfo.processInfo.systemUptime < readinessDeadline {
+                await Task.yield()
+            }
+            XCTAssertEqual(scene.visualReadiness, .ready)
+            XCTAssertFalse(scene.isGameplayMusicPlaying)
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.countdown), 1)
+            XCTAssertEqual(
+                try XCTUnwrap(
+                    scene.childNode(withName: "//countdown") as? SKLabelNode
+                ).text,
+                "3"
+            )
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.snap), 0)
+
+            let startPoint = CGPoint(x: scene.size.width / 2, y: 1)
+            scene.handlePrimaryInputBegan(
+                at: startPoint,
+                initialSample: TouchSample(
+                    point: startPoint,
+                    timestampMilliseconds: 0
+                )
+            )
+            XCTAssertFalse(scene.isAiming)
+            XCTAssertEqual(scene.currentSnapshot.statistics.attempts, 0)
+
+            scene.update(0)
+            for step in 1 ... 11 {
+                scene.update(TimeInterval(step) / 10)
+            }
+            XCTAssertNotNil(scene.childNode(withName: "//countdown"))
+            XCTAssertFalse(scene.isAiming)
+            XCTAssertEqual(scene.currentSnapshot.statistics.attempts, 0)
+            XCTAssertFalse(scene.isGameplayMusicPlaying)
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.countdown), 2)
+            XCTAssertEqual(
+                try XCTUnwrap(
+                    scene.childNode(withName: "//countdown") as? SKLabelNode
+                ).text,
+                "2"
+            )
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.snap), 0)
+            XCTAssertEqual(snapshots.map(\.defersBottomSystemGestures), [true])
+
+            for step in 12 ... 21 {
+                scene.update(TimeInterval(step) / 10)
+            }
+            XCTAssertNotNil(scene.childNode(withName: "//countdown"))
+            XCTAssertFalse(scene.isGameplayMusicPlaying)
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.countdown), 3)
+            XCTAssertEqual(
+                try XCTUnwrap(
+                    scene.childNode(withName: "//countdown") as? SKLabelNode
+                ).text,
+                "1"
+            )
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.snap), 0)
+            XCTAssertEqual(snapshots.map(\.defersBottomSystemGestures), [true])
+
+            for step in 22 ... 31 {
+                scene.update(TimeInterval(step) / 10)
+            }
+            XCTAssertNil(scene.childNode(withName: "//countdown"))
+            XCTAssertEqual(snapshots.map(\.defersBottomSystemGestures), [true])
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.countdown), 3)
+            XCTAssertEqual(scene.successfulAudioCuePlayCount(.snap), 1)
+            XCTAssertTrue(scene.isGameplayMusicPlaying)
+
+            let bottomBar = try XCTUnwrap(
+                scene.childNode(withName: "//gameplayLetterbox.bottom") as? SKSpriteNode
+            )
+            XCTAssertEqual(bottomBar.size.height, 32, accuracy: 0.000_001)
+            scene.handlePrimaryInputBegan(
+                at: startPoint,
+                initialSample: TouchSample(
+                    point: startPoint,
+                    timestampMilliseconds: 3_100
+                )
+            )
+            XCTAssertTrue(
+                scene.isAiming,
+                "Playing input beneath the completed bar must work with reducedMotion=\(reducedMotion)"
+            )
+
+            scene.setApplicationActive(false)
+            scene.willMove(from: view)
+        }
     }
 
     @MainActor

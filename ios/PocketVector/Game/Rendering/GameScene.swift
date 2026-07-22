@@ -145,7 +145,7 @@ final class GameScene: SKScene {
     private let aimMarkerNode = SKShapeNode()
 
     private var activeSamples: [TouchSample] = []
-    private var isAiming = false
+    private(set) var isAiming = false
 
     #if DEBUG
     private var hudPreviewState: GameState?
@@ -371,6 +371,11 @@ final class GameScene: SKScene {
     }
 
     var currentSnapshot: GameplaySceneSnapshot { session.snapshot }
+    var isGameplayMusicPlaying: Bool { audio.isMusicPlaying }
+
+    func successfulAudioCuePlayCount(_ cue: GameAudioCue) -> Int {
+        audio.successfulPlayCount(for: cue)
+    }
 
     /// Resumes only an already-paused active run. Repeated requests are inert.
     @discardableResult

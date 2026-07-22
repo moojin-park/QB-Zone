@@ -617,7 +617,7 @@ final class GameCoreTests: XCTestCase {
     }
   }
 
-  func testThrowActivationBandSpansSafeWidthAboveCompletedBottomLetterboxThroughLogicalY225() {
+  func testThrowActivationBandSpansSafeWidthFromFullBleedYZeroThroughLogicalY225() {
     let configurations = [
       GameViewport.canonical,
       GameViewport(
@@ -638,16 +638,18 @@ final class GameCoreTests: XCTestCase {
       let frame = viewport.throwActivationFrame
       XCTAssertEqual(frame.minX, viewport.safeSceneFrame.minX, accuracy: 0.000_001)
       XCTAssertEqual(frame.maxX, viewport.safeSceneFrame.maxX, accuracy: 0.000_001)
-      XCTAssertEqual(
-        frame.minY,
-        max(viewport.safeSceneFrame.minY, viewport.letterboxLayout.finalSceneHeight),
-        accuracy: 0.000_001
-      )
+      XCTAssertEqual(frame.minY, 0, accuracy: 0.000_001)
       XCTAssertEqual(frame.maxY, 225, accuracy: 0.000_001)
       XCTAssertTrue(
         viewport.containsThrowActivationPoint(
-          CGPoint(x: frame.minX, y: frame.midY)
+          CGPoint(x: frame.minX, y: 0)
         )
+      )
+      XCTAssertTrue(
+        viewport.containsThrowActivationPoint(
+          CGPoint(x: frame.midX, y: 1)
+        ),
+        "The bottom safe area and cinematic bar must remain visual-only"
       )
       XCTAssertTrue(
         viewport.containsThrowActivationPoint(
@@ -666,7 +668,7 @@ final class GameCoreTests: XCTestCase {
       )
       XCTAssertFalse(
         viewport.containsThrowActivationPoint(
-          CGPoint(x: frame.midX, y: frame.minY - 0.001)
+          CGPoint(x: frame.midX, y: -0.001)
         )
       )
     }
@@ -1101,10 +1103,30 @@ final class GameCoreTests: XCTestCase {
 
     XCTAssertEqual(simulation.state.phase, .countdown)
     XCTAssertFalse(simulation.canThrow)
+    let countdownStart = simulation.state
+    XCTAssertFalse(
+      simulation.throwBall(
+        target: WorldPoint(x: 0, depth: 0.5, height: 0.5),
+        releaseSpeedPixelsPerMillisecond: 1,
+        aimMarker: .zero
+      )
+    )
+    XCTAssertEqual(simulation.state, countdownStart)
 
     simulation.update(deltaMilliseconds: 2_999)
     XCTAssertEqual(simulation.state.phase, .countdown)
     XCTAssertEqual(simulation.state.countdownRemainingMilliseconds, 1)
+    XCTAssertEqual(
+      simulation.state.remainingMilliseconds,
+      countdownStart.remainingMilliseconds
+    )
+    XCTAssertEqual(
+      simulation.state.elapsedGameplayMilliseconds,
+      countdownStart.elapsedGameplayMilliseconds
+    )
+    XCTAssertEqual(simulation.state.score, countdownStart.score)
+    XCTAssertEqual(simulation.state.statistics, countdownStart.statistics)
+    XCTAssertNil(simulation.state.ball)
 
     simulation.update(deltaMilliseconds: 1)
     XCTAssertEqual(simulation.state.phase, .playing)

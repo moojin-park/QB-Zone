@@ -9,13 +9,13 @@ implementation under `ios/PocketVector/Game/` is authoritative.
 2. Drag upfield toward open space.
 3. Release ahead of a moving receiver.
 
-The activation band spans the landscape safe width from the higher of the
-bottom safe-area boundary or the completed cinematic bottom bar through logical
-scene `y = 225`, covering the first two major yardage markers. Throw-start
-activation inside the completed bottom-bar region is rejected. Pause and mute
-controls and the complete scorebug/feedback footprint remain excluded. Only the
-initial press is constrained to this band; the drag and release may continue
-anywhere upfield.
+The activation band spans the landscape safe width from full-bleed scene
+`y = 0` through logical scene `y = 225`, covering the first two major yardage
+markers. The bottom safe-area inset and cinematic bottom bar do not change this
+vertical boundary, so active-play throw input remains available beneath the
+bar. Pause and mute controls and the complete scorebug/feedback footprint remain
+excluded. Only the initial press is constrained to this band; the drag and
+release may continue anywhere upfield.
 
 The release position selects the target. Gesture distance and elapsed time
 determine release speed; a quick release produces a flatter, shorter flight and
@@ -25,7 +25,10 @@ does not create a throw.
 
 Only one football is authoritative at a time. Input is disabled while textures
 are preparing, during countdown, while paused, while a play resolves, and after
-the run enters its final-ball state.
+the run enters its final-ball state. Countdown advances only its own visual
+timer: it cannot aim, throw, score, or advance the gameplay clock. Its initial
+countdown cue and subsequent number cues are presentation-only and do not alter
+simulation state.
 
 ## Run lifecycle
 
@@ -93,9 +96,9 @@ immediately. The bars remain fully presented during active play, final-ball
 resolution, and Pause, then are removed in Results so the unchanged retained
 frozen field remains visible through the transparent Results presentation.
 
-The bars do not alter field projection, actors, or trajectories. Scorebug,
-pause, and mute anchors remain unchanged; only the clock and Adrenaline HUD are
-reserved below the completed top bar.
+The bars do not alter field projection, actors, trajectories, or throw-start
+geometry. Scorebug, pause, and mute anchors remain unchanged; only the clock and
+Adrenaline HUD are reserved below the completed top bar.
 
 ## Outcomes
 
@@ -126,10 +129,11 @@ one immutable abandoned run, which must complete the normal durable settlement
 path before navigation changes. Mute state affects music and sound effects and
 persists through the profile settings model.
 
-The gameplay snapshot requests bottom-edge system-gesture deferral only during
-active play and final-ball resolution. It clears that request during countdown,
-pause, results, and every non-gameplay state. The app-owned gameplay adapter
-must apply the platform deferral; this reduces accidental exits but does not disable
+The gameplay snapshot requests bottom-edge system-gesture deferral throughout
+the complete active gameplay surface: initial visual preparation and countdown,
+Playing, and final-ball resolution. It clears that request during Pause, Results,
+settlement, and every non-gameplay state. The app-owned gameplay adapter must
+apply the platform deferral; this reduces accidental exits but does not disable
 the deliberate repeat gesture provided by iOS.
 
 ## Authoritative files
