@@ -16,13 +16,13 @@ enum GameplayConfig {
     static let receiverMinimumDespawnX: CGFloat = 1.34
     static let receiverDespawnPaddingPixels: CGFloat = 8
     static let receiverOutsideSidelineSpeedMultiplier: CGFloat = 2
+    static let receiverCaughtSpeedMultiplier: CGFloat =
+        (1 + receiverOutsideSidelineSpeedMultiplier) / 2
     static let receiverSpawnDelay: ClosedRange<CGFloat> = 180 ... 620
     static let defenderPatrolHalfWidth: CGFloat = 0.78
     static let defenderCrossingSeconds: [CGFloat] = [4.7, 5.8, 6.8]
     static let defenderDepths: [CGFloat] = [0.39, 0.58, 0.73]
     static let defenderWidthWorld: CGFloat = 0.22
-    static let playResolutionCooldownMilliseconds: CGFloat = 250
-
     enum Throw {
         static let minimumGestureDistancePixels: CGFloat = 34
         static let slowSpeedPixelsPerMillisecond: CGFloat = 0.25
@@ -114,23 +114,26 @@ enum ReceiverMotion {
         let runAnimationDeltaMilliseconds: CGFloat
     }
 
-    static func speedMultiplier(atX x: CGFloat) -> CGFloat {
-        abs(x) > GameplayConfig.receiverSidelineX
-            ? GameplayConfig.receiverOutsideSidelineSpeedMultiplier
-            : 1
+    static func speedMultiplier(atX x: CGFloat, hasCaught: Bool = false) -> CGFloat {
+        if abs(x) > GameplayConfig.receiverSidelineX {
+            return GameplayConfig.receiverOutsideSidelineSpeedMultiplier
+        }
+        return hasCaught ? GameplayConfig.receiverCaughtSpeedMultiplier : 1
     }
 
     static func position(
         from startX: CGFloat,
         direction: CGFloat,
         baseSpeedPerMillisecond: CGFloat,
-        deltaMilliseconds: CGFloat
+        deltaMilliseconds: CGFloat,
+        hasCaught: Bool = false
     ) -> CGFloat {
         step(
             from: startX,
             direction: direction,
             baseSpeedPerMillisecond: baseSpeedPerMillisecond,
-            deltaMilliseconds: deltaMilliseconds
+            deltaMilliseconds: deltaMilliseconds,
+            hasCaught: hasCaught
         ).x
     }
 
@@ -138,7 +141,8 @@ enum ReceiverMotion {
         from startX: CGFloat,
         direction: CGFloat,
         baseSpeedPerMillisecond: CGFloat,
-        deltaMilliseconds: CGFloat
+        deltaMilliseconds: CGFloat,
+        hasCaught: Bool = false
     ) -> Step {
         guard direction != 0,
               baseSpeedPerMillisecond > 0,
@@ -146,10 +150,19 @@ enum ReceiverMotion {
             return Step(x: startX, runAnimationDeltaMilliseconds: 0)
         }
 
-        let startTravelCoordinate = travelCoordinate(forX: startX)
+        let onFieldMultiplier = hasCaught
+            ? GameplayConfig.receiverCaughtSpeedMultiplier
+            : 1
+        let startTravelCoordinate = travelCoordinate(
+            forX: startX,
+            onFieldMultiplier: onFieldMultiplier
+        )
         let endTravelCoordinate = startTravelCoordinate
             + direction * baseSpeedPerMillisecond * deltaMilliseconds
-        let endX = worldX(forTravelCoordinate: endTravelCoordinate)
+        let endX = worldX(
+            forTravelCoordinate: endTravelCoordinate,
+            onFieldMultiplier: onFieldMultiplier
+        )
         let baseDistancePerMillisecond = abs(direction) * baseSpeedPerMillisecond
         return Step(
             x: endX,
@@ -170,31 +183,38 @@ enum ReceiverMotion {
         }
     }
 
-    /// Compresses each outside-sideline region by the configured multiplier.
-    /// Advancing at the base speed in this coordinate integrates exactly to the
-    /// sideline, then continues at the correct speed on the other side.
-    private static func travelCoordinate(forX x: CGFloat) -> CGFloat {
+    /// Compresses each movement region by its active multiplier. Advancing at
+    /// base speed in this coordinate integrates exactly across the sidelines.
+    private static func travelCoordinate(
+        forX x: CGFloat,
+        onFieldMultiplier: CGFloat
+    ) -> CGFloat {
         let sideline = GameplayConfig.receiverSidelineX
-        let multiplier = GameplayConfig.receiverOutsideSidelineSpeedMultiplier
+        let outsideMultiplier = GameplayConfig.receiverOutsideSidelineSpeedMultiplier
+        let onFieldBoundary = sideline / onFieldMultiplier
         if x < -sideline {
-            return -sideline + (x + sideline) / multiplier
+            return -onFieldBoundary + (x + sideline) / outsideMultiplier
         }
         if x > sideline {
-            return sideline + (x - sideline) / multiplier
+            return onFieldBoundary + (x - sideline) / outsideMultiplier
         }
-        return x
+        return x / onFieldMultiplier
     }
 
-    private static func worldX(forTravelCoordinate coordinate: CGFloat) -> CGFloat {
+    private static func worldX(
+        forTravelCoordinate coordinate: CGFloat,
+        onFieldMultiplier: CGFloat
+    ) -> CGFloat {
         let sideline = GameplayConfig.receiverSidelineX
-        let multiplier = GameplayConfig.receiverOutsideSidelineSpeedMultiplier
-        if coordinate < -sideline {
-            return -sideline + (coordinate + sideline) * multiplier
+        let outsideMultiplier = GameplayConfig.receiverOutsideSidelineSpeedMultiplier
+        let onFieldBoundary = sideline / onFieldMultiplier
+        if coordinate < -onFieldBoundary {
+            return -sideline + (coordinate + onFieldBoundary) * outsideMultiplier
         }
-        if coordinate > sideline {
-            return sideline + (coordinate - sideline) * multiplier
+        if coordinate > onFieldBoundary {
+            return sideline + (coordinate - onFieldBoundary) * outsideMultiplier
         }
-        return coordinate
+        return coordinate * onFieldMultiplier
     }
 }
 

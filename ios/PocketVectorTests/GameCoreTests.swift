@@ -75,6 +75,56 @@ final class GameCoreTests: XCTestCase {
     )
   }
 
+  func testCaughtReceiverUsesMiddleSpeedOnFieldAndExistingClearingSpeedOutside() {
+    XCTAssertEqual(GameplayConfig.receiverCaughtSpeedMultiplier, 1.5)
+    XCTAssertEqual(
+      GameplayConfig.receiverCaughtSpeedMultiplier,
+      (1 + GameplayConfig.receiverOutsideSidelineSpeedMultiplier) / 2
+    )
+    XCTAssertEqual(
+      ReceiverMotion.speedMultiplier(atX: 0, hasCaught: true),
+      GameplayConfig.receiverCaughtSpeedMultiplier
+    )
+    XCTAssertEqual(
+      ReceiverMotion.speedMultiplier(
+        atX: GameplayConfig.receiverSidelineX,
+        hasCaught: true
+      ),
+      GameplayConfig.receiverCaughtSpeedMultiplier
+    )
+    XCTAssertEqual(
+      ReceiverMotion.speedMultiplier(atX: 1.01, hasCaught: true),
+      GameplayConfig.receiverOutsideSidelineSpeedMultiplier
+    )
+
+    let baseSpeed: CGFloat = 0.001
+    let singleStep = ReceiverMotion.step(
+      from: 0.9,
+      direction: 1,
+      baseSpeedPerMillisecond: baseSpeed,
+      deltaMilliseconds: 100,
+      hasCaught: true
+    )
+    var partitioned = CGFloat(0.9)
+    for _ in 0 ..< 4 {
+      partitioned = ReceiverMotion.position(
+        from: partitioned,
+        direction: 1,
+        baseSpeedPerMillisecond: baseSpeed,
+        deltaMilliseconds: 25,
+        hasCaught: true
+      )
+    }
+
+    XCTAssertEqual(singleStep.x, 1.066_666_667, accuracy: 0.000_001)
+    XCTAssertEqual(partitioned, singleStep.x, accuracy: 0.000_001)
+    XCTAssertEqual(
+      singleStep.runAnimationDeltaMilliseconds,
+      166.666_667,
+      accuracy: 0.000_001
+    )
+  }
+
   func testReceiverMotionIntegratesExactlyToSidelineBeforeRestoringBaseSpeed() {
     let baseSpeed: CGFloat = 0.001
     let singleStep = ReceiverMotion.step(
@@ -1183,6 +1233,108 @@ final class GameCoreTests: XCTestCase {
       )
     )
     XCTAssertEqual(simulation.state.nextEntityID, expectedBallID + 1)
+  }
+
+  func testResolvedPassImmediatelyAllowsNextThrowWithoutCooldown() throws {
+    var simulation = GameSimulation(seed: 11)
+    simulation.startRun()
+    simulation.update(deltaMilliseconds: GameplayConfig.countdownDurationMilliseconds)
+
+    XCTAssertTrue(
+      simulation.throwBall(
+        target: WorldPoint(x: 4, depth: 0.6, height: 0.5),
+        releaseSpeedPixelsPerMillisecond: GameplayConfig.Throw.fastSpeedPixelsPerMillisecond,
+        aimMarker: .zero
+      )
+    )
+
+    var resolvedOutcome: PassOutcome?
+    for _ in 0 ..< 120 {
+      let result = simulation.update(deltaMilliseconds: GameplayConfig.fixedStepMilliseconds)
+      if let outcome = result.passResolved {
+        resolvedOutcome = outcome
+        break
+      }
+    }
+
+    XCTAssertEqual(resolvedOutcome, .incompletion)
+    XCTAssertNil(simulation.state.ball)
+    XCTAssertNotNil(simulation.state.feedback)
+    XCTAssertTrue(simulation.canThrow)
+    XCTAssertTrue(
+      simulation.throwBall(
+        target: WorldPoint(x: 0, depth: 0.68, height: 0.5),
+        releaseSpeedPixelsPerMillisecond: GameplayConfig.Throw.fastSpeedPixelsPerMillisecond,
+        aimMarker: .zero
+      )
+    )
+    XCTAssertNotNil(simulation.state.ball)
+  }
+
+  func testTouchdownResolutionImmediatelyAllowsThrowAndAcceleratesCaughtReceiver() throws {
+    var simulation = GameSimulation(seed: 11)
+    simulation.startRun()
+    simulation.update(deltaMilliseconds: GameplayConfig.countdownDurationMilliseconds)
+
+    let touchdownReceiver = try XCTUnwrap(
+      simulation.state.receivers.first(where: { $0.laneID == .touchdown })
+    )
+    let touchdownLane = GameplayConfig.lane(.touchdown)
+    var targetX = touchdownReceiver.x
+    for _ in 0 ..< 8 {
+      let target = WorldPoint(x: targetX, depth: touchdownLane.depth, height: 0.5)
+      let trajectory = Trajectory.parameters(
+        start: GameplayConfig.quarterbackStart,
+        target: target,
+        releaseSpeedPixelsPerMillisecond: GameplayConfig.Throw.fastSpeedPixelsPerMillisecond
+      )
+      targetX = ReceiverMotion.position(
+        from: touchdownReceiver.x,
+        direction: touchdownReceiver.direction,
+        baseSpeedPerMillisecond: touchdownReceiver.speedPerMillisecond,
+        deltaMilliseconds: trajectory.durationMilliseconds * GameplayConfig.Throw.catchProgress
+      )
+    }
+
+    XCTAssertTrue(
+      simulation.throwBall(
+        target: WorldPoint(x: targetX, depth: touchdownLane.depth, height: 0.5),
+        releaseSpeedPixelsPerMillisecond: GameplayConfig.Throw.fastSpeedPixelsPerMillisecond,
+        aimMarker: .zero
+      )
+    )
+
+    var resolvedOutcome: PassOutcome?
+    for _ in 0 ..< 120 {
+      let result = simulation.update(deltaMilliseconds: GameplayConfig.fixedStepMilliseconds)
+      if let outcome = result.passResolved {
+        resolvedOutcome = outcome
+        break
+      }
+    }
+
+    XCTAssertEqual(resolvedOutcome, .touchdown)
+    XCTAssertNil(simulation.state.ball)
+    XCTAssertTrue(simulation.canThrow)
+
+    let caughtBefore = try XCTUnwrap(
+      simulation.state.receivers.first(where: { $0.id == touchdownReceiver.id })
+    )
+    XCTAssertTrue(caughtBefore.hasCaught)
+    XCTAssertLessThan(abs(caughtBefore.x), GameplayConfig.receiverSidelineX)
+
+    simulation.update(deltaMilliseconds: GameplayConfig.fixedStepMilliseconds)
+
+    let caughtAfter = try XCTUnwrap(
+      simulation.state.receivers.first(where: { $0.id == touchdownReceiver.id })
+    )
+    XCTAssertEqual(
+      caughtAfter.x - caughtBefore.x,
+      caughtBefore.direction * caughtBefore.speedPerMillisecond
+        * GameplayConfig.fixedStepMilliseconds
+        * GameplayConfig.receiverCaughtSpeedMultiplier,
+      accuracy: 0.000_001
+    )
   }
 
   func testBallHeadingFollowsProjectedTravelDirection() {

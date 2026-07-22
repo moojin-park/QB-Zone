@@ -170,7 +170,6 @@ struct GameState: Equatable {
     var ball: BallState?
     var nextEntityID = 1
     var laneSpawnTimers: [LaneID: CGFloat] = [:]
-    var playCooldownMilliseconds: CGFloat = 0
     var feedback: FeedbackState?
     var lastPlayScore: PlayScoreResult?
     var statistics = RunStatistics()

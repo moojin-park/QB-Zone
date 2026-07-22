@@ -11,8 +11,7 @@ struct GameSimulation {
     var canThrow: Bool {
         state.phase == .playing &&
             state.remainingMilliseconds > 0 &&
-            state.ball == nil &&
-            state.playCooldownMilliseconds <= 0
+            state.ball == nil
     }
 
     mutating func startRun() {
@@ -93,10 +92,6 @@ struct GameSimulation {
         }
         updateReceivers(deltaMilliseconds: deltaMilliseconds)
         updateDefenders(deltaMilliseconds: deltaMilliseconds)
-        state.playCooldownMilliseconds = max(
-            0,
-            state.playCooldownMilliseconds - deltaMilliseconds
-        )
 
         if var feedback = state.feedback {
             feedback.remainingMilliseconds -= deltaMilliseconds
@@ -312,7 +307,8 @@ struct GameSimulation {
             from: state.receivers[index].x,
             direction: state.receivers[index].direction,
             baseSpeedPerMillisecond: state.receivers[index].speedPerMillisecond,
-            deltaMilliseconds: deltaMilliseconds
+            deltaMilliseconds: deltaMilliseconds,
+            hasCaught: state.receivers[index].hasCaught
         )
         state.receivers[index].x = motion.x
         state.receivers[index].animationMilliseconds += ReceiverMotion.animationDelta(
@@ -506,9 +502,6 @@ struct GameSimulation {
         state.statistics.record(outcome: outcome)
         state.feedback = Self.makeFeedback(result: scoreResult)
         state.ball = nil
-        state.playCooldownMilliseconds = outcome == .touchdown
-            ? 420
-            : GameplayConfig.playResolutionCooldownMilliseconds
     }
 
     static func makeFeedback(result: PlayScoreResult) -> FeedbackState {

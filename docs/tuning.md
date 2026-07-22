@@ -28,6 +28,10 @@ requests.
 - Maintain frame-partition independence for movement and collision.
 - Preserve the 60-second run, bounded final-ball grace, and single authoritative
   football.
+- Preserve normal receiver speed before a catch, 1.5-times normal speed after a
+  catch while on the field, and 2-times normal speed beyond either sideline.
+- Keep throw eligibility blocked only while the authoritative football is
+  airborne; do not add a post-resolution input cooldown.
 - A valid throw remains distance/upfield based; release speed shapes the arc but
   does not decide whether the gesture is accepted.
 - Receiver spawn/despawn bounds must clear the widest supported field art.

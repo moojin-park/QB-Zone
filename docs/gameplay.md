@@ -69,6 +69,8 @@ for rewards.
 - Three defenders patrol fixed depths and can intercept a flight segment.
 - Collision uses swept ball motion so a long render frame cannot tunnel through
   a receiver or defender.
+- A receiver runs at 1.5 times normal speed after a catch while still on the
+  field; the existing 2-times clearing speed takes over beyond either sideline.
 - Receivers spawn and despawn outside the widest supported field plate.
 
 The deterministic core does not know about SwiftUI navigation, persistence,
@@ -107,7 +109,8 @@ interception. A completed non-touchdown pass preserves the touchdown multiplier
 chain, while an incompletion or interception resets it. An interception also
 applies `max(0, score - 250)`. Back-to-back-touchdown statistics remain strictly
 consecutive: any non-touchdown outcome resets that separate counter. A new
-throw cannot begin until the resolution cooldown ends.
+throw may begin immediately after resolution clears the single authoritative
+football; a second throw remains blocked while the prior ball is airborne.
 
 When regulation expires, no new throw can start. An already airborne ball may
 finish within the bounded final-ball grace period; otherwise the run ends.
