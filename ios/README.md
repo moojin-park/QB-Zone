@@ -14,9 +14,10 @@ target has no third-party runtime dependencies or Swift package dependencies.
 - checked-in privacy manifest and encryption declaration
 
 Open `PocketVector.xcodeproj`, select the shared `PocketVector` scheme, and run
-on a landscape-capable simulator. The development bundle identifier is
-`com.pocketvector.game`; physical-device and distribution builds require the
-owner's Apple Developer team and permanent bundle identity.
+on a landscape-capable simulator. The permanent bundle identifier is
+`com.pocketvector.game`, and the app target is assigned to the owner's Apple
+Developer team. Distribution still requires the signed-release and App Store
+Connect gates tracked in `../docs/production-release-status.md`.
 
 ## Runtime ownership
 
@@ -60,9 +61,9 @@ unsigned generic-iOS archive. Use the command in the root `README.md`.
 
 ## Release dependencies
 
-The native target is not yet an App Store release candidate. Live CloudKit
-profile hydration, retained production service orchestration, permanent
-identifiers and capabilities, StoreKit products, Game Center records,
-rewarded-ad verification, signed device testing, accessibility review,
-TestFlight metrics, and App Store metadata remain gated work. See
-`../docs/production-release-status.md` for current evidence and dependency order.
+Build 158 passes the complete simulator suite, Release analysis, unsigned
+archive, and App Store distribution export. Live CloudKit and StoreKit records,
+Game Center runtime composition, rewarded-ad verification, service-aware
+privacy answers, TestFlight metrics, and App Store metadata remain gated work.
+See `../docs/production-release-status.md` for current evidence and dependency
+order.

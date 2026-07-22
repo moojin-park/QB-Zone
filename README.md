@@ -12,9 +12,10 @@ browser implementation is maintained separately.
 3. Choose a landscape-capable iPhone or iPad simulator.
 4. Run the app.
 
-The development bundle identifier is `com.pocketvector.game`. A permanent
-identifier and Apple Developer team are still required before device and App
-Store distribution.
+The permanent bundle identifier is `com.pocketvector.game`, and the app target
+is assigned to the owner's Apple Developer team. App Store distribution still
+requires the account records and signed-release gates tracked in
+`docs/production-release-status.md`.
 
 ## Verify from the command line
 
@@ -41,6 +42,30 @@ xcodebuild \
   archive
 ```
 
+Create and export an App Store Connect-signed archive after the reproducibility
+gate passes:
+
+```bash
+xcodebuild \
+  -project ios/PocketVector.xcodeproj \
+  -scheme PocketVector \
+  -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -archivePath /tmp/PocketVector-AppStore.xcarchive \
+  -allowProvisioningUpdates \
+  archive
+
+xcodebuild \
+  -exportArchive \
+  -archivePath /tmp/PocketVector-AppStore.xcarchive \
+  -exportPath /tmp/PocketVector-AppStore-export \
+  -exportOptionsPlist ios/ExportOptions-AppStore.plist \
+  -allowProvisioningUpdates
+```
+
+The tracked export options preserve the committed build number, require the
+Production CloudKit environment, and use Apple-managed distribution signing.
+
 ## Repository layout
 
 - `ios/PocketVector/`: app, gameplay, domain, persistence, services, and UI.
@@ -61,10 +86,11 @@ tutorial, shipping visuals, diagnostics, private-cloud profile association, and
 online-only commerce composition are implemented. The configured runtime now
 fails closed unless both CloudKit and StoreKit configuration are complete;
 catalog spends and coin-pack requests revalidate the private account and
-network immediately before their transaction boundary. Permanent Apple
-identifiers, App Store products and records, production CloudKit deployment,
-rewarded-ad live integration, device QA, and TestFlight gates remain release
-work.
+network immediately before their transaction boundary. The permanent bundle
+identity and Apple team are configured, and build 158 passes App Store
+distribution export. App Store products and records, production CloudKit
+deployment, live Game Center and rewarded-ad composition, service-aware
+privacy answers, and TestFlight gates remain release work.
 
 See `docs/production-release-status.md` for the active delivery board and
 `docs/production-release-charter.md` for the approved version-one scope.

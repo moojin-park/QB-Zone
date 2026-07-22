@@ -277,6 +277,22 @@ attempt encountered one simulator media-playback teardown crash in the
 unrelated tutorial/results capture test; that test passed alone and in the
 fresh complete acceptance run.
 
+Build 158 is the publication-hardening candidate. Its privacy manifest now
+declares the approved reasons used by the shipping app for file timestamps
+(`C617.1`), system boot time (`35F9.1`), and app-scoped defaults (`CA92.1`). The
+unused Push Notifications entitlement is removed, and source regressions keep
+it absent while retaining the exact Game Center and CloudKit containers. The
+launch build is explicitly limited to the tested iPhone and iPad platforms;
+Apple silicon Mac and Apple Vision Pro compatibility distribution are disabled
+until those environments receive their own QA. The exact simulator suite
+passed 885 total tests with 884 passes, no failures, and the one established
+conditional filesystem skip. Release target analysis and the unsigned generic
+iOS archive passed. An App Store Connect export then passed using an Apple-
+managed distribution certificate and store profile. The exported 1.0 (158)
+app has `get-task-allow = false`, Production CloudKit, container
+`iCloud.com.pocketvector.game`, Game Center, no APS entitlement, the expected
+privacy manifest, and no test/debug/source/QA payload.
+
 The Technical cinematic-presentation handoff `e1f4d94` (`Add countdown
 cinematic letterbox`) is integrated with full ancestry from shared baseline
 `d57714e`. Equal responsive black bars ease from zero to their completed height
@@ -392,11 +408,13 @@ committed-association recovery, authoritative checkpoint refresh, account-
 scoped runtime, private-cloud economy, and online-only StoreKit composition are
 now implemented. The runtime enables private-cloud sync and purchases only for
 complete validated CloudKit and StoreKit configuration; the repository's
-current placeholder/missing release values therefore remain fail closed until
-the owner supplies permanent identifiers and App Store records. Player-scoped
-Game Center delivery and rewarded-ad verification/recovery remain unavailable
-in the live app. An unsigned archive proves Release compilation but not the
-final codesigned entitlement payload; that remains a release-candidate gate.
+missing release contact values and service dictionaries therefore remain fail
+closed until the owner publishes the destinations and creates the permanent
+App Store records. Player-scoped Game Center delivery and rewarded-ad
+verification/recovery remain unavailable in the live app. Build 158 completes
+the final codesigned distribution-entitlement proof, but live service records,
+privacy answers, TestFlight metrics, and submission metadata remain external
+release-candidate gates.
 
 ## Delivery board
 
@@ -411,14 +429,14 @@ final codesigned entitlement payload; that remains a release-candidate gate.
 | Tutorial and results presentation               | Complete            | The tutorial and authoritative Results coin breakdown pass; Results retains and freezes the exact gameplay scene beneath a transparent overlay, suppresses gameplay chrome and interaction, and passes compact/regular/iPad standard and Accessibility 5 gates with one accepted P3 compact label wrap |
 | Retained production runtime and diagnostics     | Complete            | Process-owned coordinator/diagnostics tasks, restartable versioned state, Apple-only telemetry, typed config, and UIKit handoff pass   |
 | Gameplay settlement integration                 | Complete            | Release composition persists natural and abandoned runs exactly once and projects authoritative results after settlement             |
-| Paused gameplay presentation                    | In progress         | Refined Art panel and Technical/PM snapshot, Resume, and confirmed-exit actions are integrated and pass combined tests; compact-iPhone, regular-iPhone, and iPad landscape visual approval remains |
-| Layered team-field assets                       | In progress         | Registered neutral, universal-marking, and eight-team paint layers are bundled and actively rendered in exact order; multi-device gameplay visual approval remains |
-| Scorebug reaction presentation                  | In progress         | Semantic one/two-line reactions, responsive geometry, reduced motion, lifecycle, and VoiceOver behavior pass automated gates; integrated-device Art visual approval remains |
-| Cinematic gameplay framing                      | In progress         | Technical's responsive countdown-to-gameplay letterbox is integrated and passes focused, full-suite, and PM multi-device live inspection; final Art sequence approval remains |
-| Eight-team presentation system                  | In progress         | Eight approved emblems, fields, and baked primary/alternate character sets are bundled and actively routed without palette projection; compact and wide gameplay visual approval remains |
+| Paused gameplay presentation                    | Complete            | Refined Art panel and Technical/PM snapshot, Resume, and confirmed-exit actions are integrated; combined tests and owner acceptance of the finalized release build pass |
+| Layered team-field assets                       | Complete            | Registered neutral, universal-marking, and eight-team paint layers are bundled and rendered in exact order; deterministic, simulator, archive, and owner release acceptance pass |
+| Scorebug reaction presentation                  | Complete            | Semantic one/two-line reactions, responsive geometry, reduced motion, lifecycle, VoiceOver, integrated simulator, and owner release acceptance pass |
+| Cinematic gameplay framing                      | Complete            | Responsive countdown-to-gameplay bars are presentation-only; multi-device live inspection, physical bottom-edge input, complete-suite, and owner release acceptance pass |
+| Eight-team presentation system                  | Complete            | Eight emblems, fields, and baked primary/alternate character sets are bundled and actively routed without palette projection; exact resource and owner release acceptance pass |
 | Live Apple and advertising services             | In progress         | Cloud claim/hydration and online-only StoreKit composition are implemented and fail closed without complete configuration; permanent IDs, products, records, production schema, Game Center retention, authenticated ad transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
-| TestFlight release candidate                    | Queued              | Device, accessibility, sandbox, sync, replay, crash, and economy gates pass                                                           |
+| TestFlight release candidate                    | In progress         | Build 158 passes complete tests, unsigned archive, and App Store distribution export; permanent live-service configuration, TestFlight metadata, upload/processing, and sandbox/device gates remain |
 | App Store submission                            | Queued              | Signed archive, privacy report, metadata, review notes, screenshots, and owner approval complete                                      |
 
 ## Active ownership lanes
@@ -592,6 +610,9 @@ or runtime ownership boundaries.
 | 2026-07-21 | `c158148` | Post-pass gameplay Technical integration | Technical commit `c158148a49fa3b1ea04bb8f7ed4488eefd216b20` fast-forwarded from exact shared baseline `7773486`; all changed paths are Technical-owned gameplay/documentation or matching shared tests. Independent review found no P0-P3 issue; GameCore focus passed 59 tests with 0 failures and 0 skips at `/tmp/PocketVector-c158148-review.xcresult`; diff hygiene passed |
 | 2026-07-21 | `efd28d3` | Exact build 157 complete simulator suite | The fresh iPhone 17 Pro acceptance run passed 883 total: 882 passed, 0 failed, and 1 existing conditional case-alias filesystem skip at `/tmp/PocketVector-c158148-build157-full-rerun.xcresult`. The first run's unrelated tutorial media teardown crash was isolated; `testCaptureTutorialAndResultsLayoutMatrix` then passed alone at `/tmp/PocketVector-c158148-build157-layout-rerun.xcresult` and passed again in the complete acceptance run |
 | 2026-07-21 | `efd28d3` | Build 157 unsigned Release archive | Generic arm64 iOS Release archive passed with signing disabled at `/tmp/PocketVector-c158148-build157.xcarchive`; `CFBundleShortVersionString` is 1.0 and `CFBundleVersion` is 157. Final codesigned distribution-entitlement proof remains pending |
+| 2026-07-21 | build 158 | Publication hardening focused and complete simulator gates | Privacy/entitlement focused suite passed 19 tests; exact iPhone 17 Pro suite passed 885 total: 884 passed, 0 failed, and 1 established conditional filesystem skip at `/tmp/PocketVector-build158-full.xcresult` |
+| 2026-07-21 | build 158 | Release analysis and unsigned archive | Shipping app target passed arm64 Release analysis with no product diagnostic. Generic arm64 iOS Release archive passed with signing disabled at `/tmp/PocketVector-build158-hardened.xcarchive`; version 1.0 (158), required-reason privacy manifest, platform restrictions, and clean payload verified |
+| 2026-07-21 | build 158 | App Store Connect distribution export | `/tmp/PocketVector-build158-app-store-export/PocketVector.ipa` exported through the tracked options using Cloud Managed Apple Distribution. Signature verification passed; final entitlements are `RBMXD4NS89.com.pocketvector.game`, `get-task-allow = false`, Production `iCloud.com.pocketvector.game`, Game Center, and no APS. Live services, App Store metadata, upload/processing, and TestFlight remain pending |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or

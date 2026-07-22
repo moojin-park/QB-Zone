@@ -5,6 +5,54 @@ import XCTest
 
 @MainActor
 final class ProductionServiceConfigurationTests: XCTestCase {
+    func testShippingPrivacyManifestDeclaresEveryDirectRequiredReasonAPI() throws {
+        let manifest = try loadPropertyList(
+            at: sourceRoot
+                .appendingPathComponent("PocketVector")
+                .appendingPathComponent("Resources")
+                .appendingPathComponent("PrivacyInfo.xcprivacy")
+        )
+        let entries = try XCTUnwrap(
+            manifest["NSPrivacyAccessedAPITypes"] as? [[String: Any]]
+        )
+        let reasonsByCategory = Dictionary(
+            uniqueKeysWithValues: try entries.map { entry in
+                (
+                    try XCTUnwrap(entry["NSPrivacyAccessedAPIType"] as? String),
+                    Set(try XCTUnwrap(entry["NSPrivacyAccessedAPITypeReasons"] as? [String]))
+                )
+            }
+        )
+
+        XCTAssertEqual(
+            reasonsByCategory["NSPrivacyAccessedAPICategoryFileTimestamp"],
+            ["C617.1"]
+        )
+        XCTAssertEqual(
+            reasonsByCategory["NSPrivacyAccessedAPICategorySystemBootTime"],
+            ["35F9.1"]
+        )
+        XCTAssertEqual(
+            reasonsByCategory["NSPrivacyAccessedAPICategoryUserDefaults"],
+            ["CA92.1"]
+        )
+    }
+
+    func testShippingEntitlementsExcludeUnusedPushCapability() throws {
+        let entitlements = try loadPropertyList(
+            at: sourceRoot
+                .appendingPathComponent("PocketVector")
+                .appendingPathComponent("PocketVector.entitlements")
+        )
+
+        XCTAssertNil(entitlements["aps-environment"])
+        XCTAssertEqual(entitlements["com.apple.developer.game-center"] as? Bool, true)
+        XCTAssertEqual(
+            entitlements["com.apple.developer.icloud-container-identifiers"] as? [String],
+            ["iCloud.com.pocketvector.game"]
+        )
+    }
+
     func testAbsentServicesFailClosedWithEveryRequiredFieldReported() {
         let configuration = ProductionServiceConfiguration.parse(infoDictionary: [:])
 
@@ -531,6 +579,23 @@ final class ProductionServiceConfigurationTests: XCTestCase {
 }
 
 private extension ProductionServiceConfigurationTests {
+    var sourceRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    func loadPropertyList(at url: URL) throws -> [String: Any] {
+        let data = try Data(contentsOf: url)
+        return try XCTUnwrap(
+            PropertyListSerialization.propertyList(
+                from: data,
+                options: [],
+                format: nil
+            ) as? [String: Any]
+        )
+    }
+
     var cloudFields: [ProductionConfigurationField] {
         [
             .cloudContainerIdentifier,
