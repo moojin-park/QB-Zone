@@ -572,7 +572,7 @@ final class AppPresentationTests: XCTestCase {
             for: firstRunID,
             freezesPresentation: false
         )
-        XCTAssertFalse(state.defersBottomSystemGestures)
+        XCTAssertTrue(state.defersBottomSystemGestures)
 
         state.receive(
             gameplaySnapshot(phase: .playing),
@@ -613,7 +613,7 @@ final class AppPresentationTests: XCTestCase {
             for: replayRunID,
             freezesPresentation: false
         )
-        XCTAssertFalse(state.defersBottomSystemGestures)
+        XCTAssertTrue(state.defersBottomSystemGestures)
 
         state.receive(
             gameplaySnapshot(phase: .playing),
