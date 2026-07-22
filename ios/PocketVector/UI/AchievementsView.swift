@@ -1,5 +1,7 @@
 import SwiftUI
 
+let achievementOverviewSubtitle = "14 achievements · 1,000 Game Center points"
+
 @MainActor
 struct AchievementsView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -21,7 +23,7 @@ struct AchievementsView: View {
     var body: some View {
         ChampionshipSubmenuScreen(
             title: "Achievements",
-            subtitle: "Eight launch challenges worth 600 Game Center points.",
+            subtitle: achievementOverviewSubtitle,
             onBack: coordinator.goBack
         ) {
             VStack(spacing: 12) {
@@ -145,7 +147,7 @@ struct AchievementDetailView: View {
     }
 }
 
-private struct SummaryStat: View {
+struct SummaryStat: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     let title: String
@@ -166,8 +168,9 @@ private struct SummaryStat: View {
     }
 }
 
-private struct AchievementRow: View {
+struct AchievementRow: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let card: AchievementCardPresentation
     let action: () -> Void
@@ -196,7 +199,7 @@ private struct AchievementRow: View {
                     Text(card.definition.detail)
                         .font(verticalSizeClass == .regular ? .subheadline : .caption)
                         .foregroundStyle(PocketVectorTheme.textSecondary)
-                        .lineLimit(2)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                         .multilineTextAlignment(.leading)
                     ProgressView(value: Double(card.progress.percentComplete), total: 100)
                         .tint(card.progress.isCompleted ? PocketVectorTheme.success : PocketVectorTheme.cyan)
@@ -221,7 +224,7 @@ private struct AchievementRow: View {
     }
 }
 
-private func achievementIconName(_ id: AchievementID) -> String {
+func achievementIconName(_ id: AchievementID) -> String {
     switch id {
     case LaunchAchievementID.firstRead:
         "AchievementFirstReadIcon"
@@ -239,6 +242,18 @@ private func achievementIconName(_ id: AchievementID) -> String {
         "AchievementLightUpBoardIcon"
     case LaunchAchievementID.centuryOfConnections:
         "AchievementCenturyConnectionsIcon"
+    case LaunchAchievementID.perfectPocket:
+        "AchievementPerfectPocketIcon"
+    case LaunchAchievementID.franchisePlayer:
+        "AchievementFranchisePlayerIcon"
+    case LaunchAchievementID.overcharged:
+        "AchievementOverchargedIcon"
+    case LaunchAchievementID.deepThreat:
+        "AchievementDeepThreatIcon"
+    case LaunchAchievementID.untouchable:
+        "AchievementUntouchableIcon"
+    case LaunchAchievementID.maximumOverdrive:
+        "AchievementMaximumOverdriveIcon"
     default:
         "MenuAchievementIcon"
     }

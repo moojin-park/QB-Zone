@@ -97,6 +97,72 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureAchievementPresentationMatrix() async throws {
+        let coordinator = AppCoordinator()
+        await coordinator.bootstrap()
+
+        let viewports: [(
+            name: String,
+            size: CGSize,
+            horizontalSizeClass: UserInterfaceSizeClass,
+            verticalSizeClass: UserInterfaceSizeClass
+        )] = [
+            (
+                "compact-iphone-landscape",
+                CGSize(width: 667, height: 375),
+                .compact,
+                .compact
+            ),
+            (
+                "regular-iphone-landscape",
+                CGSize(width: 874, height: 402),
+                .compact,
+                .compact
+            ),
+            (
+                "ipad-landscape",
+                CGSize(width: 1_376, height: 1_032),
+                .regular,
+                .regular
+            ),
+        ]
+
+        for viewport in viewports {
+            let evidence = AnyView(
+                ZStack {
+                    PocketVectorBackdrop()
+                    AchievementsView(coordinator: coordinator)
+                }
+                .dynamicTypeSize(.large)
+                .environment(\.horizontalSizeClass, viewport.horizontalSizeClass)
+                .environment(\.verticalSizeClass, viewport.verticalSizeClass)
+            )
+            capture(
+                evidence,
+                size: viewport.size,
+                name: "achievements-v11-\(viewport.name)-top"
+            )
+            if viewport.name == "compact-iphone-landscape" {
+                capture(
+                    achievementFinalRowsEvidenceView(
+                        coordinator: coordinator,
+                        horizontalSizeClass: viewport.horizontalSizeClass,
+                        verticalSizeClass: viewport.verticalSizeClass
+                    ),
+                    size: viewport.size,
+                    name: "achievements-v11-\(viewport.name)-bottom"
+                )
+            } else {
+                await captureScrolledToBottom(
+                    evidence,
+                    size: viewport.size,
+                    name: "achievements-v11-\(viewport.name)-bottom"
+                )
+            }
+        }
+    }
+
+    @MainActor
     func testCaptureTutorialAndResultsLayoutMatrix() async throws {
         let tutorialCoordinator = AppCoordinator()
         await tutorialCoordinator.bootstrap()
@@ -778,7 +844,7 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(footballs[1].unlockItem?.price, EconomyConfiguration.alternateFootballPrice)
     }
 
-    func testAchievementSummaryAlwaysRepresentsAllEightAndSixHundredPoints() {
+    func testAchievementSummaryAlwaysRepresentsAllFourteenAndOneThousandPoints() {
         var progress = Dictionary(
             uniqueKeysWithValues: AchievementCatalog.launch.map {
                 ($0.id, AchievementProgress(id: $0.id))
@@ -794,11 +860,45 @@ final class AppPresentationTests: XCTestCase {
         let cards = AppPresentation.achievements(progress: progress)
         let summary = AppPresentation.achievementSummary(cards: cards)
 
-        XCTAssertEqual(cards.count, 8)
+        XCTAssertEqual(cards.count, 14)
         XCTAssertEqual(summary.completedCount, 1)
-        XCTAssertEqual(summary.totalCount, 8)
+        XCTAssertEqual(summary.totalCount, 14)
         XCTAssertEqual(summary.earnedPoints, completed.points)
-        XCTAssertEqual(summary.totalPoints, 600)
+        XCTAssertEqual(summary.totalPoints, 1_000)
+    }
+
+    func testAchievementIconPresentationCoversVersionOneOneCatalog() {
+        let expected: [AchievementID: String] = [
+            LaunchAchievementID.firstRead: "AchievementFirstReadIcon",
+            LaunchAchievementID.paydirt: "AchievementPaydirtIcon",
+            LaunchAchievementID.cashTheCharge: "AchievementCashTheChargeIcon",
+            LaunchAchievementID.fullRouteTree: "AchievementFullRouteTreeIcon",
+            LaunchAchievementID.dialedIn: "AchievementDialedInIcon",
+            LaunchAchievementID.hotHand: "AchievementHotHandIcon",
+            LaunchAchievementID.lightUpTheBoard: "AchievementLightUpBoardIcon",
+            LaunchAchievementID.millenniaOfConnections:
+                "AchievementCenturyConnectionsIcon",
+            LaunchAchievementID.perfectPocket: "AchievementPerfectPocketIcon",
+            LaunchAchievementID.franchisePlayer: "AchievementFranchisePlayerIcon",
+            LaunchAchievementID.overcharged: "AchievementOverchargedIcon",
+            LaunchAchievementID.deepThreat: "AchievementDeepThreatIcon",
+            LaunchAchievementID.untouchable: "AchievementUntouchableIcon",
+            LaunchAchievementID.maximumOverdrive:
+                "AchievementMaximumOverdriveIcon",
+        ]
+
+        XCTAssertEqual(
+            Dictionary(
+                uniqueKeysWithValues: AchievementCatalog.launch.map {
+                    ($0.id, achievementIconName($0.id))
+                }
+            ),
+            expected
+        )
+        XCTAssertEqual(
+            achievementIconName(AchievementID("achievement.unknown.v1")),
+            "MenuAchievementIcon"
+        )
     }
 
     func testCoinPackPresentationMatchesApprovedLaunchSurface() {
@@ -835,6 +935,54 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
+    private func achievementFinalRowsEvidenceView(
+        coordinator: AppCoordinator,
+        horizontalSizeClass: UserInterfaceSizeClass,
+        verticalSizeClass: UserInterfaceSizeClass
+    ) -> AnyView {
+        let cards = AppPresentation.achievements(
+            progress: coordinator.state.achievementProgress
+        )
+        let summary = AppPresentation.achievementSummary(cards: cards)
+
+        return AnyView(
+            ZStack {
+                PocketVectorBackdrop()
+                ChampionshipSubmenuScreen(
+                    title: "Achievements",
+                    subtitle: achievementOverviewSubtitle,
+                    onBack: {}
+                ) {
+                    VStack(spacing: 12) {
+                        HStack(spacing: 12) {
+                            SummaryStat(
+                                title: "COMPLETE",
+                                value: "\(summary.completedCount) / \(summary.totalCount)"
+                            )
+                            SummaryStat(
+                                title: "POINTS",
+                                value: "\(summary.earnedPoints) / \(summary.totalPoints)"
+                            )
+                        }
+                        .padding(.horizontal)
+
+                        VStack(spacing: 12) {
+                            ForEach(cards.suffix(2)) { card in
+                                AchievementRow(card: card, action: {})
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.bottom, 14)
+                    }
+                }
+            }
+            .dynamicTypeSize(.large)
+            .environment(\.horizontalSizeClass, horizontalSizeClass)
+            .environment(\.verticalSizeClass, verticalSizeClass)
+        )
+    }
+
+    @MainActor
     private func captureScrolledToBottom(
         _ view: AnyView,
         size: CGSize,
@@ -860,7 +1008,7 @@ final class AppPresentationTests: XCTestCase {
 
         guard let scrollView = descendantScrollViews(in: host.view)
             .max(by: { $0.contentSize.height < $1.contentSize.height }) else {
-            return XCTFail("Expected the Accessibility 5 Results layout to be scrollable")
+            return XCTFail("Expected the hosted layout to be scrollable")
         }
         let bottomOffset = max(
             -scrollView.adjustedContentInset.top,
