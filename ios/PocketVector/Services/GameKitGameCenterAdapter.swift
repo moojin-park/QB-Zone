@@ -7,6 +7,8 @@ enum GameKitGameCenterConfigurationError: Error, Equatable, Sendable {
     case invalidAchievementSet
     case emptyAchievementIdentifier
     case duplicateAchievementIdentifier
+    case retiredAchievementIdentifier
+    case permanentAchievementIdentifierMismatch
     case unapprovedLeaderboardDestination
     case unsupportedAchievement
 }
@@ -36,6 +38,9 @@ struct GameKitGameCenterConfiguration: Equatable, Sendable {
         }
 
         var normalizedAchievements: [AchievementID: String] = [:]
+        let millenniaID = LaunchAchievementID.millenniaOfConnections
+        let retiredCenturyID = AchievementCatalogTransitionV1ToV2
+            .retiredCenturyOfConnections
         for achievementID in launchAchievementIDs {
             guard let identifier = achievementIdentifiers[achievementID] else {
                 throw GameKitGameCenterConfigurationError.invalidAchievementSet
@@ -43,6 +48,15 @@ struct GameKitGameCenterConfiguration: Equatable, Sendable {
             let normalized = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalized.isEmpty else {
                 throw GameKitGameCenterConfigurationError.emptyAchievementIdentifier
+            }
+            guard normalized != retiredCenturyID.rawValue else {
+                throw GameKitGameCenterConfigurationError
+                    .retiredAchievementIdentifier
+            }
+            if achievementID == millenniaID,
+               normalized != millenniaID.rawValue {
+                throw GameKitGameCenterConfigurationError
+                    .permanentAchievementIdentifierMismatch
             }
             normalizedAchievements[achievementID] = normalized
         }

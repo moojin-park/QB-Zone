@@ -302,29 +302,62 @@ struct AtomicProfileFileStore: Sendable {
                 .invalidCandidateEnvelope
             )
         }
-        guard candidate.exactBytes == journal.candidateProfileEnvelope,
-              candidate.digest == journal.candidateProfileEnvelopeDigest else {
-            throw AtomicProfileFileStoreError.invalidReplacementIntent
-        }
-
         return try withLock {
             try assertHydrationRecoveryIsClear()
-            let primary = try hydrationCopyState(
-                at: locations.primaryURL,
-                journal: journal
-            )
-            let backup = try hydrationCopyState(
-                at: locations.backupURL,
-                journal: journal
-            )
-            guard primary == .candidate, backup == .candidate else {
+            let primaryRead = try readProfileData(from: locations.primaryURL)
+            let backupRead = try readProfileData(from: locations.backupURL)
+            let acceptedBytes = [
+                journal.candidateProfileEnvelope,
+                candidate.exactBytes,
+            ]
+            func isAcceptedCandidate(_ read: ProfileDataRead) -> Bool {
+                guard case let .data(bytes) = read else { return false }
+                return acceptedBytes.contains(bytes)
+            }
+            guard isAcceptedCandidate(primaryRead),
+                  isAcceptedCandidate(backupRead) else {
+                let primaryState: ProfileHydrationProfileCopyState =
+                    isAcceptedCandidate(primaryRead)
+                        ? .candidate
+                        : try hydrationCopyState(
+                            at: locations.primaryURL,
+                            journal: journal
+                        )
+                let backupState: ProfileHydrationProfileCopyState =
+                    isAcceptedCandidate(backupRead)
+                        ? .candidate
+                        : try hydrationCopyState(
+                            at: locations.backupURL,
+                            journal: journal
+                        )
                 throw AtomicProfileFileStoreError
                     .hydrationCandidateNotExactlyInstalled(
-                        primary: primary,
-                        backup: backup
+                        primary: primaryState,
+                        backup: backupState
                     )
             }
+
+            // A V1-catalog journal must keep its original byte identities and
+            // digest, but after cleanup the installed copies become ordinary
+            // profile authority. Advance protected lineage first, then
+            // converge backup and primary to the deterministic V2 envelope.
+            // Retry accepts either exact predecessor or exact transitioned
+            // bytes, so an interrupted rename remains recoverable.
             try advanceLineageHighWatermark(to: candidate, catalog: catalog)
+            if case let .data(backupBytes) = backupRead,
+               backupBytes != candidate.exactBytes {
+                try writeAndVerify(
+                    candidate.exactBytes,
+                    to: locations.backupURL
+                )
+            }
+            if case let .data(primaryBytes) = primaryRead,
+               primaryBytes != candidate.exactBytes {
+                try writeAndVerify(
+                    candidate.exactBytes,
+                    to: locations.primaryURL
+                )
+            }
             return candidate
         }
     }
@@ -1194,12 +1227,44 @@ actor ProfileInitialAssociationStoreV1 {
                   document.player.ledger[$0.key] == $0.value
               }),
               binding.seedSettlementReceipts.allSatisfy({
-                  document.settlementReceipts[$0.key] == $0.value
+                  guard let current = document.settlementReceipts[$0.key]
+                  else { return false }
+                  return receiptPreservingUnaffectedAchievementUpdates(
+                    current
+                  ) == receiptPreservingUnaffectedAchievementUpdates($0.value)
               }),
               binding.seedRewardedRunObservations.allSatisfy({
                   document.rewardedRunObservations?[$0.key] == $0.value
               }) else { return false }
         return true
+    }
+
+    /// The committed marker predates the launch-catalog transition and keeps
+    /// the original seed receipts as immutable ownership evidence. Compare
+    /// every non-achievement field and every unrelated achievement update
+    /// exactly, while allowing the three versioned updates (and retired
+    /// Century) to be deterministically rebuilt in the live target.
+    private nonisolated func receiptPreservingUnaffectedAchievementUpdates(
+        _ receipt: RunSettlementOutcome
+    ) -> RunSettlementOutcome {
+        let affected = AchievementCatalogTransitionV1ToV2
+            .recomputedAchievementIDs.union(
+                [
+                    AchievementCatalogTransitionV1ToV2
+                        .retiredCenturyOfConnections,
+                ]
+            )
+        return RunSettlementOutcome(
+            record: receipt.record,
+            gameplayRewardEntryID: receipt.gameplayRewardEntryID,
+            signingBonusEntryID: receipt.signingBonusEntryID,
+            achievementUpdates: receipt.achievementUpdates.filter {
+                !affected.contains($0.previous.id)
+                    && !affected.contains($0.current.id)
+            },
+            rewardedOfferUnlocked: receipt.rewardedOfferUnlocked,
+            resultingPersonalBest: receipt.resultingPersonalBest
+        )
     }
 
     private nonisolated func cleanupRecoveredEvidence(
@@ -1685,16 +1750,54 @@ private extension AtomicProfileFileStore {
             savedAt: decoded.savedAt
         )
         try validateCanonicalArtifact(artifact, catalog: catalog)
-        guard artifact.exactBytes == watermark.envelope,
-              artifact.digest == watermark.envelopeDigest,
-              artifact.document.accountIdentity == watermark.accountIdentity,
+        guard artifact.document.accountIdentity == watermark.accountIdentity,
               artifact.document.player.profileID == watermark.profileID,
               artifact.document.player.revision == watermark.playerRevision,
               artifact.document.economyRevision
                 == watermark.economyRevision else {
             throw AtomicProfileFileStoreError.invalidReplacementIntent
         }
+        if artifact.exactBytes != watermark.envelope {
+            // The watermark is the rollback authority, so publish its
+            // deterministic V2 replacement before either ordinary profile
+            // copy. A crash before the atomic rename leaves the predecessor;
+            // a crash afterward leaves an authority that can repair either
+            // still-V1 profile copy on the next launch.
+            try rewriteLineageHighWatermarkAfterCatalogTransition(
+                artifact
+            )
+        } else {
+            guard artifact.digest == watermark.envelopeDigest else {
+                throw AtomicProfileFileStoreError.invalidReplacementIntent
+            }
+        }
         return artifact
+    }
+
+    func rewriteLineageHighWatermarkAfterCatalogTransition(
+        _ artifact: CanonicalProfileEnvelopeArtifactV1
+    ) throws {
+        let transitioned = ProfileLineageHighWatermarkV1(artifact: artifact)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let encoded = try encoder.encode(transitioned)
+        guard encoded.count <= limits.maximumEncodedJournalBytes else {
+            throw AtomicProfileFileStoreError.invalidReplacementIntent
+        }
+        do {
+            try fileSystem.writeAtomicallyDurably(
+                encoded,
+                to: lineageHighWatermarkURL
+            )
+            let persisted = try fileSystem.read(from: lineageHighWatermarkURL)
+            guard persisted == encoded else {
+                throw AtomicProfileFileStoreError.atomicWriteOutcomeUnknown
+            }
+        } catch let error as AtomicProfileFileStoreError {
+            throw error
+        } catch {
+            throw mapped(error)
+        }
     }
 
     @discardableResult

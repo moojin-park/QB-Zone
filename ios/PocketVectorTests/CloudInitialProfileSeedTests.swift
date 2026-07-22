@@ -1293,7 +1293,9 @@ final class CloudInitialProfileSeedTests: XCTestCase {
                 : nil,
             accountedRunIDs: Set(runIDs)
         )
-        return document
+        return try LaunchAchievementPersistenceTransitionV1ToV2.apply(
+            to: document
+        )
     }
 
     private func makeRunRecord(

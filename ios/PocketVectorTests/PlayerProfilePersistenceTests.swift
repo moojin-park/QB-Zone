@@ -1235,9 +1235,9 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
                 id: LaunchAchievementID.paydirt,
                 percentComplete: 75
             )
-        document.player.achievementProgress[LaunchAchievementID.dialedIn] =
+        document.player.achievementProgress[LaunchAchievementID.hotHand] =
             AchievementProgress(
-                id: LaunchAchievementID.dialedIn,
+                id: LaunchAchievementID.hotHand,
                 percentComplete: 25
             )
         document.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
@@ -1247,7 +1247,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
                     pendingAchievementPercents: [
                         LaunchAchievementID.paydirt: 75,
                         LaunchAchievementID.firstRead: 0,
-                        LaunchAchievementID.dialedIn: 25,
+                        LaunchAchievementID.hotHand: 25,
                     ]
                 ),
             ]
@@ -1272,7 +1272,7 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
             prepared.batch.achievements,
             [
                 GameCenterAchievementSubmission(
-                    id: LaunchAchievementID.dialedIn,
+                    id: LaunchAchievementID.hotHand,
                     percentComplete: 25
                 ),
                 GameCenterAchievementSubmission(
@@ -3585,6 +3585,109 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testPreTransitionHydrationCandidateAdoptionConvergesAfterInterruptedRewrite()
+        async throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let fileSystem = FaultInjectingProfileStoreFileSystem()
+        try writeExactProfileCopies(
+            primary: fixture.sourceEnvelope,
+            backup: fixture.sourceEnvelope,
+            to: directory
+        )
+        let repository = makeHydrationAdoptionRepository(
+            directory: directory,
+            fixture: fixture,
+            fileSystem: fileSystem
+        )
+        let loaded = try await repository.load(at: fixture.date)
+
+        var predecessor = fixture.candidateDocument
+        predecessor.player.achievementProgress.removeValue(
+            forKey: LaunchAchievementID.millenniaOfConnections
+        )
+        let retired = AchievementCatalogTransitionV1ToV2
+            .retiredCenturyOfConnections
+        predecessor.player.achievementProgress[retired] = AchievementProgress(
+            id: retired
+        )
+        let migrator = PlayerProfileMigrator()
+        let predecessorArtifact = try migrator.canonicalArtifact(
+            for: predecessor,
+            savedAt: fixture.date.addingTimeInterval(1)
+        )
+        let journal = try fixture.makeJournal(
+            candidateEnvelope: predecessorArtifact.exactBytes
+        )
+        let expectedDocument = try LaunchAchievementPersistenceTransitionV1ToV2
+            .apply(to: predecessor)
+        let expectedArtifact = try migrator.canonicalArtifact(
+            for: expectedDocument,
+            savedAt: fixture.date.addingTimeInterval(1)
+        )
+        XCTAssertNotEqual(
+            predecessorArtifact.exactBytes,
+            expectedArtifact.exactBytes
+        )
+        try writeExactProfileCopies(
+            primary: predecessorArtifact.exactBytes,
+            backup: predecessorArtifact.exactBytes,
+            to: directory
+        )
+
+        fileSystem.failNext(.afterWrite("player-profile.backup.json"))
+        do {
+            _ = try await repository._testOnlyAdoptCommittedHydration(
+                journal,
+                session: loaded.session
+            )
+            XCTFail("The interrupted backup rewrite must require a retry")
+        } catch {
+            XCTAssertEqual(
+                error as? AtomicProfileFileStoreError,
+                .atomicWriteOutcomeUnknown
+            )
+        }
+
+        let locations = ProfileStorageLocations(directoryURL: directory)
+        XCTAssertEqual(
+            try Data(contentsOf: locations.primaryURL),
+            predecessorArtifact.exactBytes
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: locations.backupURL),
+            expectedArtifact.exactBytes
+        )
+
+        let adopted = try await repository._testOnlyAdoptCommittedHydration(
+            journal,
+            session: loaded.session
+        )
+        XCTAssertEqual(
+            adopted,
+            try PlayerProfileProjection.snapshot(
+                for: expectedDocument,
+                session: loaded.session
+            )
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: locations.primaryURL),
+            expectedArtifact.exactBytes
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: locations.backupURL),
+            expectedArtifact.exactBytes
+        )
+
+        let reconciled = try AtomicProfileFileStore(
+            directoryURL: directory,
+            fileSystem: fileSystem
+        ).readExactInstalledCandidate(journal, catalog: .approved)
+        XCTAssertEqual(reconciled, expectedArtifact)
+    }
+
     func testTwoLoadedRepositoriesRejectStaleWriterWithoutChangingActorOrDisk()
         async throws
     {
@@ -3826,6 +3929,105 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(
             try Data(contentsOf: store.locations.backupURL),
             candidate.exactBytes
+        )
+    }
+
+    func testProtectedLineageTransitionsBeforePrimaryAndBackupAndPreservesRevisions()
+        throws
+    {
+        let directory = makeTemporaryDirectory()
+        defer { removeTemporaryDirectory(directory) }
+        let cloudAccountID = CloudAccountID("catalog-transition-lineage")
+        let binding = CloudAccountDerivedBindings.derive(from: cloudAccountID)
+        let fileSystem = FoundationProfileHydrationFileSystem()
+        let store = AtomicProfileFileStore(
+            directoryURL: directory,
+            fileSystem: fileSystem
+        )
+        let current = PlayerProfileFactory.makeDefault(
+            profileID: binding.durableAccountBinding.profileID,
+            accountIdentity: binding.playerAccountIdentity,
+            deviceID: "catalog-transition-lineage-device",
+            createdAt: baseDate
+        )
+        let installed = try store.save(
+            current,
+            at: baseDate,
+            catalog: .approved
+        )
+        try fileSystem.withExclusiveLock(at: store.transactionLocations.lockURL) {
+            try store.installLineageProtectionUnderExternalLock(
+                cloudAccountID: cloudAccountID,
+                artifact: installed,
+                catalog: .approved
+            )
+        }
+
+        var predecessor = current
+        predecessor.player.achievementProgress.removeValue(
+            forKey: LaunchAchievementID.millenniaOfConnections
+        )
+        predecessor.player.achievementProgress[
+            AchievementCatalogTransitionV1ToV2.retiredCenturyOfConnections
+        ] = AchievementProgress(
+            id: AchievementCatalogTransitionV1ToV2
+                .retiredCenturyOfConnections
+        )
+        let predecessorBytes = try PlayerProfileMigrator().canonicalArtifact(
+            for: predecessor,
+            savedAt: baseDate
+        ).exactBytes
+        try predecessorBytes.write(to: store.locations.primaryURL)
+        try predecessorBytes.write(to: store.locations.backupURL)
+
+        let lineageURL = directory
+            .appendingPathComponent("ProfileLineage", isDirectory: true)
+            .appendingPathComponent("latest-envelope.json")
+        var watermark = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(contentsOf: lineageURL)
+            ) as? [String: Any]
+        )
+        watermark["envelope"] = predecessorBytes.base64EncodedString()
+        watermark["envelopeDigest"] = ProfileHydrationDigest
+            .envelopeBytes(predecessorBytes).rawValue
+        let predecessorWatermark = try JSONSerialization.data(
+            withJSONObject: watermark,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )
+        try predecessorWatermark.write(to: lineageURL)
+
+        let loaded = try store.loadOrCreate(
+            defaultDocument: current,
+            at: baseDate.addingTimeInterval(1),
+            catalog: .approved
+        )
+        XCTAssertEqual(loaded.document, current)
+        XCTAssertEqual(loaded.artifact.savedAt, baseDate)
+        XCTAssertEqual(
+            loaded.document.player.revision,
+            predecessor.player.revision
+        )
+        XCTAssertEqual(
+            loaded.document.economyRevision,
+            predecessor.economyRevision
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.primaryURL),
+            loaded.artifact.exactBytes
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: store.locations.backupURL),
+            loaded.artifact.exactBytes
+        )
+        let rewrittenWatermark = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: Data(contentsOf: lineageURL)
+            ) as? [String: Any]
+        )
+        XCTAssertEqual(
+            rewrittenWatermark["envelope"] as? String,
+            loaded.artifact.exactBytes.base64EncodedString()
         )
     }
 
@@ -6182,6 +6384,311 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func testLaunchAchievementTransitionMigratesEveryV1ThroughV4SourceAndIsIdempotent()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        var legacy = try makeCanonicalCollectionFixtureDocument(
+            reverseCollections: false
+        )
+        let retired = AchievementCatalogTransitionV1ToV2
+            .retiredCenturyOfConnections
+        let obsoleteCompletion = baseDate.addingTimeInterval(-100)
+        legacy.player.achievementProgress.removeValue(
+            forKey: LaunchAchievementID.millenniaOfConnections
+        )
+        legacy.player.achievementProgress[retired] = AchievementProgress(
+            id: retired,
+            percentComplete: 100,
+            completedAt: obsoleteCompletion
+        )
+        legacy.player.achievementProgress[LaunchAchievementID.dialedIn] =
+            AchievementProgress(
+                id: LaunchAchievementID.dialedIn,
+                percentComplete: 100,
+                completedAt: obsoleteCompletion
+            )
+        legacy.player.achievementProgress[LaunchAchievementID.lightUpTheBoard] =
+            AchievementProgress(
+                id: LaunchAchievementID.lightUpTheBoard,
+                percentComplete: 100,
+                completedAt: obsoleteCompletion
+            )
+        legacy.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            unboundPending: GameCenterPendingMaximaV1(
+                pendingHighScore: legacy.player.career.highestScore,
+                pendingAchievementPercents: [
+                    LaunchAchievementID.firstRead: 100,
+                    LaunchAchievementID.dialedIn: 100,
+                    LaunchAchievementID.lightUpTheBoard: 100,
+                    retired: 100,
+                    LaunchAchievementID.millenniaOfConnections: 50,
+                ]
+            )
+        )
+
+        let orderedRunIDs = legacy.player.completedRuns.values.sorted {
+            $0.recordedAt < $1.recordedAt
+        }.map(\.run.runID)
+        let unrelated = AchievementProgressUpdate(
+            previous: AchievementProgress(id: LaunchAchievementID.firstRead),
+            current: AchievementProgress(
+                id: LaunchAchievementID.firstRead,
+                percentComplete: 100,
+                completedAt: baseDate
+            )
+        )
+        for runID in orderedRunIDs {
+            let receipt = try XCTUnwrap(legacy.settlementReceipts[runID])
+            let obsolete = AchievementProgressUpdate(
+                previous: AchievementProgress(id: retired),
+                current: AchievementProgress(
+                    id: retired,
+                    percentComplete: 100,
+                    completedAt: obsoleteCompletion
+                )
+            )
+            legacy.settlementReceipts[runID] = RunSettlementOutcome(
+                record: receipt.record,
+                gameplayRewardEntryID: receipt.gameplayRewardEntryID,
+                signingBonusEntryID: receipt.signingBonusEntryID,
+                achievementUpdates: [unrelated, obsolete],
+                rewardedOfferUnlocked: receipt.rewardedOfferUnlocked,
+                resultingPersonalBest: receipt.resultingPersonalBest
+            )
+        }
+
+        let savedAt = baseDate.addingTimeInterval(500)
+        let source = try migrator.canonicalArtifact(
+            for: legacy,
+            savedAt: savedAt
+        ).exactBytes
+        for schemaVersion in 1 ... 4 {
+            let envelope: Data
+            if schemaVersion == PlayerProfileEnvelopeV4.schemaVersion {
+                envelope = source
+            } else {
+                envelope = try envelopeData(
+                    from: source,
+                    schemaVersion: schemaVersion,
+                    removingLogicalCounterFrom: schemaVersion <= 2
+                        ? ["settings", "selection"] : [],
+                    removeRewardedRunObservations: schemaVersion == 1
+                )
+            }
+
+            let decoded = try migrator.decodeArtifact(envelope)
+            XCTAssertEqual(decoded.savedAt, savedAt)
+            XCTAssertEqual(decoded.document.player.revision, legacy.player.revision)
+            XCTAssertEqual(decoded.document.economyRevision, legacy.economyRevision)
+            XCTAssertNil(decoded.document.player.achievementProgress[retired])
+            XCTAssertEqual(
+                decoded.document.player.achievementProgress[
+                    LaunchAchievementID.millenniaOfConnections
+                ]?.percentComplete,
+                1
+            )
+            XCTAssertNil(
+                decoded.document.player.achievementProgress[
+                    LaunchAchievementID.millenniaOfConnections
+                ]?.completedAt
+            )
+            XCTAssertEqual(
+                decoded.document.player.achievementProgress[
+                    LaunchAchievementID.dialedIn
+                ],
+                AchievementProgress(id: LaunchAchievementID.dialedIn)
+            )
+            XCTAssertEqual(
+                decoded.document.player.achievementProgress[
+                    LaunchAchievementID.lightUpTheBoard
+                ],
+                AchievementProgress(id: LaunchAchievementID.lightUpTheBoard)
+            )
+            XCTAssertEqual(
+                decoded.document.player.pendingGameCenter.unboundPending
+                    .pendingAchievementPercents,
+                [
+                    LaunchAchievementID.firstRead: 100,
+                    LaunchAchievementID.millenniaOfConnections: 1,
+                ]
+            )
+            XCTAssertTrue(
+                decoded.document.settlementReceipts.values.allSatisfy {
+                    receipt in
+                    receipt.achievementUpdates.allSatisfy {
+                        $0.previous.id != retired && $0.current.id != retired
+                    }
+                }
+            )
+            XCTAssertTrue(
+                decoded.document.settlementReceipts.values.allSatisfy {
+                    $0.achievementUpdates.contains(unrelated)
+                }
+            )
+            XCTAssertNoThrow(
+                try PlayerProfileValidator.validate(decoded.document)
+            )
+
+            let canonical = try migrator.canonicalArtifact(
+                for: decoded.document,
+                savedAt: decoded.savedAt
+            )
+            let second = try migrator.decodeArtifact(canonical.exactBytes)
+            XCTAssertEqual(second.sourceSchemaVersion, 4)
+            XCTAssertEqual(second.savedAt, decoded.savedAt)
+            XCTAssertEqual(second.document, decoded.document)
+            XCTAssertEqual(
+                try migrator.canonicalArtifact(
+                    for: second.document,
+                    savedAt: second.savedAt
+                ).exactBytes,
+                canonical.exactBytes
+            )
+        }
+    }
+
+    func testLaunchAchievementTransitionKeepsProvenanceAndDoesNotRecreateAcknowledgedWork()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        var legacy = try makeCanonicalCollectionFixtureDocument(
+            reverseCollections: false
+        )
+        let retired = AchievementCatalogTransitionV1ToV2
+            .retiredCenturyOfConnections
+        let retainedPlayer = GameCenterPlayerID("retained-player")
+        let emptiedPlayer = GameCenterPlayerID("emptied-player")
+        let acknowledgedPlayer = GameCenterPlayerID("acknowledged-player")
+        legacy.player.achievementProgress.removeValue(
+            forKey: LaunchAchievementID.millenniaOfConnections
+        )
+        legacy.player.achievementProgress[retired] = AchievementProgress(
+            id: retired,
+            percentComplete: 14
+        )
+        legacy.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            pendingByPlayerID: [
+                retainedPlayer: GameCenterPendingMaximaV1(
+                    pendingHighScore: 1,
+                    pendingAchievementPercents: [retired: 5]
+                ),
+                emptiedPlayer: GameCenterPendingMaximaV1(
+                    pendingAchievementPercents: [
+                        LaunchAchievementID.dialedIn: 100,
+                    ]
+                ),
+                acknowledgedPlayer: GameCenterPendingMaximaV1(
+                    pendingHighScore: 2
+                ),
+            ],
+            unboundPending: GameCenterPendingMaximaV1(
+                pendingAchievementPercents: [retired: 0]
+            )
+        )
+
+        let source = try migrator.canonicalArtifact(
+            for: legacy,
+            savedAt: baseDate
+        )
+        let migrated = try migrator.decodeArtifact(source.exactBytes).document
+        XCTAssertEqual(
+            migrated.player.pendingGameCenter.pendingByPlayerID[retainedPlayer]?
+                .pendingAchievementPercents,
+            [LaunchAchievementID.millenniaOfConnections: 1]
+        )
+        XCTAssertNil(
+            migrated.player.pendingGameCenter.pendingByPlayerID[emptiedPlayer]
+        )
+        XCTAssertEqual(
+            migrated.player.pendingGameCenter.pendingByPlayerID[
+                acknowledgedPlayer
+            ],
+            GameCenterPendingMaximaV1(pendingHighScore: 2)
+        )
+        XCTAssertTrue(
+            migrated.player.pendingGameCenter.unboundPending
+                .pendingAchievementPercents.isEmpty
+        )
+        XCTAssertNoThrow(try PlayerProfileValidator.validate(migrated))
+    }
+
+    func testLaunchAchievementTransitionUsesAuthoritative999And1000PassHistory()
+        throws
+    {
+        let retired = AchievementCatalogTransitionV1ToV2
+            .retiredCenturyOfConnections
+        let first = makeRun(
+            id: fixedRunID(8_991),
+            score: 0,
+            attempts: 999,
+            completions: 999,
+            touchdowns: 0
+        )
+        let crossing = makeRun(
+            id: fixedRunID(8_992),
+            score: 0,
+            attempts: 1,
+            completions: 1,
+            touchdowns: 0
+        )
+        let firstRecord = CompletedRunRecord(
+            run: first,
+            recordedAt: baseDate,
+            rewardCoins: 0
+        )
+        let crossingDate = baseDate.addingTimeInterval(1)
+        let crossingRecord = CompletedRunRecord(
+            run: crossing,
+            recordedAt: crossingDate,
+            rewardCoins: 0
+        )
+        var source = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "pass-boundary-device",
+            createdAt: baseDate
+        )
+        source.player.achievementProgress.removeValue(
+            forKey: LaunchAchievementID.millenniaOfConnections
+        )
+        source.player.achievementProgress[retired] = AchievementProgress(
+            id: retired,
+            percentComplete: 100,
+            completedAt: baseDate.addingTimeInterval(-10)
+        )
+        source.player.completedRuns = [first.runID: firstRecord]
+        source.player.career.completions = 999
+
+        let below = try LaunchAchievementPersistenceTransitionV1ToV2.apply(
+            to: source
+        )
+        XCTAssertEqual(
+            below.player.achievementProgress[
+                LaunchAchievementID.millenniaOfConnections
+            ],
+            AchievementProgress(
+                id: LaunchAchievementID.millenniaOfConnections,
+                percentComplete: 99
+            )
+        )
+
+        source.player.completedRuns[crossing.runID] = crossingRecord
+        source.player.career.completions = 1_000
+        let complete = try LaunchAchievementPersistenceTransitionV1ToV2.apply(
+            to: source
+        )
+        XCTAssertEqual(
+            complete.player.achievementProgress[
+                LaunchAchievementID.millenniaOfConnections
+            ],
+            AchievementProgress(
+                id: LaunchAchievementID.millenniaOfConnections,
+                percentComplete: 100,
+                completedAt: crossingDate
+            )
+        )
+    }
+
     private func makeCanonicalFixtureDocument(
         reverseCollections: Bool
     ) -> LocalPlayerDocumentV1 {
@@ -6422,7 +6929,9 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         document.rewardedRunObservations = Dictionary(
             uniqueKeysWithValues: runOrder.map { observations[$0] }
         )
-        return document
+        return try LaunchAchievementPersistenceTransitionV1ToV2.apply(
+            to: document
+        )
     }
 
     private func insertionOrderedSet<Element: Hashable>(

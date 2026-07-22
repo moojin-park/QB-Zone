@@ -463,6 +463,22 @@ final class ProductionServiceConfigurationTests: XCTestCase {
             Set(gameCenter.achievementIdentifiers.keys),
             Set(AchievementCatalog.launch.map(\.id))
         )
+        XCTAssertNotNil(
+            gameCenter.achievementIdentifiers[
+                AchievementID("achievement.millenia_of_connections.v1")
+            ]
+        )
+        XCTAssertEqual(
+            gameCenter.achievementIdentifiers[
+                AchievementID("achievement.millenia_of_connections.v1")
+            ],
+            "achievement.millenia_of_connections.v1"
+        )
+        XCTAssertNil(
+            gameCenter.achievementIdentifiers[
+                AchievementID("achievement.century_of_connections.v1")
+            ]
+        )
 
         guard case let .validated(cloudWrite) = configuration.cloudWrite else {
             return XCTFail("The complete CloudKit write configuration should validate")
@@ -506,6 +522,45 @@ final class ProductionServiceConfigurationTests: XCTestCase {
             [.integrationPending(.rewardedAds)]
         )
         XCTAssertEqual(configuration.diagnostics, .appleOnly)
+    }
+
+    func testRetiredCenturyGameCenterIdentifierCannotEnterProductionConfiguration() {
+        var info = validInfoDictionary()
+        info = updatingService("GameCenter", in: info) { service in
+            var identifiers = service["AchievementIdentifiers"]
+                as! [String: Any]
+            let current = "achievement.millenia_of_connections.v1"
+            let retired = "achievement.century_of_connections.v1"
+            identifiers[retired] = identifiers.removeValue(forKey: current)
+            service["AchievementIdentifiers"] = identifiers
+        }
+
+        let configuration = ProductionServiceConfiguration.parse(
+            infoDictionary: info
+        )
+        XCTAssertEqual(
+            unavailableIssues(configuration.gameCenter),
+            [.invalid(.gameCenter, .achievementIdentifiers)]
+        )
+    }
+
+    func testRetiredCenturyProviderIdentifierCannotMasqueradeAsMillennia() {
+        var info = validInfoDictionary()
+        info = updatingService("GameCenter", in: info) { service in
+            var identifiers = service["AchievementIdentifiers"]
+                as! [String: Any]
+            identifiers["achievement.millenia_of_connections.v1"] =
+                "achievement.century_of_connections.v1"
+            service["AchievementIdentifiers"] = identifiers
+        }
+
+        let configuration = ProductionServiceConfiguration.parse(
+            infoDictionary: info
+        )
+        XCTAssertEqual(
+            unavailableIssues(configuration.gameCenter),
+            [.invalid(.gameCenter, .achievementIdentifiers)]
+        )
     }
 
     func testValidConfigurationNeverAdvertisesRuntimeAvailability() {
@@ -630,7 +685,12 @@ private extension ProductionServiceConfigurationTests {
     func validInfoDictionary() -> [String: Any] {
         let achievementIdentifiers = Dictionary(
             uniqueKeysWithValues: AchievementCatalog.launch.map {
-                ($0.id.rawValue, "test.game-center.\($0.id.rawValue)")
+                (
+                    $0.id.rawValue,
+                    $0.id == LaunchAchievementID.millenniaOfConnections
+                        ? $0.id.rawValue
+                        : "test.game-center.\($0.id.rawValue)"
+                )
             }
         )
         let productIdentifiers = Dictionary(

@@ -673,9 +673,21 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(fingerprint, CloudReplicaScopeFingerprint.make(for: base))
         XCTAssertEqual(
             fingerprint.rawValue,
-            "4d01494c9d6d505014fa7c70120f9b61abdaf6c5e606479faa22af088be5d52f"
+            "ef0641dcb0ea18a0552d4d360bfaeba4490bc3c16607a75d0ed3a03d8d0a1b98"
         )
         XCTAssertEqual(fingerprint.rawValue.count, 64)
+        XCTAssertEqual(
+            LaunchAchievementCloudScopeTransitionV1ToV2.sourceScope(
+                for: base
+            ).rawValue,
+            "4d01494c9d6d505014fa7c70120f9b61abdaf6c5e606479faa22af088be5d52f"
+        )
+        XCTAssertEqual(
+            LaunchAchievementCloudScopeTransitionV1ToV2.targetScope(
+                for: base
+            ),
+            fingerprint
+        )
         XCTAssertEqual(
             CloudReplicaScopeFingerprint.orderedMaterial(for: base),
             [
@@ -801,7 +813,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
                     components: AchievementCatalog.persistedFingerprintMaterial()
                 )
             ),
-            "2a0067b16b3a62d9ef99e1ca215efdc1aabae38b474eac52eebf2669c62ce057"
+            "bf81911f2b6012d3af59b5554e1ad589f5f696b07083873897706100e5c22b3a"
         )
     }
 
@@ -919,12 +931,11 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         defer { try? FileManager.default.removeItem(at: root) }
         let oldEpoch = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
         let freshEpoch = UUID(uuidString: "20000000-0000-4000-8000-000000000002")!
-        // Frozen pre-release transport/economy-only scope digest.
-        let oldScope = CloudReplicaScopeFingerprint(
-            rawValue:
-                "3cf897580315794f23fa98294a6da0aa541cde3168a9b271497abd366ab21380"
-        )
-        let newScope = scopeFingerprint()
+        let configuration = try productionConfiguration()
+        let oldScope = LaunchAchievementCloudScopeTransitionV1ToV2
+            .sourceScope(for: configuration)
+        let newScope = LaunchAchievementCloudScopeTransitionV1ToV2
+            .targetScope(for: configuration)
         let store = AtomicCloudReplicaCheckpointDiskStore(rootDirectoryURL: root)
         let oldCheckpoint = try CloudReplicaCheckpointV1(
             accountID: accountA,
@@ -941,6 +952,14 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             replicaEpoch: oldEpoch,
             configurationScopeFingerprint: oldScope,
             for: accountA
+        )
+        let oldAuthority = try await store.activeReplicaAuthority(for: accountA)
+        XCTAssertEqual(
+            oldAuthority,
+            CloudReplicaActiveEpochAuthorityV1(
+                replicaEpoch: oldEpoch,
+                configurationScopeFingerprint: oldScope
+            )
         )
         try await store._testOnlySaveRawCheckpoint(oldCheckpoint, at: Date(timeIntervalSince1970: 5_000))
 
@@ -968,10 +987,20 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         }
 
         try await store.remove(for: accountA, revoking: oldEpoch)
+        let revokedAuthority = try await store.activeReplicaAuthority(for: accountA)
+        XCTAssertNil(revokedAuthority)
         try await store.activate(
             replicaEpoch: freshEpoch,
             configurationScopeFingerprint: newScope,
             for: accountA
+        )
+        let freshAuthority = try await store.activeReplicaAuthority(for: accountA)
+        XCTAssertEqual(
+            freshAuthority,
+            CloudReplicaActiveEpochAuthorityV1(
+                replicaEpoch: freshEpoch,
+                configurationScopeFingerprint: newScope
+            )
         )
         var accumulator = CloudReplicaStagedAccumulator(
             accountID: accountA,
@@ -998,6 +1027,105 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             at: Date(timeIntervalSince1970: 5_003)
         )
         XCTAssertEqual(loaded.checkpoint, freshCheckpoint)
+    }
+
+    func testProductionPreparerRevokesLaunchV1ScopeAndBootstrapsFreshV2Generation()
+        async throws
+    {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let configuration = try productionConfiguration()
+        let oldScope = LaunchAchievementCloudScopeTransitionV1ToV2
+            .sourceScope(for: configuration)
+        let currentScope = CloudReplicaScopeFingerprint.make(for: configuration)
+        let oldEpoch = UUID(
+            uuidString: "30000000-0000-4000-8000-000000000003"
+        )!
+        let freshEpoch = UUID(
+            uuidString: "40000000-0000-4000-8000-000000000004"
+        )!
+        let oldStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        )
+        try await oldStore.activate(
+            replicaEpoch: oldEpoch,
+            configurationScopeFingerprint: oldScope,
+            for: accountA
+        )
+        try await oldStore._testOnlySaveRawCheckpoint(
+            try CloudReplicaCheckpointV1(
+                accountID: accountA,
+                configurationScopeFingerprint: oldScope,
+                generation: 1,
+                finalCursor: cursor("retired-v1-cursor"),
+                recordsByLogicalID: [:],
+                providerLocatorByLogicalID: [:],
+                logicalIDByProviderLocator: [:],
+                tombstonesByProviderLocator: [:],
+                replicaEpoch: oldEpoch
+            ),
+            at: Date(timeIntervalSince1970: 5_100)
+        )
+
+        let changeFetcher = ScriptedReconstructionChangeFetcher(
+            pages: [
+                page(
+                    accountID: accountA,
+                    cursor: "fresh-v2-cursor",
+                    moreComing: false
+                ).page,
+            ]
+        )
+        let preparer = try ProductionCloudProfileReplicaPreparerV1(
+            testingAccountID: accountA,
+            checkpointRootDirectoryURL: root,
+            configuration: configuration,
+            economyVerifier: CloudProfileCompleteEconomyHistoryVerifier {
+                $0.head
+            },
+            installingDeviceID: "scope-transition-device",
+            changeFetcher: scopedChangeFetcher(
+                changeFetcher,
+                configuration: configuration
+            ),
+            now: { Date(timeIntervalSince1970: 5_101) },
+            replicaEpochFactory: { freshEpoch }
+        )
+        try await preparer.prepareCheckpointedZone(accountID: accountA)
+
+        let requests = await changeFetcher.observedRequests()
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertNil(requests.first?.cursor)
+        XCTAssertEqual(
+            requests.first?.zonePreparation,
+            .createIfMissingForInitialBootstrap
+        )
+
+        let inspectionStore = AtomicCloudReplicaCheckpointDiskStore(
+            rootDirectoryURL: root
+        )
+        let authority = try await inspectionStore.activeReplicaAuthority(
+            for: accountA
+        )
+        XCTAssertEqual(
+            authority,
+            CloudReplicaActiveEpochAuthorityV1(
+                replicaEpoch: freshEpoch,
+                configurationScopeFingerprint: currentScope
+            )
+        )
+        let loaded = try await inspectionStore.load(
+            for: accountA,
+            configurationScopeFingerprint: currentScope,
+            at: Date(timeIntervalSince1970: 5_102)
+        )
+        let checkpoint = try XCTUnwrap(loaded.checkpoint)
+        XCTAssertEqual(checkpoint.generation, 1)
+        XCTAssertEqual(checkpoint.replicaEpoch, freshEpoch)
+        XCTAssertEqual(checkpoint.finalCursor, cursor("fresh-v2-cursor"))
+        XCTAssertNotEqual(checkpoint.finalCursor, cursor("retired-v1-cursor"))
+        XCTAssertTrue(checkpoint.recordsByLogicalID.isEmpty)
+        XCTAssertNotEqual(freshEpoch, oldEpoch)
     }
 
     func testDiskStoreRecoversPrimaryFromBackupAndRepairsCorruptBackup() async throws {

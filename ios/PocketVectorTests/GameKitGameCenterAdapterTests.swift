@@ -325,7 +325,12 @@ final class GameKitGameCenterAdapterTests: XCTestCase {
         let mappings = Dictionary(
             uniqueKeysWithValues: AchievementCatalog.launch.enumerated().map {
                 index, definition in
-                (definition.id, "test.achievement.\(index)")
+                (
+                    definition.id,
+                    definition.id == LaunchAchievementID.millenniaOfConnections
+                        ? definition.id.rawValue
+                        : "test.achievement.\(index)"
+                )
             }
         )
         return try GameKitGameCenterConfiguration(

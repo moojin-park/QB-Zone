@@ -172,20 +172,20 @@ reinstall, or device merge cannot grant or spend twice.
 
 ## Game Center achievements
 
-| Achievement            | Requirement                                                 | Points |
-| ---------------------- | ----------------------------------------------------------- | -----: |
-| First Read             | Complete any successful pass                                |     25 |
-| Paydirt                | Score a touchdown                                           |     50 |
-| Cash the Charge        | Score a touchdown while TD Bonus is active                  |     75 |
-| Full Route Tree        | Complete a pass in all four lanes during one run            |     75 |
-| Dialed In              | Finish with at least 80% accuracy over at least 12 attempts |     75 |
-| Hot Hand               | Score four consecutive touchdowns during one run            |    100 |
-| Light Up the Board     | Reach 25,000 points during one run                          |    100 |
-| Century of Connections | Complete 100 career passes, including touchdowns            |    100 |
+| Achievement              | Requirement                                                  | Points |
+| ------------------------ | ------------------------------------------------------------ | -----: |
+| First Read               | Complete any successful pass                                 |     25 |
+| Paydirt                  | Score a touchdown                                            |     50 |
+| Cash the Charge          | Score a touchdown while TD Bonus is active                   |     75 |
+| Full Route Tree          | Complete a pass in all four lanes during one run             |     75 |
+| Dialed In                | Finish with at least 80% accuracy over at least 25 attempts  |     75 |
+| Hot Hand                 | Score four consecutive touchdowns during one run             |    100 |
+| Light Up the Board       | Reach 65,000 points during one run                            |    100 |
+| Millennia of Connections | Complete 1,000 career passes, including touchdowns           |    100 |
 
-The set totals 600 Game Center points. Validate the 25,000-point threshold
-against TestFlight score distributions before making permanent App Store
-Connect identifiers.
+The set totals 600 Game Center points. Millennia of Connections uses the
+permanent App Store Connect identifier
+`achievement.millenia_of_connections.v1`; the one-`n` spelling is intentional.
 
 ## Release success and quality gates
 

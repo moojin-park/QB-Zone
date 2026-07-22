@@ -61,9 +61,10 @@ unsigned generic-iOS archive. Use the command in the root `README.md`.
 
 ## Release dependencies
 
-Build 158 passes the complete simulator suite, Release analysis, unsigned
-archive, and App Store distribution export. Live CloudKit and StoreKit records,
-Game Center runtime composition, rewarded-ad verification, service-aware
-privacy answers, TestFlight metrics, and App Store metadata remain gated work.
+Build 159 is the current code baseline and passes the complete simulator suite
+and unsigned Release archive; build 158 remains the last App Store distribution
+export. Live CloudKit and StoreKit records, Game Center runtime composition,
+rewarded-ad verification, service-aware privacy answers, build 159 signing and
+upload, TestFlight metrics, and App Store metadata remain gated work.
 See `../docs/production-release-status.md` for current evidence and dependency
 order.

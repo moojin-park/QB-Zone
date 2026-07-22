@@ -1171,6 +1171,8 @@ actor ProductionCloudProfileReplicaPreparerV1:
 {
     private let expectedAccountID: CloudAccountID
     private let configurationScopeFingerprint: CloudReplicaScopeFingerprint
+    private let predecessorConfigurationScopeFingerprint:
+        CloudReplicaScopeFingerprint
     private let generationAuthority: CloudAccountGenerationAuthority
     private let checkpointStore: AtomicCloudReplicaCheckpointDiskStore
     private let changeFetcher: CloudReplicaScopedChangeFetcherV1
@@ -1222,6 +1224,10 @@ actor ProductionCloudProfileReplicaPreparerV1:
         let generationAuthority = CloudAccountGenerationAuthority()
         expectedAccountID = accountID
         configurationScopeFingerprint = scope
+        predecessorConfigurationScopeFingerprint =
+            LaunchAchievementCloudScopeTransitionV1ToV2.sourceScope(
+                for: configuration
+            )
         self.generationAuthority = generationAuthority
         checkpointStore = AtomicCloudReplicaCheckpointDiskStore(
             rootDirectoryURL: checkpointRootDirectoryURL,
@@ -1474,6 +1480,25 @@ actor ProductionCloudProfileReplicaPreparerV1:
             throw ProductionCloudProfileReplicaPreparerError.accountMismatch
         }
         if let activeGeneration { return activeGeneration }
+        if let authority = try await checkpointStore.activeReplicaAuthority(
+            for: accountID
+        ) {
+            if authority.configurationScopeFingerprint
+                == predecessorConfigurationScopeFingerprint {
+                // The repository has already loaded, which proves no durable
+                // hydration barrier remains in its profile directory. Revoke
+                // the exact V1 epoch before a fresh V2 scope is activated;
+                // the old cursor and accepted history are never reused.
+                try await checkpointStore.remove(
+                    for: accountID,
+                    revoking: authority.replicaEpoch
+                )
+            } else if authority.configurationScopeFingerprint
+                        != configurationScopeFingerprint {
+                throw ProductionCloudProfileReplicaPreparerError
+                    .configurationScopeMismatch
+            }
+        }
         let resumed = try await checkpointStore.resumeActiveReplicaEpoch(
             for: accountID,
             configurationScopeFingerprint: configurationScopeFingerprint

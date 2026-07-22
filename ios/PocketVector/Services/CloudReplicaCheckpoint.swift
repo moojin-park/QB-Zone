@@ -132,8 +132,22 @@ struct CloudReplicaScopeFingerprint: RawRepresentable, Codable, Equatable, Hasha
     /// Transport, economy, and profile contracts form one indivisible scope.
     /// Any schema or address change invalidates the prior cursor and replica.
     static func make(for configuration: ProductionCloudWriteConfiguration) -> Self {
+        make(
+            for: configuration,
+            achievementMaterial:
+                AchievementCatalog.persistedFingerprintMaterial()
+        )
+    }
+
+    static func make(
+        for configuration: ProductionCloudWriteConfiguration,
+        achievementMaterial: [String]
+    ) -> Self {
         var hasher = SHA256()
-        for value in orderedMaterial(for: configuration) {
+        for value in orderedMaterial(
+            for: configuration,
+            achievementMaterial: achievementMaterial
+        ) {
             append(value, to: &hasher)
         }
         return Self(
@@ -144,9 +158,22 @@ struct CloudReplicaScopeFingerprint: RawRepresentable, Codable, Equatable, Hasha
     static func orderedMaterial(
         for configuration: ProductionCloudWriteConfiguration
     ) -> [String] {
+        orderedMaterial(
+            for: configuration,
+            achievementMaterial:
+                AchievementCatalog.persistedFingerprintMaterial()
+        )
+    }
+
+    static func orderedMaterial(
+        for configuration: ProductionCloudWriteConfiguration,
+        achievementMaterial: [String]
+    ) -> [String] {
         let transport = configuration.transport.fingerprintMaterial
         let economy = configuration.economy.fingerprintMaterial
-        let profile = configuration.profile.fingerprintMaterial
+        let profile = configuration.profile.fingerprintMaterial(
+            achievementMaterial: achievementMaterial
+        )
         return [scopeDomain, "transport", String(transport.count)]
             + transport
             + ["economy", String(economy.count)]
@@ -167,6 +194,107 @@ struct CloudReplicaScopeFingerprint: RawRepresentable, Codable, Equatable, Hasha
             && value.utf8.allSatisfy {
                 ($0 >= 48 && $0 <= 57) || ($0 >= 97 && $0 <= 102)
             }
+    }
+}
+
+/// Frozen semantic predecessor used only to revoke the one launch catalog V1
+/// replica scope. The scope itself is derived from the live CloudKit names, so
+/// a configuration mismatch can never be mistaken for this transition.
+enum LaunchAchievementCloudScopeTransitionV1ToV2 {
+    static let sourceAchievementFingerprintMaterial: [String] = {
+        let definitions = [
+            AchievementDefinition(
+                id: LaunchAchievementID.firstRead,
+                displayName: "First Read",
+                detail: "Complete any successful pass.",
+                points: 25,
+                rule: .careerSuccessfulPasses(1)
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.paydirt,
+                displayName: "Paydirt",
+                detail: "Score a touchdown.",
+                points: 50,
+                rule: .careerTouchdowns(1)
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.cashTheCharge,
+                displayName: "Cash the Charge",
+                detail: "Score a touchdown while TD Bonus is active.",
+                points: 75,
+                rule: .careerBonusTouchdowns(1)
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.fullRouteTree,
+                displayName: "Full Route Tree",
+                detail: "Complete a pass in all four lanes during one run.",
+                points: 75,
+                rule: .allLanesInSingleRun
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.dialedIn,
+                displayName: "Dialed In",
+                detail: "Finish with at least 80% accuracy over at least 12 attempts.",
+                points: 75,
+                rule: .singleRunAccuracy(percent: 80, minimumAttempts: 12)
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.hotHand,
+                displayName: "Hot Hand",
+                detail: "Score four consecutive touchdowns during one run.",
+                points: 100,
+                rule: .singleRunTouchdownStreak(4)
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.lightUpTheBoard,
+                displayName: "Light Up the Board",
+                detail: "Reach 25,000 points during one run.",
+                points: 100,
+                rule: .singleRunScore(25_000)
+            ),
+            AchievementDefinition(
+                id: AchievementCatalogTransitionV1ToV2
+                    .retiredCenturyOfConnections,
+                displayName: "Century of Connections",
+                detail: "Complete 100 career passes, including touchdowns.",
+                points: 100,
+                rule: .incrementalCareerSuccessfulPasses(100)
+            ),
+        ]
+        let ordered = AchievementCatalog.persistedEvaluationOrder(definitions)
+        let evaluator = AchievementEvaluator.persistedFingerprintMaterial
+        var material = [
+            AchievementCatalogTransitionV1ToV2
+                .sourceCatalogSemanticIdentifier,
+            "evaluatorMaterialCount", String(evaluator.count),
+        ] + evaluator + [
+            "achievementCount", String(ordered.count),
+        ]
+        for definition in ordered {
+            let rule = definition.rule.persistedFingerprintMaterial
+            material.append(contentsOf: [
+                "achievement", definition.id.rawValue,
+                "points", String(definition.points),
+                "ruleMaterialCount", String(rule.count),
+            ])
+            material.append(contentsOf: rule)
+        }
+        return material
+    }()
+
+    static func sourceScope(
+        for configuration: ProductionCloudWriteConfiguration
+    ) -> CloudReplicaScopeFingerprint {
+        CloudReplicaScopeFingerprint.make(
+            for: configuration,
+            achievementMaterial: sourceAchievementFingerprintMaterial
+        )
+    }
+
+    static func targetScope(
+        for configuration: ProductionCloudWriteConfiguration
+    ) -> CloudReplicaScopeFingerprint {
+        CloudReplicaScopeFingerprint.make(for: configuration)
     }
 }
 
@@ -1731,6 +1859,11 @@ struct CloudReplicaEpochResumeResult: Equatable, Sendable {
     }
 }
 
+struct CloudReplicaActiveEpochAuthorityV1: Equatable, Sendable {
+    let replicaEpoch: UUID
+    let configurationScopeFingerprint: CloudReplicaScopeFingerprint
+}
+
 enum CloudReplicaCheckpointObservationStateV1: Equatable, Sendable {
     case absent
     case checkpoint(ProfileHydrationCheckpointIdentityV1)
@@ -1813,6 +1946,9 @@ protocol CloudReplicaCheckpointStoring: Sendable {
         for accountID: CloudAccountID,
         configurationScopeFingerprint: CloudReplicaScopeFingerprint
     ) async throws -> CloudReplicaEpochResumeResult?
+    func activeReplicaAuthority(
+        for accountID: CloudAccountID
+    ) async throws -> CloudReplicaActiveEpochAuthorityV1?
 
     func load(
         for accountID: CloudAccountID,
@@ -3313,6 +3449,25 @@ actor AtomicCloudReplicaCheckpointDiskStore: CloudReplicaCheckpointStoring {
                     authority.checkpointHighWatermark?.acceptedHistory,
                 hasDurableCheckpointIntent:
                     authority.pendingCheckpointHighWatermark != nil
+            )
+        }
+    }
+
+    func activeReplicaAuthority(
+        for accountID: CloudAccountID
+    ) throws -> CloudReplicaActiveEpochAuthorityV1? {
+        let locations = locations(for: accountID)
+        return try withAccountLock(locations: locations) {
+            guard let authority = try readAuthority(
+                for: accountID,
+                locations: locations
+            ), authority.state == .active,
+            let scope = authority.configurationScopeFingerprint else {
+                return nil
+            }
+            return CloudReplicaActiveEpochAuthorityV1(
+                replicaEpoch: authority.replicaEpoch,
+                configurationScopeFingerprint: scope
             )
         }
     }

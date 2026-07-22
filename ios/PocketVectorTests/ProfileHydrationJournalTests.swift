@@ -43,6 +43,66 @@ final class ProfileHydrationJournalTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(decoded, journal)
     }
 
+    func testPreTransitionExactEnvelopesRemainRecoverableWithoutJournalRewrite()
+        throws
+    {
+        let fixture = try ProfileHydrationTestFixture()
+        let migrator = PlayerProfileMigrator()
+        let retired = AchievementCatalogTransitionV1ToV2
+            .retiredCenturyOfConnections
+
+        func predecessor(
+            _ current: LocalPlayerDocumentV1
+        ) throws -> Data {
+            var document = current
+            document.player.achievementProgress.removeValue(
+                forKey: LaunchAchievementID.millenniaOfConnections
+            )
+            document.player.achievementProgress[retired] =
+                AchievementProgress(id: retired)
+            return try migrator.canonicalArtifact(
+                for: document,
+                savedAt: current.player.revision
+                    == fixture.sourceDocument.player.revision
+                    ? fixture.date
+                    : fixture.date.addingTimeInterval(1)
+            ).exactBytes
+        }
+
+        let source = try predecessor(fixture.sourceDocument)
+        let candidate = try predecessor(fixture.candidateDocument)
+        let journal = try ProfileHydrationJournalV1.make(
+            transactionID: fixture.transactionID,
+            createdAt: fixture.date,
+            sourceSession: fixture.sourceSession,
+            sourcePlayerRevision: fixture.sourceDocument.player.revision,
+            sourceEconomyRevision: fixture.sourceDocument.economyRevision,
+            sourceProfileEnvelope: source,
+            candidateProfileEnvelope: candidate,
+            cloudAccountID: fixture.cloudAccountID,
+            configurationScopeFingerprint: fixture.scope,
+            replicaEpoch: fixture.replicaEpoch,
+            predecessorCheckpointIdentity: nil,
+            targetCheckpoint: fixture.targetCheckpoint
+        )
+
+        XCTAssertEqual(journal.sourceProfileEnvelope, source)
+        XCTAssertEqual(journal.candidateProfileEnvelope, candidate)
+        XCTAssertNoThrow(try journal.validate())
+        let encoded = try ProfileHydrationCanonicalCodec.encode(journal)
+        let decoded = try ProfileHydrationCanonicalCodec.decode(
+            ProfileHydrationJournalV1.self,
+            from: encoded
+        )
+        XCTAssertNoThrow(try decoded.validate())
+        XCTAssertEqual(
+            try ProfileHydrationCanonicalCodec.encode(decoded),
+            encoded
+        )
+        XCTAssertEqual(decoded.sourceProfileEnvelope, source)
+        XCTAssertEqual(decoded.candidateProfileEnvelope, candidate)
+    }
+
     func testCanonicalJournalBytesIgnoreEveryCheckpointMapInsertionOrder() throws {
         let fixture = try ProfileHydrationTestFixture()
         let records = [
@@ -706,7 +766,7 @@ final class ProfileHydrationJournalTests: XCTestCase, @unchecked Sendable {
         for (achievementID, percent) in [
             (LaunchAchievementID.firstRead, 25),
             (LaunchAchievementID.paydirt, 50),
-            (LaunchAchievementID.dialedIn, 75),
+            (LaunchAchievementID.hotHand, 75),
         ] {
             candidate.player.achievementProgress[achievementID] =
                 AchievementProgress(
@@ -724,14 +784,14 @@ final class ProfileHydrationJournalTests: XCTestCase, @unchecked Sendable {
                 ),
                 playerB: GameCenterPendingMaximaV1(
                     pendingAchievementPercents: [
-                        LaunchAchievementID.dialedIn: 75,
+                        LaunchAchievementID.hotHand: 75,
                     ]
                 ),
             ],
             unboundPending: GameCenterPendingMaximaV1(
                 pendingAchievementPercents: [
-                    LaunchAchievementID.hotHand: 20,
-                    LaunchAchievementID.lightUpTheBoard: 30,
+                    LaunchAchievementID.cashTheCharge: 20,
+                    LaunchAchievementID.fullRouteTree: 30,
                 ]
             )
         )

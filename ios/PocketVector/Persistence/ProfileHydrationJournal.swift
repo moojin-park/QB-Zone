@@ -763,8 +763,32 @@ struct ProfileHydrationJournalV1: Codable, Equatable, Sendable {
         } catch {
             throw ProfileHydrationJournalValidationError.invalidCandidateEnvelope
         }
-        guard canonical == data else {
-            throw ProfileHydrationJournalValidationError.noncanonicalCandidateEnvelope
+        if canonical == data { return }
+
+        // A journal admitted before the launch-achievement transition binds
+        // immutable candidate bytes and their digest. Recover that exact V4
+        // identity without rewriting the journal, while still requiring the
+        // raw document to transition to the already-validated current one.
+        do {
+            let predecessor = try migrator
+                .decodeArtifactPreservingLaunchAchievementCatalog(data)
+            guard predecessor.sourceSchemaVersion
+                    == PlayerProfileEnvelopeV4.schemaVersion,
+                  try LaunchAchievementPersistenceTransitionV1ToV2.apply(
+                    to: predecessor.document
+                  ) == document,
+                  try migrator.canonicalArtifact(
+                    for: predecessor.document,
+                    savedAt: predecessor.savedAt
+                  ).exactBytes == data else {
+                throw ProfileHydrationJournalValidationError
+                    .noncanonicalCandidateEnvelope
+            }
+        } catch let error as ProfileHydrationJournalValidationError {
+            throw error
+        } catch {
+            throw ProfileHydrationJournalValidationError
+                .noncanonicalCandidateEnvelope
         }
     }
 

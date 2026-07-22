@@ -87,10 +87,12 @@ online-only commerce composition are implemented. The configured runtime now
 fails closed unless both CloudKit and StoreKit configuration are complete;
 catalog spends and coin-pack requests revalidate the private account and
 network immediately before their transaction boundary. The permanent bundle
-identity and Apple team are configured, and build 158 passes App Store
-distribution export. App Store products and records, production CloudKit
-deployment, live Game Center and rewarded-ad composition, service-aware
-privacy answers, and TestFlight gates remain release work.
+identity and Apple team are configured. Build 159 is the current code baseline
+and passes the complete simulator suite and unsigned Release archive; build 158
+remains the last App Store distribution export. App Store products and records,
+production CloudKit deployment, live Game Center and rewarded-ad composition,
+service-aware privacy answers, build 159 signing and upload, and TestFlight
+gates remain release work.
 
 See `docs/production-release-status.md` for the active delivery board and
 `docs/production-release-charter.md` for the approved version-one scope.

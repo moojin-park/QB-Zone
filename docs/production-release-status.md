@@ -1,6 +1,6 @@
 # Pocket Vector production release status
 
-Status date: 2026-07-21
+Status date: 2026-07-22
 
 This is the living delivery board for the first iOS release. Product scope and
 rules remain authoritative in
@@ -293,6 +293,26 @@ app has `get-task-allow = false`, Production CloudKit, container
 `iCloud.com.pocketvector.game`, Game Center, no APS entitlement, the expected
 privacy manifest, and no test/debug/source/QA payload.
 
+Build 159 integrates Technical achievement-catalog handoff `f7fd070` and the
+PM-owned launch-achievement V1-to-V2 persistence transition. Every supported
+V1-V4 profile source is transitioned before current-catalog validation. Dialed
+In is recomputed from naturally completed runs with at least 25 attempts and
+80% accuracy, Light Up the Board from a score of at least 65,000, and Millennia
+of Connections from the authoritative career successful-pass count through
+1,000. The retired Century identifier and affected stale Game Center queue and
+receipt evidence are removed or rebuilt without carrying retired percentages,
+recreating acknowledged work, or changing unrelated profile state. Exact
+pre-transition hydration journals and protected lineage recover atomically and
+idempotently. The old Cloud replica scope is explicitly revoked before a fresh
+current-scope checkpoint is bootstrapped, and production Game Center
+configuration accepts only the permanent
+`achievement.millenia_of_connections.v1` identifier. Independent review found
+no P0-P3 issue. The exact simulator suite passed 900 total tests with 899
+passes, no failures, and the one established conditional filesystem skip; an
+unsigned generic arm64 iOS Release archive also passed. Build 158 remains the
+last signed App Store export until build 159 receives its separate distribution
+archive and upload gate.
+
 The Technical cinematic-presentation handoff `e1f4d94` (`Add countdown
 cinematic letterbox`) is integrated with full ancestry from shared baseline
 `d57714e`. Equal responsive black bars ease from zero to their completed height
@@ -436,7 +456,7 @@ release-candidate gates.
 | Eight-team presentation system                  | Complete            | Eight emblems, fields, and baked primary/alternate character sets are bundled and actively routed without palette projection; exact resource and owner release acceptance pass |
 | Live Apple and advertising services             | In progress         | Cloud claim/hydration and online-only StoreKit composition are implemented and fail closed without complete configuration; permanent IDs, products, records, production schema, Game Center retention, authenticated ad transport/SSV and deduplication, SDK/consent, and signed-device gates remain |
 | iOS-only repository cleanup                     | Complete            | Native sources/tools are retained under `ios/`; browser runtime, dependencies, tests, build files, and unused assets are removed      |
-| TestFlight release candidate                    | In progress         | Build 158 passes complete tests, unsigned archive, and App Store distribution export; permanent live-service configuration, TestFlight metadata, upload/processing, and sandbox/device gates remain |
+| TestFlight release candidate                    | In progress         | Build 159 is the current verified code baseline with complete tests and unsigned archive; build 158 remains the last App Store distribution export. Permanent live-service configuration, TestFlight metadata, build 159 signing/upload/processing, and sandbox/device gates remain |
 | App Store submission                            | Queued              | Signed archive, privacy report, metadata, review notes, screenshots, and owner approval complete                                      |
 
 ## Active ownership lanes
@@ -613,6 +633,9 @@ or runtime ownership boundaries.
 | 2026-07-21 | build 158 | Publication hardening focused and complete simulator gates | Privacy/entitlement focused suite passed 19 tests; exact iPhone 17 Pro suite passed 885 total: 884 passed, 0 failed, and 1 established conditional filesystem skip at `/tmp/PocketVector-build158-full.xcresult` |
 | 2026-07-21 | build 158 | Release analysis and unsigned archive | Shipping app target passed arm64 Release analysis with no product diagnostic. Generic arm64 iOS Release archive passed with signing disabled at `/tmp/PocketVector-build158-hardened.xcarchive`; version 1.0 (158), required-reason privacy manifest, platform restrictions, and clean payload verified |
 | 2026-07-21 | build 158 | App Store Connect distribution export | `/tmp/PocketVector-build158-app-store-export/PocketVector.ipa` exported through the tracked options using Cloud Managed Apple Distribution. Signature verification passed; final entitlements are `RBMXD4NS89.com.pocketvector.game`, `get-task-allow = false`, Production `iCloud.com.pocketvector.game`, Game Center, and no APS. Live services, App Store metadata, upload/processing, and TestFlight remain pending |
+| 2026-07-22 | `f7fd070` / build 159 | Achievement V2 integration and review | Technical handoff `f7fd0708fd9432c4e969f6c9498ea3015038f708` integrated from exact build 158 baseline. PM transition covers V1-V4 profile sources, authoritative stricter recomputation, affected Game Center queue and receipt rebuilding, protected lineage and in-flight hydration recovery, explicit Cloud scope revocation/bootstrap, and exact permanent Game Center ID enforcement. Technical focus passed 20 tests; independent final review found no P0-P3 issue; diff hygiene passed |
+| 2026-07-22 | build 159 | Exact complete simulator suite | iPhone 17 Pro suite passed 900 total: 899 passed, 0 failed, and 1 established conditional case-alias filesystem skip at `/tmp/PocketVector-build159-achievement-v2-full-final.xcresult` |
+| 2026-07-22 | build 159 | Unsigned generic-iOS Release archive | Generic arm64 iOS Release archive passed with signing disabled at `/tmp/PocketVector-build159-achievement-v2-final.xcarchive`; version 1.0 (159), bundle `com.pocketvector.game`, iOS 17 minimum, privacy manifest, and native asset manifest verified. Build 158 remains the last signed App Store export |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or

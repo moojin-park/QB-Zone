@@ -89,12 +89,24 @@ struct CloudProfileSchemaConfiguration: Equatable, Sendable {
     /// It includes every profile schema name, version, singleton ID, and digest
     /// domain so changing interpretation necessarily invalidates a checkpoint.
     var fingerprintMaterial: [String] {
+        fingerprintMaterial(
+            achievementMaterial:
+                AchievementCatalog.persistedFingerprintMaterial()
+        )
+    }
+
+    /// Transition-only seam for deriving the exact predecessor replica scope
+    /// from the same live transport/profile configuration. Production never
+    /// substitutes any material except the frozen launch-achievement V1
+    /// contract.
+    func fingerprintMaterial(
+        achievementMaterial achievements: [String]
+    ) -> [String] {
         let canonicalPayload = CloudProfileCanonicalPayload.fingerprintMaterial
         let mergePolicy = CloudProfileMergePolicyV1.fingerprintMaterial
         let deviceIDRule = ProfileStampDeviceIDRuleV1.fingerprintMaterial
         let accountDerivation = CloudAccountDerivedBindings.profileFingerprintMaterial
         let catalog = LaunchCatalog.approved.persistedFingerprintMaterial
-        let achievements = AchievementCatalog.persistedFingerprintMaterial()
 
         return [
             Self.schemaIdentifier,
