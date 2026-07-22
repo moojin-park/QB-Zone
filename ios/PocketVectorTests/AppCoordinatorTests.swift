@@ -20,7 +20,7 @@ final class AppCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.catalog.teams.count, 8)
         XCTAssertEqual(coordinator.state.inventory.ownedTeamIDs.count, 4)
         XCTAssertEqual(coordinator.state.selection.selectedTeamID, LaunchTeamID.novaCityComets)
-        XCTAssertEqual(coordinator.state.achievementProgress.count, 8)
+        XCTAssertEqual(coordinator.state.achievementProgress.count, 14)
     }
 
     @MainActor

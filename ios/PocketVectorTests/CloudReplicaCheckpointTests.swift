@@ -673,7 +673,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(fingerprint, CloudReplicaScopeFingerprint.make(for: base))
         XCTAssertEqual(
             fingerprint.rawValue,
-            "ef0641dcb0ea18a0552d4d360bfaeba4490bc3c16607a75d0ed3a03d8d0a1b98"
+            "0071557eef7d0cee0fb1c3eccb217a6f770a5a84c820af6ca85e171f18302cb0"
         )
         XCTAssertEqual(fingerprint.rawValue.count, 64)
         XCTAssertEqual(
@@ -685,7 +685,17 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(
             LaunchAchievementCloudScopeTransitionV1ToV2.targetScope(
                 for: base
+            ).rawValue,
+            "ef0641dcb0ea18a0552d4d360bfaeba4490bc3c16607a75d0ed3a03d8d0a1b98"
+        )
+        XCTAssertEqual(
+            LaunchAchievementCloudScopeTransitionV2ToV3.sourceScope(
+                for: base
             ),
+            LaunchAchievementCloudScopeTransitionV1ToV2.targetScope(for: base)
+        )
+        XCTAssertEqual(
+            LaunchAchievementCloudScopeTransitionV2ToV3.targetScope(for: base),
             fingerprint
         )
         XCTAssertEqual(
@@ -813,7 +823,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
                     components: AchievementCatalog.persistedFingerprintMaterial()
                 )
             ),
-            "bf81911f2b6012d3af59b5554e1ad589f5f696b07083873897706100e5c22b3a"
+            "80467f21377fae70905452b3d6db0ece5ca11668cbb7de83a712d2a3f53d60b9"
         )
     }
 
@@ -832,9 +842,26 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             "attempts-gte-minimum-and-positive-then-successful-passes-times-100-gte-attempts-times-percent-native-int-v1",
         ]
         let career = [
-            "pocket-vector-career-statistics-achievement-dependencies-v1",
+            "pocket-vector-career-statistics-achievement-dependencies-v2",
             "successfulPassesPolicy",
             "completions-plus-touchdowns-native-int-v1",
+            "completedRunsPolicy",
+            "naturally-completed-runs-increment-once-v1",
+        ]
+        let achievementFacts = [
+            "pocket-vector-completed-run-achievement-facts-v1",
+            "deepCompletionCountPolicy",
+            "count-authoritative-resolution-when-outcome-completion-and-lane-deep-v1",
+            "maximumOverdriveTouchdownCountPolicy",
+            "count-authoritative-same-play-touchdown-with-bonus-active-and-capped-three-x-multiplier-v1",
+            "notificationAuthorityPolicy",
+            "simulation-resolution-not-feedback-audio-or-ui-delivery-v1",
+            "legacyDefaultPolicy",
+            "missing-deep-and-maximum-overdrive-facts-default-to-zero-without-inference-v1",
+            "structuralValidationPolicy",
+            "deep-lte-completions-and-deep-lane-when-positive-maximum-overdrive-lte-touchdowns-and-bonus-and-touchdown-lane-when-positive-v1",
+            "legacyDeepCompletionCount", "0",
+            "legacyMaximumOverdriveTouchdownCount", "0",
         ]
         let accumulator = [
             "pocket-vector-persisted-career-accumulator-v1",
@@ -873,14 +900,20 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             career
         )
         XCTAssertEqual(
+            CompletedRun.achievementFactsFingerprintMaterial,
+            achievementFacts
+        )
+        XCTAssertEqual(
             PersistedCareerAccumulatorV1.persistedFingerprintMaterial,
             accumulator
         )
         XCTAssertEqual(
             AchievementEvaluator.persistedFingerprintMaterial,
             [
-                "pocket-vector-achievement-evaluator-semantics-v1",
+                "pocket-vector-achievement-evaluator-semantics-v2",
                 "eligibleRunPolicy", "naturally-completed-runs-only-v1",
+                "achievementFactValidationPolicy",
+                "reject-structurally-invalid-completed-run-achievement-facts-v1",
                 "evaluationOrderPolicy",
                 "achievement-id-utf8-ascending-v1",
                 "progressPolicy",
@@ -893,6 +926,9 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
                 "completedRunDependencyMaterialCount",
                 String(completedRun.count),
             ] + completedRun + [
+                "achievementFactMaterialCount",
+                String(achievementFacts.count),
+            ] + achievementFacts + [
                 "runStatisticsDependencyMaterialCount",
                 String(runStatistics.count),
             ] + runStatistics + [
@@ -1029,13 +1065,13 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(loaded.checkpoint, freshCheckpoint)
     }
 
-    func testProductionPreparerRevokesLaunchV1ScopeAndBootstrapsFreshV2Generation()
+    func testProductionPreparerRevokesLaunchV2ScopeAndBootstrapsFreshV3Generation()
         async throws
     {
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let configuration = try productionConfiguration()
-        let oldScope = LaunchAchievementCloudScopeTransitionV1ToV2
+        let oldScope = LaunchAchievementCloudScopeTransitionV2ToV3
             .sourceScope(for: configuration)
         let currentScope = CloudReplicaScopeFingerprint.make(for: configuration)
         let oldEpoch = UUID(
@@ -1057,7 +1093,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
                 accountID: accountA,
                 configurationScopeFingerprint: oldScope,
                 generation: 1,
-                finalCursor: cursor("retired-v1-cursor"),
+                finalCursor: cursor("retired-v2-cursor"),
                 recordsByLogicalID: [:],
                 providerLocatorByLogicalID: [:],
                 logicalIDByProviderLocator: [:],
@@ -1071,7 +1107,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
             pages: [
                 page(
                     accountID: accountA,
-                    cursor: "fresh-v2-cursor",
+                    cursor: "fresh-v3-cursor",
                     moreComing: false
                 ).page,
             ]
@@ -1122,8 +1158,8 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         let checkpoint = try XCTUnwrap(loaded.checkpoint)
         XCTAssertEqual(checkpoint.generation, 1)
         XCTAssertEqual(checkpoint.replicaEpoch, freshEpoch)
-        XCTAssertEqual(checkpoint.finalCursor, cursor("fresh-v2-cursor"))
-        XCTAssertNotEqual(checkpoint.finalCursor, cursor("retired-v1-cursor"))
+        XCTAssertEqual(checkpoint.finalCursor, cursor("fresh-v3-cursor"))
+        XCTAssertNotEqual(checkpoint.finalCursor, cursor("retired-v2-cursor"))
         XCTAssertTrue(checkpoint.recordsByLogicalID.isEmpty)
         XCTAssertNotEqual(freshEpoch, oldEpoch)
     }

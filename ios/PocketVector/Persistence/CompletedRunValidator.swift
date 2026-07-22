@@ -106,6 +106,9 @@ enum CompletedRunValidator {
               run.bonusTouchdownCount <= statistics.touchdowns else {
             throw CompletedRunValidationError.invalidStatistics
         }
+        guard run.achievementFactsAreStructurallyValid else {
+            throw CompletedRunValidationError.invalidStatistics
+        }
 
         let first = statistics.completions.addingReportingOverflow(
             statistics.touchdowns

@@ -90,7 +90,9 @@ final class ProductionServiceConfigurationTests: XCTestCase {
         )
     }
 
-    func testShippingInfoPlistContainsCompleteBuild160ProductionConfiguration() throws {
+    func testShippingBuild160ConfigurationRemainsProtectedAndFailsClosedForV3()
+        throws
+    {
         let info = try loadPropertyList(
             at: sourceRoot
                 .appendingPathComponent("PocketVector")
@@ -113,21 +115,36 @@ final class ProductionServiceConfigurationTests: XCTestCase {
         let configuration = ProductionServiceConfiguration.parse(
             infoDictionary: info
         )
-        guard case let .validated(gameCenter) = configuration.gameCenter,
-              case let .validated(cloudWrite) = configuration.cloudWrite,
+        XCTAssertEqual(
+            configuration.gameCenter,
+            .unavailable([.invalid(.gameCenter, .achievementIdentifiers)])
+        )
+        guard case let .validated(cloudWrite) = configuration.cloudWrite,
               case let .validated(storeKit) = configuration.storeKit else {
-            return XCTFail("The shipping service dictionaries must validate")
+            return XCTFail("Protected cloud and StoreKit dictionaries must validate")
         }
 
-        XCTAssertEqual(
-            gameCenter.leaderboardIdentifier,
-            "com.pocketvector.game.leaderboard.highscore.v1"
+        let services = try XCTUnwrap(
+            info["PocketVectorServices"] as? [String: Any]
+        )
+        let gameCenter = try XCTUnwrap(
+            services["GameCenter"] as? [String: Any]
         )
         XCTAssertEqual(
-            gameCenter.achievementIdentifiers,
+            gameCenter["LeaderboardIdentifier"] as? String,
+            "com.pocketvector.game.leaderboard.highscore.v1"
+        )
+        let protectedAchievementIdentifiers = try XCTUnwrap(
+            gameCenter["AchievementIdentifiers"] as? [String: String]
+        )
+        let build160IDs = Set(AchievementCatalog.launch.map(\.id)).subtracting(
+            AchievementCatalogTransitionV2ToV3.addedAchievementIDs
+        )
+        XCTAssertEqual(
+            protectedAchievementIdentifiers,
             Dictionary(
-                uniqueKeysWithValues: AchievementCatalog.launch.map {
-                    ($0.id, $0.id.rawValue)
+                uniqueKeysWithValues: build160IDs.map {
+                    ($0.rawValue, $0.rawValue)
                 }
             )
         )

@@ -1253,7 +1253,7 @@ actor ProfileInitialAssociationStoreV1 {
                     AchievementCatalogTransitionV1ToV2
                         .retiredCenturyOfConnections,
                 ]
-            )
+            ).union(AchievementCatalogTransitionV2ToV3.addedAchievementIDs)
         return RunSettlementOutcome(
             record: receipt.record,
             gameplayRewardEntryID: receipt.gameplayRewardEntryID,

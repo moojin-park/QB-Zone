@@ -6689,6 +6689,262 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testV2ToV3AchievementTransitionAddsExactDurableMarkerAndIsIdempotent()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        var predecessor = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "v2-to-v3-device",
+            createdAt: baseDate
+        )
+        for achievementID in
+            AchievementCatalogTransitionV2ToV3.addedAchievementIDs {
+            predecessor.player.achievementProgress.removeValue(
+                forKey: achievementID
+            )
+        }
+
+        let source = try migrator.canonicalArtifact(
+            for: predecessor,
+            savedAt: baseDate
+        )
+        let migrated = try migrator.decodeArtifact(source.exactBytes)
+        XCTAssertEqual(
+            Set(migrated.document.player.achievementProgress.keys),
+            Set(AchievementCatalog.launch.map(\.id))
+        )
+        for achievementID in
+            AchievementCatalogTransitionV2ToV3.addedAchievementIDs {
+            XCTAssertEqual(
+                migrated.document.player.achievementProgress[achievementID],
+                AchievementProgress(id: achievementID)
+            )
+        }
+        XCTAssertNoThrow(try PlayerProfileValidator.validate(migrated.document))
+
+        let canonical = try migrator.canonicalArtifact(
+            for: migrated.document,
+            savedAt: migrated.savedAt
+        )
+        let second = try migrator.decodeArtifact(canonical.exactBytes)
+        XCTAssertEqual(second.document, migrated.document)
+        XCTAssertEqual(
+            try migrator.canonicalArtifact(
+                for: second.document,
+                savedAt: second.savedAt
+            ).exactBytes,
+            canonical.exactBytes
+        )
+    }
+
+    func testV2ToV3AchievementTransitionReplaysOnlyHistoricalFactsAndQueuesOnce()
+        throws
+    {
+        var predecessor = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "v2-replay-device",
+            createdAt: baseDate
+        )
+        for achievementID in
+            AchievementCatalogTransitionV2ToV3.addedAchievementIDs {
+            predecessor.player.achievementProgress.removeValue(
+                forKey: achievementID
+            )
+        }
+
+        let run = replacingRun(
+            makeRun(
+                id: fixedRunID(8_993),
+                score: 100_000,
+                attempts: 20,
+                completions: 17,
+                touchdowns: 3
+            ),
+            bonusTouchdownCount: 3
+        )
+        let recordedAt = baseDate.addingTimeInterval(1)
+        let record = CompletedRunRecord(
+            run: run,
+            recordedAt: recordedAt,
+            rewardCoins: 0
+        )
+        let unrelated = AchievementProgressUpdate(
+            previous: AchievementProgress(id: LaunchAchievementID.firstRead),
+            current: AchievementProgress(
+                id: LaunchAchievementID.firstRead,
+                percentComplete: 100,
+                completedAt: recordedAt
+            )
+        )
+        predecessor.player.completedRuns = [run.runID: record]
+        predecessor.player.career = try PersistedCareerAccumulatorV1.applying(
+            run,
+            to: CareerStatistics()
+        )
+        predecessor.player.achievementProgress[LaunchAchievementID.firstRead] =
+            unrelated.current
+        predecessor.player.pendingGameCenter = PlayerScopedGameCenterQueueV1(
+            unboundPending: GameCenterPendingMaximaV1(
+                pendingAchievementPercents: [LaunchAchievementID.firstRead: 100]
+            )
+        )
+        predecessor.settlementReceipts = [
+            run.runID: RunSettlementOutcome(
+                record: record,
+                gameplayRewardEntryID: nil,
+                signingBonusEntryID: nil,
+                achievementUpdates: [unrelated],
+                rewardedOfferUnlocked: nil,
+                resultingPersonalBest: run.score
+            ),
+        ]
+
+        let migrated = try LaunchAchievementPersistenceTransitionV2ToV3.apply(
+            to: predecessor
+        )
+        XCTAssertEqual(
+            migrated.player.achievementProgress[LaunchAchievementID.perfectPocket],
+            AchievementProgress(
+                id: LaunchAchievementID.perfectPocket,
+                percentComplete: 100,
+                completedAt: recordedAt
+            )
+        )
+        XCTAssertEqual(
+            migrated.player.achievementProgress[LaunchAchievementID.franchisePlayer],
+            AchievementProgress(
+                id: LaunchAchievementID.franchisePlayer,
+                percentComplete: 2
+            )
+        )
+        XCTAssertEqual(
+            migrated.player.achievementProgress[LaunchAchievementID.overcharged],
+            AchievementProgress(
+                id: LaunchAchievementID.overcharged,
+                percentComplete: 100,
+                completedAt: recordedAt
+            )
+        )
+        XCTAssertEqual(
+            migrated.player.achievementProgress[LaunchAchievementID.untouchable],
+            AchievementProgress(
+                id: LaunchAchievementID.untouchable,
+                percentComplete: 100,
+                completedAt: recordedAt
+            )
+        )
+        XCTAssertEqual(
+            migrated.player.achievementProgress[LaunchAchievementID.deepThreat],
+            AchievementProgress(id: LaunchAchievementID.deepThreat)
+        )
+        XCTAssertEqual(
+            migrated.player.achievementProgress[
+                LaunchAchievementID.maximumOverdrive
+            ],
+            AchievementProgress(id: LaunchAchievementID.maximumOverdrive)
+        )
+        XCTAssertEqual(
+            migrated.player.pendingGameCenter.unboundPending
+                .pendingAchievementPercents,
+            [
+                LaunchAchievementID.firstRead: 100,
+                LaunchAchievementID.franchisePlayer: 2,
+                LaunchAchievementID.overcharged: 100,
+                LaunchAchievementID.perfectPocket: 100,
+                LaunchAchievementID.untouchable: 100,
+            ]
+        )
+        let migratedUpdates = try XCTUnwrap(
+            migrated.settlementReceipts[run.runID]
+        ).achievementUpdates
+        XCTAssertTrue(migratedUpdates.contains(unrelated))
+        XCTAssertEqual(
+            Set(migratedUpdates.map(\.current.id)).subtracting(
+                [LaunchAchievementID.firstRead]
+            ),
+            [
+                LaunchAchievementID.franchisePlayer,
+                LaunchAchievementID.overcharged,
+                LaunchAchievementID.perfectPocket,
+                LaunchAchievementID.untouchable,
+            ]
+        )
+        XCTAssertEqual(
+            try LaunchAchievementPersistenceTransitionV2ToV3.apply(
+                to: migrated
+            ),
+            migrated
+        )
+    }
+
+    func testV2ToV3AchievementTransitionRejectsPartialMarkerAndFutureFacts()
+        throws
+    {
+        var predecessor = PlayerProfileFactory.makeDefault(
+            accountIdentity: .local,
+            deviceID: "v2-rejection-device",
+            createdAt: baseDate
+        )
+        for achievementID in
+            AchievementCatalogTransitionV2ToV3.addedAchievementIDs {
+            predecessor.player.achievementProgress.removeValue(
+                forKey: achievementID
+            )
+        }
+
+        var partial = predecessor
+        partial.player.achievementProgress[LaunchAchievementID.deepThreat] =
+            AchievementProgress(id: LaunchAchievementID.deepThreat)
+        XCTAssertThrowsError(
+            try LaunchAchievementPersistenceTransitionV2ToV3.apply(to: partial)
+        ) { error in
+            XCTAssertEqual(
+                error as? ProfileMigrationError,
+                .malformedEnvelope
+            )
+        }
+
+        let baseRun = makeRun(id: fixedRunID(8_994), score: 1_000)
+        let futureRun = CompletedRun(
+            configuration: baseRun.configuration,
+            endedAt: baseRun.endedAt,
+            elapsedGameplayMilliseconds: baseRun.elapsedGameplayMilliseconds,
+            finishReason: baseRun.finishReason,
+            score: baseRun.score,
+            statistics: baseRun.statistics,
+            completedLaneIDs: baseRun.completedLaneIDs.union([.deep]),
+            bonusTouchdownCount: baseRun.bonusTouchdownCount,
+            deepCompletionCount: 1
+        )
+        let record = CompletedRunRecord(
+            run: futureRun,
+            recordedAt: baseDate,
+            rewardCoins: 0
+        )
+        predecessor.player.completedRuns = [futureRun.runID: record]
+        predecessor.settlementReceipts = [
+            futureRun.runID: RunSettlementOutcome(
+                record: record,
+                gameplayRewardEntryID: nil,
+                signingBonusEntryID: nil,
+                achievementUpdates: [],
+                rewardedOfferUnlocked: nil,
+                resultingPersonalBest: futureRun.score
+            ),
+        ]
+        XCTAssertThrowsError(
+            try LaunchAchievementPersistenceTransitionV2ToV3.apply(
+                to: predecessor
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ProfileMigrationError,
+                .malformedEnvelope
+            )
+        }
+    }
+
     private func makeCanonicalFixtureDocument(
         reverseCollections: Bool
     ) -> LocalPlayerDocumentV1 {

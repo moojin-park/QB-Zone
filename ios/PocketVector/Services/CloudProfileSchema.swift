@@ -102,7 +102,19 @@ struct CloudProfileSchemaConfiguration: Equatable, Sendable {
     func fingerprintMaterial(
         achievementMaterial achievements: [String]
     ) -> [String] {
-        let canonicalPayload = CloudProfileCanonicalPayload.fingerprintMaterial
+        fingerprintMaterial(
+            achievementMaterial: achievements,
+            canonicalPayloadMaterial:
+                CloudProfileCanonicalPayload.fingerprintMaterial
+        )
+    }
+
+    /// Transition-only seam for reconstructing a sealed predecessor whose
+    /// canonical payload contract differs from the live payload contract.
+    func fingerprintMaterial(
+        achievementMaterial achievements: [String],
+        canonicalPayloadMaterial canonicalPayload: [String]
+    ) -> [String] {
         let mergePolicy = CloudProfileMergePolicyV1.fingerprintMaterial
         let deviceIDRule = ProfileStampDeviceIDRuleV1.fingerprintMaterial
         let accountDerivation = CloudAccountDerivedBindings.profileFingerprintMaterial

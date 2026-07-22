@@ -234,7 +234,9 @@ final class GameKitGameCenterAdapterTests: XCTestCase {
         XCTAssertTrue(submissions.isEmpty)
     }
 
-    func testMaximumScoreAndAllEightAchievementsBuildOneValidatedBatch() async throws {
+    func testMaximumScoreAndAllFourteenAchievementsBuildOneValidatedBatch()
+        async throws
+    {
         let configuration = try makeConfiguration()
         let playerID = GameCenterPlayerID("game-player-a")
         let platform = FakeGameKitPlatformClient(
@@ -267,7 +269,7 @@ final class GameKitGameCenterAdapterTests: XCTestCase {
         XCTAssertEqual(submissions.count, 1)
         XCTAssertEqual(submission.expectedPlayerID, playerID)
         XCTAssertEqual(submission.highScore, Int.max)
-        XCTAssertEqual(submission.achievements.count, 8)
+        XCTAssertEqual(submission.achievements.count, 14)
         XCTAssertEqual(
             Set(submission.achievements.map(\.providerIdentifier)),
             Set(configuration.achievementIdentifiers.values)

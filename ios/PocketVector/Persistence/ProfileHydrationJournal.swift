@@ -774,7 +774,7 @@ struct ProfileHydrationJournalV1: Codable, Equatable, Sendable {
                 .decodeArtifactPreservingLaunchAchievementCatalog(data)
             guard predecessor.sourceSchemaVersion
                     == PlayerProfileEnvelopeV4.schemaVersion,
-                  try LaunchAchievementPersistenceTransitionV1ToV2.apply(
+                  try LaunchAchievementPersistenceTransitions.apply(
                     to: predecessor.document
                   ) == document,
                   try migrator.canonicalArtifact(

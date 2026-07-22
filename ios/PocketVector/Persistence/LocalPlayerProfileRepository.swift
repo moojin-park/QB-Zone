@@ -30,7 +30,7 @@ enum LocalGameCenterAttributionError: Error, Equatable, Sendable {
 }
 
 /// Pure fail-closed planning shared by durable repository preparation and
-/// focused validation tests. It accepts only the exact eight launch IDs and
+/// focused validation tests. It accepts only the exact launch catalog IDs and
 /// never mutates the queue it inspects.
 enum LocalGameCenterSubmissionPlanner {
     static func batch(
@@ -44,8 +44,8 @@ enum LocalGameCenterSubmissionPlanner {
         }
         let launchAchievements = AchievementCatalog.launch
         let launchAchievementIDs = Set(launchAchievements.map(\.id))
-        guard launchAchievements.count == 8,
-              launchAchievementIDs.count == 8 else {
+        guard launchAchievements.count == 14,
+              launchAchievementIDs.count == 14 else {
             throw LocalGameCenterSubmissionError.invalidLaunchAchievementSet
         }
         let pendingAchievementIDs = Set(

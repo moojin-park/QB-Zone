@@ -143,10 +143,24 @@ struct CloudReplicaScopeFingerprint: RawRepresentable, Codable, Equatable, Hasha
         for configuration: ProductionCloudWriteConfiguration,
         achievementMaterial: [String]
     ) -> Self {
+        make(
+            for: configuration,
+            achievementMaterial: achievementMaterial,
+            canonicalPayloadMaterial:
+                CloudProfileCanonicalPayload.fingerprintMaterial
+        )
+    }
+
+    static func make(
+        for configuration: ProductionCloudWriteConfiguration,
+        achievementMaterial: [String],
+        canonicalPayloadMaterial: [String]
+    ) -> Self {
         var hasher = SHA256()
         for value in orderedMaterial(
             for: configuration,
-            achievementMaterial: achievementMaterial
+            achievementMaterial: achievementMaterial,
+            canonicalPayloadMaterial: canonicalPayloadMaterial
         ) {
             append(value, to: &hasher)
         }
@@ -169,10 +183,24 @@ struct CloudReplicaScopeFingerprint: RawRepresentable, Codable, Equatable, Hasha
         for configuration: ProductionCloudWriteConfiguration,
         achievementMaterial: [String]
     ) -> [String] {
+        orderedMaterial(
+            for: configuration,
+            achievementMaterial: achievementMaterial,
+            canonicalPayloadMaterial:
+                CloudProfileCanonicalPayload.fingerprintMaterial
+        )
+    }
+
+    static func orderedMaterial(
+        for configuration: ProductionCloudWriteConfiguration,
+        achievementMaterial: [String],
+        canonicalPayloadMaterial: [String]
+    ) -> [String] {
         let transport = configuration.transport.fingerprintMaterial
         let economy = configuration.economy.fingerprintMaterial
         let profile = configuration.profile.fingerprintMaterial(
-            achievementMaterial: achievementMaterial
+            achievementMaterial: achievementMaterial,
+            canonicalPayloadMaterial: canonicalPayloadMaterial
         )
         return [scopeDomain, "transport", String(transport.count)]
             + transport
@@ -197,12 +225,97 @@ struct CloudReplicaScopeFingerprint: RawRepresentable, Codable, Equatable, Hasha
     }
 }
 
-/// Frozen semantic predecessor used only to revoke the one launch catalog V1
-/// replica scope. The scope itself is derived from the live CloudKit names, so
-/// a configuration mismatch can never be mistaken for this transition.
-enum LaunchAchievementCloudScopeTransitionV1ToV2 {
-    static let sourceAchievementFingerprintMaterial: [String] = {
-        let definitions = [
+/// Literal evaluator and catalog material for the two shipped launch scopes.
+/// Current domain types must never be used to reconstruct these predecessors:
+/// doing so would silently rewrite a sealed checkpoint identity whenever the
+/// live evaluator gains a dependency.
+private enum LaunchAchievementCloudFingerprintHistory {
+    static let canonicalPayloadV1 = [
+        "pocket-vector-cloud-profile-canonical-payload-v1",
+        "payloadEncoding",
+        "foundation-sorted-key-json-default-keys-deferred-date-base64-data-nonfinite-float-throw-v1",
+        "stringIdentifierEncoding",
+        "raw-representable-single-value-string-v1",
+        "stringIdentifierTypes",
+        "CloudAccountID,CloudRecordID,FootballID,JerseyID,PlayerAccountIdentity,ServiceAccountKey,TeamID",
+        "runIDEncoding", "keyed-rawValue-foundation-uuid-v1",
+        "runIDType", "RunID",
+        "uuidEncoding", "foundation-uuid-string-v1",
+        "rawStringEnumEncoding", "single-value-raw-string-v1",
+        "rawStringEnumTypes",
+        "RewardedRunObservation.Disposition,RunFinishReason",
+        "jsonObjectNormalization",
+        "jsonserialization-round-trip-sorted-keys-default-writing-options-v1",
+        "optionalEncoding", "synthesized-keyed-nil-omitted-v1",
+        "completedLaneNormalization",
+        "completed-lane-raw-values-utf8-byte-ascending-v1",
+        "selectedJerseyNormalization",
+        "team-id-jersey-id-alternating-pairs-team-utf8-byte-ascending-v1",
+        "bindingFields",
+        "accountBinding,cloudAccountID,profileAccountIdentity",
+        "durableAccountBindingFields", "accountKey,profileID",
+        "runAccumulatorFields", "digest,runCount",
+        "rootFields",
+        "binding,economyHeadRecordID,rootRevision,runAccumulator,schemaVersion",
+        "mergeStampFields", "deviceID,logicalCounter,modifiedAt",
+        "settingsEnvelopeFields", "binding,schemaVersion,settings,stamp",
+        "playerSettingsFields",
+        "isMuted,musicVolume,reducedMotion,sfxVolume,tutorialCompleted",
+        "selectionEnvelopeFields", "binding,schemaVersion,selection,stamp",
+        "playerSelectionFields",
+        "selectedFootballID,selectedJerseyByTeam,selectedTeamID",
+        "completedRunEnvelopeFields",
+        "binding,record,rewardedRunObservation,schemaVersion",
+        "completedRunRecordFields", "recordedAt,rewardCoins,run",
+        "completedRunFields",
+        "bonusTouchdownCount,completedLaneIDs,configuration,elapsedGameplayMilliseconds,endedAt,finishReason,score,statistics",
+        "runConfigurationFields",
+        "defenseJerseyID,defenseTeamID,economyVersion,footballID,offenseJerseyID,offenseTeamID,randomSeed,runID,startedAt",
+        "runStatisticsFields",
+        "attempts,completions,incompletions,interceptions,longestTouchdownStreak,touchdowns",
+        "rewardedRunObservationFields", "disposition,observedCycle",
+        "rewardedRunObservationDispositionCases",
+        "candidate,ignoredWhileOfferPending,legacyNonCounting",
+        "runFinishReasonCases", "abandoned,debugPreview,timerExpired",
+        "laneIDEncoding", "single-value-raw-string-v1",
+        "laneIDCases", "deep,medium,short,touchdown",
+    ]
+
+    static let evaluatorV1: [String] = {
+        let completedRun = CompletedRun.achievementEligibilityFingerprintMaterial
+        let runStatistics =
+            RunStatisticsSnapshot.achievementDependencyFingerprintMaterial
+        let career = [
+            "pocket-vector-career-statistics-achievement-dependencies-v1",
+            "successfulPassesPolicy",
+            "completions-plus-touchdowns-native-int-v1",
+        ]
+        let accumulator = PersistedCareerAccumulatorV1.persistedFingerprintMaterial
+        return [
+            "pocket-vector-achievement-evaluator-semantics-v1",
+            "eligibleRunPolicy", "naturally-completed-runs-only-v1",
+            "evaluationOrderPolicy", "achievement-id-utf8-ascending-v1",
+            "progressPolicy",
+            "monotonic-max-percent-and-first-completion-date-v1",
+            "binaryProgressPolicy",
+            "value-greater-than-or-equal-target-yields-100-else-0-v1",
+            "scaledProgressPolicy",
+            "target-nonpositive-100-else-clamped-integer-floor-percent-v1",
+            "allLanesPolicy", "set-intersection-with-all-lane-ids-v1",
+            "completedRunDependencyMaterialCount", String(completedRun.count),
+        ] + completedRun + [
+            "runStatisticsDependencyMaterialCount", String(runStatistics.count),
+        ] + runStatistics + [
+            "careerDependencyMaterialCount", String(career.count),
+        ] + career + [
+            "careerAccumulatorDependencyMaterialCount", String(accumulator.count),
+        ] + accumulator
+    }()
+
+    static let catalogV1: [String] = catalogMaterial(
+        semanticIdentifier:
+            AchievementCatalogTransitionV1ToV2.sourceCatalogSemanticIdentifier,
+        definitions: [
             AchievementDefinition(
                 id: LaunchAchievementID.firstRead,
                 displayName: "First Read",
@@ -260,14 +373,84 @@ enum LaunchAchievementCloudScopeTransitionV1ToV2 {
                 points: 100,
                 rule: .incrementalCareerSuccessfulPasses(100)
             ),
-        ]
+        ],
+        transitionMaterial: nil
+    )
+
+    static let catalogV2: [String] = catalogMaterial(
+        semanticIdentifier: AchievementCatalog.v2PersistedSemanticIdentifier,
+        definitions: [
+            AchievementDefinition(
+                id: LaunchAchievementID.firstRead,
+                displayName: "First Read",
+                detail: "Complete any successful pass.",
+                points: 25,
+                rule: .careerSuccessfulPasses(1)
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.paydirt,
+                displayName: "Paydirt",
+                detail: "Score a touchdown.",
+                points: 50,
+                rule: .careerTouchdowns(1)
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.cashTheCharge,
+                displayName: "Cash the Charge",
+                detail: "Score a touchdown while TD Bonus is active.",
+                points: 75,
+                rule: .careerBonusTouchdowns(1)
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.fullRouteTree,
+                displayName: "Full Route Tree",
+                detail: "Complete a pass in all four lanes during one run.",
+                points: 75,
+                rule: .allLanesInSingleRun
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.dialedIn,
+                displayName: "Dialed In",
+                detail: "Finish with at least 80% accuracy over at least 25 pass attempts.",
+                points: 75,
+                rule: .singleRunAccuracy(percent: 80, minimumAttempts: 25)
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.hotHand,
+                displayName: "Hot Hand",
+                detail: "Score four consecutive touchdowns during one run.",
+                points: 100,
+                rule: .singleRunTouchdownStreak(4)
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.lightUpTheBoard,
+                displayName: "Light Up the Board",
+                detail: "Reach 65,000 points during one run.",
+                points: 100,
+                rule: .singleRunScore(65_000)
+            ),
+            AchievementDefinition(
+                id: LaunchAchievementID.millenniaOfConnections,
+                displayName: "Millennia of Connections",
+                detail: "Complete 1,000 career passes, including touchdowns.",
+                points: 100,
+                rule: .incrementalCareerSuccessfulPasses(1_000)
+            ),
+        ],
+        transitionMaterial:
+            AchievementCatalogTransitionV1ToV2.persistedFingerprintMaterial
+    )
+
+    private static func catalogMaterial(
+        semanticIdentifier: String,
+        definitions: [AchievementDefinition],
+        transitionMaterial: [String]?
+    ) -> [String] {
         let ordered = AchievementCatalog.persistedEvaluationOrder(definitions)
-        let evaluator = AchievementEvaluator.persistedFingerprintMaterial
         var material = [
-            AchievementCatalogTransitionV1ToV2
-                .sourceCatalogSemanticIdentifier,
-            "evaluatorMaterialCount", String(evaluator.count),
-        ] + evaluator + [
+            semanticIdentifier,
+            "evaluatorMaterialCount", String(evaluatorV1.count),
+        ] + evaluatorV1 + [
             "achievementCount", String(ordered.count),
         ]
         for definition in ordered {
@@ -279,15 +462,62 @@ enum LaunchAchievementCloudScopeTransitionV1ToV2 {
             ])
             material.append(contentsOf: rule)
         }
+        if let transitionMaterial {
+            material.append(contentsOf: [
+                "transitionMaterialCount", String(transitionMaterial.count),
+            ])
+            material.append(contentsOf: transitionMaterial)
+        }
         return material
-    }()
+    }
+}
+
+/// Frozen V1-to-V2 scope transition retained for direct-upgrade and regression
+/// coverage. Neither endpoint references the live V3 catalog.
+enum LaunchAchievementCloudScopeTransitionV1ToV2 {
+    static let sourceAchievementFingerprintMaterial =
+        LaunchAchievementCloudFingerprintHistory.catalogV1
+    static let targetAchievementFingerprintMaterial =
+        LaunchAchievementCloudFingerprintHistory.catalogV2
 
     static func sourceScope(
         for configuration: ProductionCloudWriteConfiguration
     ) -> CloudReplicaScopeFingerprint {
         CloudReplicaScopeFingerprint.make(
             for: configuration,
-            achievementMaterial: sourceAchievementFingerprintMaterial
+            achievementMaterial: sourceAchievementFingerprintMaterial,
+            canonicalPayloadMaterial:
+                LaunchAchievementCloudFingerprintHistory.canonicalPayloadV1
+        )
+    }
+
+    static func targetScope(
+        for configuration: ProductionCloudWriteConfiguration
+    ) -> CloudReplicaScopeFingerprint {
+        CloudReplicaScopeFingerprint.make(
+            for: configuration,
+            achievementMaterial: targetAchievementFingerprintMaterial,
+            canonicalPayloadMaterial:
+                LaunchAchievementCloudFingerprintHistory.canonicalPayloadV1
+        )
+    }
+}
+
+/// Active Version 1.1 transition from the frozen Build 160 V2 scope to the
+/// live V3 scope. The checkpoint preparer revokes V2 authority and bootstraps a
+/// fresh V3 generation; it never merges records across the two meanings.
+enum LaunchAchievementCloudScopeTransitionV2ToV3 {
+    static let sourceAchievementFingerprintMaterial =
+        LaunchAchievementCloudFingerprintHistory.catalogV2
+
+    static func sourceScope(
+        for configuration: ProductionCloudWriteConfiguration
+    ) -> CloudReplicaScopeFingerprint {
+        CloudReplicaScopeFingerprint.make(
+            for: configuration,
+            achievementMaterial: sourceAchievementFingerprintMaterial,
+            canonicalPayloadMaterial:
+                LaunchAchievementCloudFingerprintHistory.canonicalPayloadV1
         )
     }
 

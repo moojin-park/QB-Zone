@@ -1225,7 +1225,7 @@ actor ProductionCloudProfileReplicaPreparerV1:
         expectedAccountID = accountID
         configurationScopeFingerprint = scope
         predecessorConfigurationScopeFingerprint =
-            LaunchAchievementCloudScopeTransitionV1ToV2.sourceScope(
+            LaunchAchievementCloudScopeTransitionV2ToV3.sourceScope(
                 for: configuration
             )
         self.generationAuthority = generationAuthority

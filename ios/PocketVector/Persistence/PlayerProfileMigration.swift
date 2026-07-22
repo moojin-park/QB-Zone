@@ -590,6 +590,207 @@ enum LaunchAchievementPersistenceTransitionV1ToV2 {
     }
 }
 
+/// Durable additive transition from the shipped eight-achievement catalog to
+/// the Version 1.1 fourteen-achievement catalog. Presence of the complete six
+/// ID set is the durable target marker: an exact V2 profile contains none of
+/// those IDs, while an exact V3 profile contains all six. Partial presence is
+/// rejected so a decode can never guess whether Game Center work was already
+/// acknowledged.
+enum LaunchAchievementPersistenceTransitionV2ToV3 {
+    private static let addedIDs =
+        AchievementCatalogTransitionV2ToV3.addedAchievementIDs
+    private static let currentIDs = Set(AchievementCatalog.launch.map(\.id))
+    private static let predecessorIDs = currentIDs.subtracting(addedIDs)
+
+    private struct ReplayResult {
+        let progress: [AchievementID: AchievementProgress]
+        let updatesByRunID: [RunID: [AchievementProgressUpdate]]
+    }
+
+    static func apply(
+        to source: LocalPlayerDocumentV1
+    ) throws -> LocalPlayerDocumentV1 {
+        let progressIDs = Set(source.player.achievementProgress.keys)
+        let presentAddedIDs = progressIDs.intersection(addedIDs)
+
+        if presentAddedIDs == addedIDs {
+            guard progressIDs == currentIDs else {
+                throw ProfileMigrationError.malformedEnvelope
+            }
+            return source
+        }
+
+        // Preserve deliberately non-catalog documents used by low-level
+        // canonical-codec tests. Production validation still rejects them.
+        if presentAddedIDs.isEmpty,
+           progressIDs.isDisjoint(with: predecessorIDs) {
+            return source
+        }
+
+        guard presentAddedIDs.isEmpty,
+              progressIDs == predecessorIDs else {
+            throw ProfileMigrationError.malformedEnvelope
+        }
+
+        try validatePredecessor(source)
+        let replay = try replayAddedAchievements(in: source)
+        var document = source
+
+        for achievementID in addedIDs {
+            guard let progress = replay.progress[achievementID] else {
+                throw ProfileMigrationError.malformedEnvelope
+            }
+            document.player.achievementProgress[achievementID] = progress
+            if progress.percentComplete > 0 {
+                document.player.pendingGameCenter.enqueueUnboundAchievement(
+                    progress
+                )
+            }
+        }
+
+        document.settlementReceipts = document.settlementReceipts.mapValues {
+            receipt in
+            let preserved = receipt.achievementUpdates.filter {
+                !addedIDs.contains($0.previous.id)
+                    && !addedIDs.contains($0.current.id)
+            }
+            return RunSettlementOutcome(
+                record: receipt.record,
+                gameplayRewardEntryID: receipt.gameplayRewardEntryID,
+                signingBonusEntryID: receipt.signingBonusEntryID,
+                achievementUpdates: preserved
+                    + (replay.updatesByRunID[receipt.record.run.runID] ?? []),
+                rewardedOfferUnlocked: receipt.rewardedOfferUnlocked,
+                resultingPersonalBest: receipt.resultingPersonalBest
+            )
+        }
+        return document
+    }
+
+    private static func validatePredecessor(
+        _ document: LocalPlayerDocumentV1
+    ) throws {
+        for (key, progress) in document.player.achievementProgress {
+            guard key == progress.id,
+                  predecessorIDs.contains(key),
+                  (0 ... 100).contains(progress.percentComplete),
+                  (progress.percentComplete == 100)
+                    == (progress.completedAt != nil),
+                  progress.completedAt?.timeIntervalSince1970.isFinite ?? true
+            else {
+                throw ProfileMigrationError.malformedEnvelope
+            }
+        }
+
+        func validatePending(_ pending: GameCenterPendingMaximaV1) throws {
+            guard pending.pendingHighScore >= 0 else {
+                throw ProfileMigrationError.malformedEnvelope
+            }
+            for (achievementID, percent) in
+                pending.pendingAchievementPercents {
+                guard !addedIDs.contains(achievementID),
+                      (0 ... 100).contains(percent) else {
+                    throw ProfileMigrationError.malformedEnvelope
+                }
+            }
+        }
+        try validatePending(document.player.pendingGameCenter.unboundPending)
+        for pending in document.player.pendingGameCenter.pendingByPlayerID.values {
+            try validatePending(pending)
+        }
+
+        for (runID, record) in document.player.completedRuns {
+            guard record.run.deepCompletionCount
+                    == AchievementCatalogTransitionV2ToV3
+                        .legacyDeepCompletionCount,
+                  record.run.maximumOverdriveTouchdownCount
+                    == AchievementCatalogTransitionV2ToV3
+                        .legacyMaximumOverdriveTouchdownCount,
+                  record.run.achievementFactsAreStructurallyValid,
+                  let receipt = document.settlementReceipts[runID],
+                  receipt.record == record,
+                  receipt.record.run.deepCompletionCount == 0,
+                  receipt.record.run.maximumOverdriveTouchdownCount == 0,
+                  receipt.achievementUpdates.allSatisfy({
+                      !addedIDs.contains($0.previous.id)
+                          && !addedIDs.contains($0.current.id)
+                  }) else {
+                throw ProfileMigrationError.malformedEnvelope
+            }
+        }
+    }
+
+    private static func replayAddedAchievements(
+        in document: LocalPlayerDocumentV1
+    ) throws -> ReplayResult {
+        let orderedRecords = document.player.completedRuns.values
+            .filter { $0.run.isNaturallyCompleted }
+            .sorted(by: orderedBefore)
+        var career = CareerStatistics()
+        var progress = Dictionary(
+            uniqueKeysWithValues: AchievementCatalog.launch.map {
+                ($0.id, AchievementProgress(id: $0.id))
+            }
+        )
+        var updatesByRunID: [RunID: [AchievementProgressUpdate]] = [:]
+
+        for record in orderedRecords {
+            do {
+                career = try PersistedCareerAccumulatorV1.applying(
+                    record.run,
+                    to: career
+                )
+            } catch {
+                throw ProfileMigrationError.malformedEnvelope
+            }
+            let updates = AchievementEvaluator.evaluate(
+                run: record.run,
+                careerAfter: career,
+                existing: progress,
+                evaluatedAt: record.recordedAt
+            )
+            for update in updates {
+                progress[update.current.id] = update.current
+            }
+            updatesByRunID[record.run.runID] = updates.filter {
+                addedIDs.contains($0.current.id)
+            }
+        }
+
+        return ReplayResult(
+            progress: Dictionary(
+                uniqueKeysWithValues: addedIDs.map {
+                    ($0, progress[$0] ?? AchievementProgress(id: $0))
+                }
+            ),
+            updatesByRunID: updatesByRunID
+        )
+    }
+
+    private static func orderedBefore(
+        _ lhs: CompletedRunRecord,
+        _ rhs: CompletedRunRecord
+    ) -> Bool {
+        if lhs.recordedAt != rhs.recordedAt {
+            return lhs.recordedAt < rhs.recordedAt
+        }
+        return lhs.run.runID.description.utf8.lexicographicallyPrecedes(
+            rhs.run.runID.description.utf8
+        )
+    }
+}
+
+enum LaunchAchievementPersistenceTransitions {
+    static func apply(
+        to source: LocalPlayerDocumentV1
+    ) throws -> LocalPlayerDocumentV1 {
+        let v2 = try LaunchAchievementPersistenceTransitionV1ToV2.apply(
+            to: source
+        )
+        return try LaunchAchievementPersistenceTransitionV2ToV3.apply(to: v2)
+    }
+}
+
 protocol PlayerProfileMigrating: Sendable {
     func decodeArtifact(_ data: Data) throws -> DecodedProfileEnvelopeArtifactV1
     /// Exact pre-catalog-transition decoding is reserved for recovery of an
@@ -767,7 +968,7 @@ struct PlayerProfileMigrator: PlayerProfileMigrating {
         return DecodedProfileEnvelopeArtifactV1(
             sourceSchemaVersion: decoded.sourceSchemaVersion,
             savedAt: decoded.savedAt,
-            document: try LaunchAchievementPersistenceTransitionV1ToV2
+            document: try LaunchAchievementPersistenceTransitions
                 .apply(to: decoded.document)
         )
     }

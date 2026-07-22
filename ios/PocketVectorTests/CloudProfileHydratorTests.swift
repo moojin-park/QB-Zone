@@ -914,12 +914,12 @@ final class CloudProfileHydratorTests: XCTestCase, @unchecked Sendable {
         }
     }
 
-    func testAchievementSeedContainsAllEightLaunchIDs() throws {
+    func testAchievementSeedContainsAllFourteenLaunchIDs() throws {
         let progress = try CloudProfileAchievementSeed.progress(
             definitions: AchievementCatalog.launch
         )
 
-        XCTAssertEqual(progress.count, 8)
+        XCTAssertEqual(progress.count, 14)
         XCTAssertEqual(Set(progress.keys), Set(AchievementCatalog.launch.map(\.id)))
         for definition in AchievementCatalog.launch {
             XCTAssertEqual(
