@@ -70,8 +70,7 @@ final class PocketVectorApp: UIResponder, UIApplicationDelegate {
             systemGestureDeferralState: systemGestureDeferralState
         )
         let rootController = PocketVectorRootViewController(
-            rootView: AnyView(rootView),
-            systemGestureDeferralState: systemGestureDeferralState
+            rootView: AnyView(rootView)
         )
         let window = UIWindow(windowScene: windowScene)
         window.rootViewController = rootController
@@ -88,6 +87,10 @@ final class PocketVectorApp: UIResponder, UIApplicationDelegate {
         guard let windowScene = notification.object as? UIWindowScene else { return }
         installRootWindow(in: windowScene)
         systemGestureDeferralState?.setApplicationActive(true)
+        if window?.windowScene === windowScene,
+           let rootController = window?.rootViewController as? PocketVectorRootViewController {
+            rootController.requestSystemUIUpdate()
+        }
     }
 
     @objc private func sceneDidEnterBackground(_ notification: Notification) {
@@ -170,20 +173,24 @@ enum RootSystemGestureDeferralPresentationPolicy {
 }
 
 @MainActor
-class PocketVectorRootViewController: UIViewController {
-    private let systemGestureDeferralState: RootSystemGestureDeferralState
+class PocketVectorRootViewController: UIViewController, UIGestureRecognizerDelegate {
     private let contentController: UIHostingController<AnyView>
+    private(set) lazy var bottomSystemGestureDeferralRecognizer: UIPanGestureRecognizer = {
+        let recognizer = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleBottomSystemGestureDeferralPan(_:))
+        )
+        recognizer.maximumNumberOfTouches = 1
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesBegan = false
+        recognizer.delaysTouchesEnded = false
+        recognizer.delegate = self
+        return recognizer
+    }()
 
-    init(
-        rootView: AnyView,
-        systemGestureDeferralState: RootSystemGestureDeferralState
-    ) {
-        self.systemGestureDeferralState = systemGestureDeferralState
+    init(rootView: AnyView) {
         contentController = UIHostingController(rootView: rootView)
         super.init(nibName: nil, bundle: nil)
-        systemGestureDeferralState.onEffectiveDeferralChanged = { [weak self] in
-            self?.requestScreenEdgesDeferralUpdate()
-        }
     }
 
     @available(*, unavailable)
@@ -203,33 +210,57 @@ class PocketVectorRootViewController: UIViewController {
             contentController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         contentController.didMove(toParent: self)
+        view.addGestureRecognizer(bottomSystemGestureDeferralRecognizer)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        requestSystemUIUpdate()
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        requestSystemUIUpdate()
     }
 
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
-        systemGestureDeferralState.defersBottomSystemGestures
-            ? .bottom
-            : []
+        // Pocket Vector is a landscape, full-screen game. The owner-approved
+        // policy deliberately requires the two-swipe Home gesture everywhere
+        // in the app, independent of scene lifecycle or gameplay snapshots.
+        .bottom
     }
 
     override var childForScreenEdgesDeferringSystemGestures: UIViewController? {
         nil
     }
 
-    override var childForStatusBarHidden: UIViewController? {
-        contentController
-    }
+    override var prefersStatusBarHidden: Bool { true }
 
-    override var childForStatusBarStyle: UIViewController? {
-        contentController
-    }
+    override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
 
-    override var childForHomeIndicatorAutoHidden: UIViewController? {
-        contentController
-    }
+    // Keep the Home indicator under UIKit's normal visible policy. Physical
+    // Face ID testing proved that auto-hiding it lets one bottom-edge swipe
+    // leave the app even while this root continues to defer the bottom edge.
+    override var prefersHomeIndicatorAutoHidden: Bool { false }
 
-    func requestScreenEdgesDeferralUpdate() {
+    func requestSystemUIUpdate() {
         setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+        setNeedsStatusBarAppearanceUpdate()
+        setNeedsUpdateOfHomeIndicatorAutoHidden()
     }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        gestureRecognizer === bottomSystemGestureDeferralRecognizer
+            || otherGestureRecognizer === bottomSystemGestureDeferralRecognizer
+    }
+
+    @objc
+    private func handleBottomSystemGestureDeferralPan(
+        _ recognizer: UIPanGestureRecognizer
+    ) {}
 }
 
 @MainActor

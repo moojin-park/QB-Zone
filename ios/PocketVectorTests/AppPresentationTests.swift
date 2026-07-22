@@ -504,11 +504,9 @@ final class AppPresentationTests: XCTestCase {
     }
 
     @MainActor
-    func testRootViewControllerIsAuthoritativeForBottomGestureDeferral() {
-        let state = RootSystemGestureDeferralState()
+    func testRootViewControllerLocksBottomGestureDeferralAcrossTheWholeApp() {
         let controller = RecordingRootViewController(
-            rootView: AnyView(Color.clear),
-            systemGestureDeferralState: state
+            rootView: AnyView(Color.clear)
         )
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 874, height: 402))
         window.rootViewController = controller
@@ -522,41 +520,103 @@ final class AppPresentationTests: XCTestCase {
         XCTAssertEqual(controller.children.count, 1)
         XCTAssertTrue(controller.children[0] is UIHostingController<AnyView>)
         XCTAssertNil(controller.childForScreenEdgesDeferringSystemGestures)
-        XCTAssertTrue(controller.childForStatusBarHidden === controller.children[0])
-        XCTAssertTrue(controller.childForStatusBarStyle === controller.children[0])
-        XCTAssertTrue(controller.childForHomeIndicatorAutoHidden === controller.children[0])
-        XCTAssertEqual(controller.preferredScreenEdgesDeferringSystemGestures, [])
-        XCTAssertEqual(controller.screenEdgeUpdateRequestCount, 0)
+        XCTAssertNil(controller.childForStatusBarHidden)
+        XCTAssertNil(controller.childForStatusBarStyle)
+        XCTAssertNil(controller.childForHomeIndicatorAutoHidden)
+        XCTAssertTrue(controller.prefersStatusBarHidden)
+        XCTAssertEqual(controller.preferredStatusBarStyle, .lightContent)
+        XCTAssertFalse(controller.prefersHomeIndicatorAutoHidden)
+        let deferralRecognizer = controller.bottomSystemGestureDeferralRecognizer
+        XCTAssertTrue(controller.view.gestureRecognizers?.contains(deferralRecognizer) == true)
+        XCTAssertEqual(deferralRecognizer.maximumNumberOfTouches, 1)
+        XCTAssertFalse(deferralRecognizer.cancelsTouchesInView)
+        XCTAssertFalse(deferralRecognizer.delaysTouchesBegan)
+        XCTAssertFalse(deferralRecognizer.delaysTouchesEnded)
+        XCTAssertTrue(deferralRecognizer.delegate === controller)
+        XCTAssertTrue(
+            controller.gestureRecognizer(
+                deferralRecognizer,
+                shouldRecognizeSimultaneouslyWith: UIPanGestureRecognizer()
+            )
+        )
+        XCTAssertEqual(controller.preferredScreenEdgesDeferringSystemGestures, .bottom)
+        let updateCountAfterAttachment = controller.screenEdgeUpdateRequestCount
+
+        controller.viewDidAppear(false)
+        XCTAssertEqual(
+            controller.screenEdgeUpdateRequestCount,
+            updateCountAfterAttachment + 1
+        )
+        controller.viewSafeAreaInsetsDidChange()
+        XCTAssertEqual(
+            controller.screenEdgeUpdateRequestCount,
+            updateCountAfterAttachment + 2
+        )
 
         let runID = RunID()
+        let state = RootSystemGestureDeferralState()
+        func assertRootRemainsLocked(
+            _ context: String,
+            file: StaticString = #filePath,
+            line: UInt = #line
+        ) {
+            XCTAssertEqual(
+                controller.preferredScreenEdgesDeferringSystemGestures,
+                .bottom,
+                context,
+                file: file,
+                line: line
+            )
+        }
+
+        assertRootRemainsLocked("Main Menu must remain deferred")
         state.setApplicationActive(true)
         state.setAllowedGameplayRunID(runID)
         state.receive(
-            gameplaySnapshot(phase: .playing),
+            gameplaySnapshot(phase: .countdown),
             for: runID,
             freezesPresentation: false
         )
-
-        XCTAssertEqual(
-            controller.preferredScreenEdgesDeferringSystemGestures,
-            .bottom
-        )
-        XCTAssertEqual(controller.screenEdgeUpdateRequestCount, 1)
+        assertRootRemainsLocked("Countdown must remain deferred")
 
         state.receive(
             gameplaySnapshot(phase: .playing),
             for: runID,
             freezesPresentation: false
         )
-        XCTAssertEqual(controller.screenEdgeUpdateRequestCount, 1)
+        assertRootRemainsLocked("Playing must remain deferred")
+
+        state.receive(
+            gameplaySnapshot(phase: .resolvingFinalBall),
+            for: runID,
+            freezesPresentation: false
+        )
+        assertRootRemainsLocked("Final-ball resolution must remain deferred")
 
         state.receive(
             gameplaySnapshot(phase: .paused),
             for: runID,
             freezesPresentation: false
         )
-        XCTAssertEqual(controller.preferredScreenEdgesDeferringSystemGestures, [])
-        XCTAssertEqual(controller.screenEdgeUpdateRequestCount, 2)
+        assertRootRemainsLocked("Pause must remain deferred")
+
+        state.receive(
+            gameplaySnapshot(phase: .playing),
+            for: runID,
+            freezesPresentation: true
+        )
+        assertRootRemainsLocked("Frozen Results presentation must remain deferred")
+
+        state.setAllowedGameplayRunID(nil)
+        assertRootRemainsLocked("Results and settlement must remain deferred")
+
+        state.setApplicationActive(false)
+        assertRootRemainsLocked("An inactive scene cannot clear the root policy")
+
+        XCTAssertEqual(
+            controller.screenEdgeUpdateRequestCount,
+            updateCountAfterAttachment + 2
+        )
     }
 
     @MainActor
@@ -1003,8 +1063,8 @@ final class AppPresentationTests: XCTestCase {
 private final class RecordingRootViewController: PocketVectorRootViewController {
     private(set) var screenEdgeUpdateRequestCount = 0
 
-    override func requestScreenEdgesDeferralUpdate() {
+    override func requestSystemUIUpdate() {
         screenEdgeUpdateRequestCount += 1
-        super.requestScreenEdgesDeferralUpdate()
+        super.requestSystemUIUpdate()
     }
 }
