@@ -236,24 +236,61 @@ final class EconomyAchievementTests: XCTestCase {
         XCTAssertEqual(AchievementCatalog.launch.count, 8)
         XCTAssertEqual(Set(AchievementCatalog.launch.map(\.id)).count, 8)
         XCTAssertEqual(AchievementCatalog.launch.reduce(0) { $0 + $1.points }, 600)
+
+        let definitions = Dictionary(
+            uniqueKeysWithValues: AchievementCatalog.launch.map { ($0.id, $0) }
+        )
+        XCTAssertEqual(
+            definitions[LaunchAchievementID.lightUpTheBoard],
+            AchievementDefinition(
+                id: LaunchAchievementID.lightUpTheBoard,
+                displayName: "Light Up the Board",
+                detail: "Reach 65,000 points during one run.",
+                points: 100,
+                rule: .singleRunScore(65_000)
+            )
+        )
+        XCTAssertEqual(
+            definitions[LaunchAchievementID.dialedIn],
+            AchievementDefinition(
+                id: LaunchAchievementID.dialedIn,
+                displayName: "Dialed In",
+                detail: "Finish with at least 80% accuracy over at least 25 pass attempts.",
+                points: 75,
+                rule: .singleRunAccuracy(percent: 80, minimumAttempts: 25)
+            )
+        )
+        XCTAssertEqual(
+            definitions[LaunchAchievementID.millenniaOfConnections],
+            AchievementDefinition(
+                id: AchievementID("achievement.millenia_of_connections.v1"),
+                displayName: "Millennia of Connections",
+                detail: "Complete 1,000 career passes, including touchdowns.",
+                points: 100,
+                rule: .incrementalCareerSuccessfulPasses(1_000)
+            )
+        )
+        XCTAssertNil(
+            definitions[AchievementID("achievement.century_of_connections.v1")]
+        )
     }
 
     func testEvaluatorCompletesAllEightAtExactRequirements() {
         let statistics = RunStatisticsSnapshot(
-            attempts: 12,
-            completions: 6,
+            attempts: 25,
+            completions: 16,
             touchdowns: 4,
-            incompletions: 2,
+            incompletions: 5,
             longestTouchdownStreak: 4
         )
         let run = makeRun(
-            score: 25_000,
+            score: 65_000,
             statistics: statistics,
             lanes: Set(LaneID.allCases),
             bonusTouchdowns: 1
         )
         var career = CareerStatistics()
-        career.completions = 96
+        career.completions = 996
         career.touchdowns = 4
         career.bonusTouchdowns = 1
         let evaluatedAt = Date(timeIntervalSince1970: 2_000)
@@ -272,14 +309,14 @@ final class EconomyAchievementTests: XCTestCase {
 
     func testSingleRunAchievementThresholdsDoNotCompleteEarly() {
         let statistics = RunStatisticsSnapshot(
-            attempts: 12,
-            completions: 5,
+            attempts: 24,
+            completions: 16,
             touchdowns: 4,
-            incompletions: 3,
+            incompletions: 4,
             longestTouchdownStreak: 3
         )
         let run = makeRun(
-            score: 24_999,
+            score: 64_999,
             statistics: statistics,
             lanes: [.short, .medium, .deep]
         )
@@ -300,28 +337,395 @@ final class EconomyAchievementTests: XCTestCase {
         XCTAssertNil(progress[LaunchAchievementID.lightUpTheBoard])
     }
 
-    func testOnlyCenturyReportsIncrementalProgress() {
-        let run = makeRun(score: 24_999)
-        var career = CareerStatistics()
-        career.completions = 99
+    func testLightUpTheBoardRequiresExactly65000Points() {
+        XCTAssertNil(
+            evaluatedProgress(run: makeRun(score: 64_999))[
+                LaunchAchievementID.lightUpTheBoard
+            ]
+        )
+        XCTAssertEqual(
+            evaluatedProgress(run: makeRun(score: 65_000))[
+                LaunchAchievementID.lightUpTheBoard
+            ]?.percentComplete,
+            100
+        )
+    }
 
-        let updates = AchievementEvaluator.evaluate(
+    func testDialedInRequires25AttemptsAndAtLeast80PercentAccuracy() {
+        let twentyFourPerfect = RunStatisticsSnapshot(
+            attempts: 24,
+            completions: 24
+        )
+        XCTAssertNil(
+            evaluatedProgress(
+                run: makeRun(score: 0, statistics: twentyFourPerfect)
+            )[LaunchAchievementID.dialedIn]
+        )
+
+        let exactlyEightyPercent = RunStatisticsSnapshot(
+            attempts: 25,
+            completions: 20,
+            incompletions: 5
+        )
+        XCTAssertEqual(
+            evaluatedProgress(
+                run: makeRun(score: 0, statistics: exactlyEightyPercent)
+            )[LaunchAchievementID.dialedIn]?.percentComplete,
+            100
+        )
+
+        let belowEightyPercent = RunStatisticsSnapshot(
+            attempts: 25,
+            completions: 19,
+            incompletions: 6
+        )
+        XCTAssertNil(
+            evaluatedProgress(
+                run: makeRun(score: 0, statistics: belowEightyPercent)
+            )[LaunchAchievementID.dialedIn]
+        )
+    }
+
+    func testMillenniaOfConnectionsRequires1000CareerSuccessfulPasses() {
+        let run = makeRun(score: 0)
+        var career = CareerStatistics()
+        career.completions = 999
+
+        let belowTarget = AchievementEvaluator.evaluate(
             run: run,
             careerAfter: career,
             existing: [:],
             evaluatedAt: Date(timeIntervalSince1970: 4_000)
         )
-        let progress = Dictionary(uniqueKeysWithValues: updates.map { ($0.current.id, $0.current) })
+        let belowProgress = Dictionary(
+            uniqueKeysWithValues: belowTarget.map { ($0.current.id, $0.current) }
+        )
 
         XCTAssertEqual(
-            progress[LaunchAchievementID.centuryOfConnections]?.percentComplete,
+            belowProgress[LaunchAchievementID.millenniaOfConnections]?
+                .percentComplete,
             99
         )
+        XCTAssertNil(
+            belowProgress[LaunchAchievementID.millenniaOfConnections]?
+                .completedAt
+        )
+
+        career.completions = 999
+        career.touchdowns = 1
+        let atTarget = AchievementEvaluator.evaluate(
+            run: run,
+            careerAfter: career,
+            existing: [:],
+            evaluatedAt: Date(timeIntervalSince1970: 5_000)
+        )
+        let atTargetProgress = Dictionary(
+            uniqueKeysWithValues: atTarget.map { ($0.current.id, $0.current) }
+        )
+        XCTAssertEqual(
+            atTargetProgress[LaunchAchievementID.millenniaOfConnections]?
+                .percentComplete,
+            100
+        )
+        XCTAssertEqual(
+            atTargetProgress[LaunchAchievementID.millenniaOfConnections]?
+                .completedAt,
+            Date(timeIntervalSince1970: 5_000)
+        )
+
         for definition in AchievementCatalog.launch
-            where definition.id != LaunchAchievementID.centuryOfConnections {
-            let percent = progress[definition.id]?.percentComplete ?? 0
+            where definition.id != LaunchAchievementID.millenniaOfConnections {
+            let percent = belowProgress[definition.id]?.percentComplete ?? 0
             XCTAssertTrue(percent == 0 || percent == 100)
         }
+    }
+
+    func testCatalogTransitionContractMapsRetiredIDAndRecomputesOnlyTargets() {
+        let retired = AchievementID("achievement.century_of_connections.v1")
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.sourceCatalogSemanticIdentifier,
+            "pocket-vector-launch-achievement-catalog-semantics-v1"
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.targetCatalogSemanticIdentifier,
+            "pocket-vector-launch-achievement-catalog-semantics-v2"
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.identifierReplacements,
+            [retired: LaunchAchievementID.millenniaOfConnections]
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.currentStateForbiddenIDs,
+            [retired]
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.pendingQueueScrubIDs,
+            [
+                retired,
+                LaunchAchievementID.dialedIn,
+                LaunchAchievementID.lightUpTheBoard,
+                LaunchAchievementID.millenniaOfConnections,
+            ]
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.pendingEvidenceSourceIDs(
+                for: LaunchAchievementID.dialedIn
+            ),
+            [LaunchAchievementID.dialedIn]
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.pendingEvidenceSourceIDs(
+                for: LaunchAchievementID.lightUpTheBoard
+            ),
+            [LaunchAchievementID.lightUpTheBoard]
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.pendingEvidenceSourceIDs(
+                for: LaunchAchievementID.millenniaOfConnections
+            ),
+            [retired, LaunchAchievementID.millenniaOfConnections]
+        )
+
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.recomputedPercent(
+                for: LaunchAchievementID.millenniaOfConnections,
+                careerSuccessfulPasses: 999,
+                completedRuns: []
+            ),
+            99
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.recomputedPercent(
+                for: LaunchAchievementID.millenniaOfConnections,
+                careerSuccessfulPasses: 1_000,
+                completedRuns: []
+            ),
+            100
+        )
+        XCTAssertNil(
+            AchievementCatalogTransitionV1ToV2.recomputedPercent(
+                for: LaunchAchievementID.firstRead,
+                careerSuccessfulPasses: 1_000,
+                completedRuns: []
+            )
+        )
+
+        XCTAssertNil(
+            AchievementCatalogTransitionV1ToV2.reconciledPendingPercent(
+                for: LaunchAchievementID.millenniaOfConnections,
+                pendingEvidencePercentsInSameProvenanceBucket: [:],
+                recomputedEarnedPercent: 100
+            )
+        )
+        XCTAssertNil(
+            AchievementCatalogTransitionV1ToV2.reconciledPendingPercent(
+                for: LaunchAchievementID.millenniaOfConnections,
+                pendingEvidencePercentsInSameProvenanceBucket: [retired: 0],
+                recomputedEarnedPercent: 100
+            )
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.reconciledPendingPercent(
+                for: LaunchAchievementID.millenniaOfConnections,
+                pendingEvidencePercentsInSameProvenanceBucket: [retired: 100],
+                recomputedEarnedPercent: 37
+            ),
+            37
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.reconciledPendingPercent(
+                for: LaunchAchievementID.millenniaOfConnections,
+                pendingEvidencePercentsInSameProvenanceBucket: [
+                    retired: 100,
+                    LaunchAchievementID.millenniaOfConnections: 25,
+                ],
+                recomputedEarnedPercent: 52
+            ),
+            52
+        )
+        XCTAssertNil(
+            AchievementCatalogTransitionV1ToV2.reconciledPendingPercent(
+                for: LaunchAchievementID.dialedIn,
+                pendingEvidencePercentsInSameProvenanceBucket: [
+                    LaunchAchievementID.lightUpTheBoard: 100,
+                ],
+                recomputedEarnedPercent: 100
+            )
+        )
+        XCTAssertNil(
+            AchievementCatalogTransitionV1ToV2.reconciledPendingPercent(
+                for: LaunchAchievementID.dialedIn,
+                pendingEvidencePercentsInSameProvenanceBucket: [
+                    LaunchAchievementID.dialedIn: 100,
+                ],
+                recomputedEarnedPercent: 0
+            )
+        )
+    }
+
+    func testCatalogTransitionReconcilesStricterRunsAndCompletionDates() {
+        let abandonedQualifying = CompletedRunRecord(
+            run: makeRun(
+                score: 80_000,
+                finishReason: .abandoned,
+                statistics: RunStatisticsSnapshot(
+                    attempts: 25,
+                    completions: 25
+                )
+            ),
+            recordedAt: Date(timeIntervalSince1970: 1_200),
+            rewardCoins: 0
+        )
+        let obsoleteOnly = CompletedRunRecord(
+            run: makeRun(
+                score: 64_999,
+                statistics: RunStatisticsSnapshot(
+                    attempts: 24,
+                    completions: 24
+                )
+            ),
+            recordedAt: Date(timeIntervalSince1970: 1_300),
+            rewardCoins: 40
+        )
+        let qualifying = CompletedRunRecord(
+            run: makeRun(
+                score: 65_000,
+                statistics: RunStatisticsSnapshot(
+                    attempts: 25,
+                    completions: 20,
+                    incompletions: 5
+                )
+            ),
+            recordedAt: Date(timeIntervalSince1970: 1_400),
+            rewardCoins: 40
+        )
+        let records = [qualifying, obsoleteOnly, abandonedQualifying]
+
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.recomputedPercent(
+                for: LaunchAchievementID.dialedIn,
+                careerSuccessfulPasses: 0,
+                completedRuns: [obsoleteOnly, abandonedQualifying]
+            ),
+            0
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.recomputedPercent(
+                for: LaunchAchievementID.lightUpTheBoard,
+                careerSuccessfulPasses: 0,
+                completedRuns: [obsoleteOnly, abandonedQualifying]
+            ),
+            0
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.recomputedPercent(
+                for: LaunchAchievementID.dialedIn,
+                careerSuccessfulPasses: 0,
+                completedRuns: records
+            ),
+            100
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.recomputedPercent(
+                for: LaunchAchievementID.lightUpTheBoard,
+                careerSuccessfulPasses: 0,
+                completedRuns: records
+            ),
+            100
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.recomputedCompletedAt(
+                for: LaunchAchievementID.dialedIn,
+                completedRuns: records
+            ),
+            qualifying.recordedAt
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.recomputedCompletedAt(
+                for: LaunchAchievementID.lightUpTheBoard,
+                completedRuns: records
+            ),
+            qualifying.recordedAt
+        )
+    }
+
+    func testCatalogTransitionDatesMillenniaAtFirst1000PassCrossing() {
+        let beforeCrossing = [300, 300, 300, 99].enumerated().map {
+            index, successfulPasses in
+            CompletedRunRecord(
+                run: makeRun(
+                    score: 0,
+                    statistics: RunStatisticsSnapshot(
+                        attempts: successfulPasses,
+                        completions: successfulPasses
+                    )
+                ),
+                recordedAt: Date(
+                    timeIntervalSince1970: Double(1_600 + index * 100)
+                ),
+                rewardCoins: 15
+            )
+        }
+        let crossing = CompletedRunRecord(
+            run: makeRun(
+                score: 0,
+                statistics: RunStatisticsSnapshot(attempts: 1, touchdowns: 1)
+            ),
+            recordedAt: Date(timeIntervalSince1970: 2_000),
+            rewardCoins: 0
+        )
+
+        XCTAssertNil(
+            AchievementCatalogTransitionV1ToV2.recomputedCompletedAt(
+                for: LaunchAchievementID.millenniaOfConnections,
+                completedRuns: beforeCrossing
+            )
+        )
+        XCTAssertEqual(
+            AchievementCatalogTransitionV1ToV2.recomputedCompletedAt(
+                for: LaunchAchievementID.millenniaOfConnections,
+                completedRuns: [crossing] + Array(beforeCrossing.reversed())
+            ),
+            crossing.recordedAt
+        )
+    }
+
+    func testAchievementSemanticFingerprintIncludesV2TransitionContract() {
+        let material = AchievementCatalog.persistedFingerprintMaterial()
+
+        XCTAssertEqual(
+            AchievementCatalog.persistedSemanticIdentifier,
+            "pocket-vector-launch-achievement-catalog-semantics-v2"
+        )
+        XCTAssertTrue(
+            material.contains(
+                AchievementCatalogTransitionV1ToV2.persistedSemanticIdentifier
+            )
+        )
+        XCTAssertTrue(material.contains("achievement.century_of_connections.v1"))
+        XCTAssertTrue(material.contains("achievement.millenia_of_connections.v1"))
+        XCTAssertTrue(
+            material.contains(
+                AchievementCatalogTransitionV1ToV2.pendingQueuePolicyIdentifier
+            )
+        )
+        XCTAssertTrue(
+            material.contains(
+                AchievementCatalogTransitionV1ToV2.submissionPolicyIdentifier
+            )
+        )
+        XCTAssertTrue(
+            material.contains(
+                AchievementCatalogTransitionV1ToV2
+                    .settlementReceiptPolicyIdentifier
+            )
+        )
+        XCTAssertTrue(
+            material.contains(
+                AchievementCatalogTransitionV1ToV2
+                    .settlementReceiptPreservationPolicyIdentifier
+            )
+        )
     }
 
     func testAchievementProgressNeverRegressesOrRecompletes() {
@@ -352,6 +756,20 @@ final class EconomyAchievementTests: XCTestCase {
         XCTAssertEqual(career.rewardEligibleRuns, 1)
         XCTAssertEqual(career.highestScore, 3_000)
         XCTAssertEqual(career.totalScore, 3_000)
+    }
+
+    private func evaluatedProgress(
+        run: CompletedRun,
+        career: CareerStatistics = CareerStatistics()
+    ) -> [AchievementID: AchievementProgress] {
+        Dictionary(
+            uniqueKeysWithValues: AchievementEvaluator.evaluate(
+                run: run,
+                careerAfter: career,
+                existing: [:],
+                evaluatedAt: Date(timeIntervalSince1970: 9_000)
+            ).map { ($0.current.id, $0.current) }
+        )
     }
 
     private func makeRun(
