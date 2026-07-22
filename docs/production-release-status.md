@@ -266,6 +266,17 @@ simulator suite and unsigned generic-iOS Release archive passed. Independent
 review found no remaining P0-P3 issue after the explicit Home-indicator decision
 and simultaneous-recognition safeguard.
 
+Build 157 integrates Technical handoff `c158148` (`Remove post-pass cooldown
+and accelerate caught receivers`) from exact accepted baseline `7773486`.
+Resolved passes no longer impose an artificial delay before the next throw;
+the live ball still blocks duplicate throws. A receiver carrying a completed
+pass runs at 1.5 times ordinary on-field speed and retains the existing 2 times
+speed after crossing the sideline. The exact 883-test simulator suite and an
+unsigned generic arm64 iOS Release archive passed. The first complete-suite
+attempt encountered one simulator media-playback teardown crash in the
+unrelated tutorial/results capture test; that test passed alone and in the
+fresh complete acceptance run.
+
 The Technical cinematic-presentation handoff `e1f4d94` (`Add countdown
 cinematic letterbox`) is integrated with full ancestry from shared baseline
 `d57714e`. Equal responsive black bars ease from zero to their completed height
@@ -578,6 +589,9 @@ or runtime ownership boundaries.
 | 2026-07-21 | `6e20347` | App-wide root gesture lock and build 156 | The PM-owned plain window root always defers `.bottom`, owns status-bar presentation, keeps Home-indicator auto-hide disabled, and uses a noncancelling, nondelaying one-touch pan recognizer with simultaneous recognition. Build metadata is pinned to 156 for Debug and Release. The root-containment regression covers Main Menu, countdown, Playing, final-ball resolution, Pause, frozen Results, settlement, and inactive-scene state. All changed paths are PM-owned app, release configuration, or cross-domain regression coverage |
 | 2026-07-21 | `6e20347` | Final build 156 focused and simulator gates | The final root-controller focus passed 1 of 1 at `/tmp/PocketVector-global-deferral-focused-156-final.xcresult`; the exact full iPhone 17 Pro simulator suite passed 880 total: 879 passed, 0 failed, 1 existing conditional case-alias filesystem skip at `/tmp/PocketVector-global-deferral-suite-156-final.xcresult`; diff hygiene passed |
 | 2026-07-21 | `6e20347` | Final build 156 physical and archive acceptance | On `Snow J` (iPhone 17 Pro Max, iOS 26.5.2), Main Menu required a second deliberate swipe to exit, countdown stayed after its first swipe, and active gameplay stayed while also throwing the pass. The owner accepted build 156 and normal Home-indicator/UI interaction behavior. The exact signed Debug build was installed; unsigned generic arm64 iOS Release archive passed at `/tmp/PocketVector-global-deferral-156-final.xcarchive` with `CFBundleVersion` 156. Independent final review found no remaining P0-P3 issue; final codesigned distribution-entitlement proof remains pending |
+| 2026-07-21 | `c158148` | Post-pass gameplay Technical integration | Technical commit `c158148a49fa3b1ea04bb8f7ed4488eefd216b20` fast-forwarded from exact shared baseline `7773486`; all changed paths are Technical-owned gameplay/documentation or matching shared tests. Independent review found no P0-P3 issue; GameCore focus passed 59 tests with 0 failures and 0 skips at `/tmp/PocketVector-c158148-review.xcresult`; diff hygiene passed |
+| 2026-07-21 | `efd28d3` | Exact build 157 complete simulator suite | The fresh iPhone 17 Pro acceptance run passed 883 total: 882 passed, 0 failed, and 1 existing conditional case-alias filesystem skip at `/tmp/PocketVector-c158148-build157-full-rerun.xcresult`. The first run's unrelated tutorial media teardown crash was isolated; `testCaptureTutorialAndResultsLayoutMatrix` then passed alone at `/tmp/PocketVector-c158148-build157-layout-rerun.xcresult` and passed again in the complete acceptance run |
+| 2026-07-21 | `efd28d3` | Build 157 unsigned Release archive | Generic arm64 iOS Release archive passed with signing disabled at `/tmp/PocketVector-c158148-build157.xcarchive`; `CFBundleShortVersionString` is 1.0 and `CFBundleVersion` is 157. Final codesigned distribution-entitlement proof remains pending |
 
 Every implementation wave must add its own focused tests, pass the full native
 suite, and archive when it changes resources, capabilities, app composition, or
@@ -714,7 +728,7 @@ workflow reaches that gate.
 | Apple gameplay-crash review          |   Pass | Not started                                     |
 | Results-to-replay rate               |   30%+ | Event contract planned                          |
 | Exactly-once economic mutations      |   100% | Local/cloud history, initial publication, hydration, online-only catalog debit/ownership, and StoreKit durable delivery pass internal tests; external sandbox/device gates remain |
-| Clean-checkout archive               |   Pass | Unsigned generic-iOS build 156 archive for final app-wide root correction `6e20347` passed; final codesigned entitlement/export proof remains |
+| Clean-checkout archive               |   Pass | Unsigned generic-iOS build 157 archive containing Technical handoff `c158148` passed; final codesigned entitlement/export proof remains |
 | Browser runtime in active repository |   None | Browser runtime, dependencies, tests, and build configuration removed at `24cd2c7` |
 
 The release is ready only when the entire scoreboard is satisfied, the owner
