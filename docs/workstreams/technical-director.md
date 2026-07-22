@@ -3,7 +3,7 @@
 ## Workspace
 
 - Worktree: `/Users/andypark/Documents/QB Zone iOS - Technical`
-- Branch: `codex/technical-direction`
+- Branch: `codex/technical-visual-only-bars`
 - Integration owner: Project/Release PM
 
 ## Mission
@@ -27,7 +27,7 @@ unless evidence proves a correction is needed.
 ```text
 Act as Technical Director for Pocket Vector. Work only in:
 /Users/andypark/Documents/QB Zone iOS - Technical
-on branch codex/technical-direction.
+on branch codex/technical-visual-only-bars.
 
 Before acting, read AGENTS.md, docs/workstreams/README.md,
 docs/workstreams/technical-director.md, docs/gameplay.md, docs/scoring.md, and
