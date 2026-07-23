@@ -397,6 +397,29 @@ final class GameScene: SKScene {
     /// The session completion gate keeps repeated confirmed requests exact-once.
     func commitConfirmedExitRun() {
         guard let completedRun = session.abandon(endedAt: now()) else { return }
+        commitConfirmedAbandonment(completedRun: completedRun)
+    }
+
+    /// Seals only an active paused run for app-owned Restart Round
+    /// orchestration. The app remains responsible for confirmation, durable
+    /// settlement, retaining the returned process-only authority, and creation
+    /// of a separate successor scene.
+    @discardableResult
+    func commitConfirmedRestartRound() -> ConfirmedRestartAbandonment? {
+        guard let restartAbandonment = session.abandonForConfirmedRestart(
+            endedAt: now()
+        ) else {
+            return nil
+        }
+        commitConfirmedAbandonment(
+            completedRun: restartAbandonment.completedRun
+        )
+        return restartAbandonment
+    }
+
+    private func commitConfirmedAbandonment(
+        completedRun: CompletedRun
+    ) {
         cancelVisualPreparation()
         previousUpdateTime = nil
         accumulatedMilliseconds = 0

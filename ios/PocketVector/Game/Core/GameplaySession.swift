@@ -138,6 +138,128 @@ struct GameplayRunRecorder: Equatable {
     }
 }
 
+enum RestartRoundConfigurationError: Error, Equatable {
+    case reusedRunID(RunID)
+    case reusedRandomSeed(UInt32)
+    case invalidChronology
+    case invalidOffenseSelection(InventoryRuleError)
+    case unknownDefenseTeam(TeamID)
+    case sameTeamMatchup(TeamID)
+    case unknownDefenseJersey(JerseyID)
+    case defenseJerseyDoesNotBelongToTeam(
+        jerseyID: JerseyID,
+        teamID: TeamID
+    )
+}
+
+/// Process-only proof that a paused session was sealed specifically for
+/// Restart Round. It is intentionally non-Codable and cannot be reconstructed
+/// from an ordinary abandoned run or durable completed-run history.
+struct ConfirmedRestartAbandonment: Equatable, Sendable {
+    let completedRun: CompletedRun
+
+    fileprivate init(completedRun: CompletedRun) {
+        self.completedRun = completedRun
+    }
+}
+
+/// Builds a new configured run after an abandoned predecessor settles.
+///
+/// The successor receives fresh simulation identity while preserving the
+/// player's exact loadout and matchup. This factory never mutates or reuses the
+/// predecessor session, and it carries no durable restart lineage.
+struct RestartRoundConfigurationFactory: Sendable {
+    let catalog: LaunchCatalog
+
+    init(catalog: LaunchCatalog = .approved) {
+        self.catalog = catalog
+    }
+
+    func makeSuccessor(
+        after restartAbandonment: ConfirmedRestartAbandonment,
+        inventory: PlayerInventory,
+        runID: RunID = RunID(),
+        randomSeed: UInt32,
+        startedAt: Date
+    ) throws -> RunConfiguration {
+        let abandonedRun = restartAbandonment.completedRun
+        let predecessor = abandonedRun.configuration
+        guard runID != predecessor.runID else {
+            throw RestartRoundConfigurationError.reusedRunID(runID)
+        }
+        guard normalizedSeed(randomSeed)
+            != normalizedSeed(predecessor.randomSeed) else {
+            throw RestartRoundConfigurationError.reusedRandomSeed(randomSeed)
+        }
+        guard predecessor.startedAt.timeIntervalSinceReferenceDate.isFinite,
+              abandonedRun.endedAt.timeIntervalSinceReferenceDate.isFinite,
+              startedAt.timeIntervalSinceReferenceDate.isFinite,
+              abandonedRun.endedAt >= predecessor.startedAt,
+              startedAt >= abandonedRun.endedAt,
+              startedAt != predecessor.startedAt else {
+            throw RestartRoundConfigurationError.invalidChronology
+        }
+
+        let preservedSelection = PlayerSelection(
+            selectedTeamID: predecessor.offenseTeamID,
+            selectedJerseyByTeam: [
+                predecessor.offenseTeamID: predecessor.offenseJerseyID,
+            ],
+            selectedFootballID: predecessor.footballID
+        )
+        do {
+            try InventoryRules.validate(
+                selection: preservedSelection,
+                inventory: inventory,
+                catalog: catalog
+            )
+        } catch let error as InventoryRuleError {
+            throw RestartRoundConfigurationError.invalidOffenseSelection(error)
+        }
+
+        guard catalog.team(id: predecessor.defenseTeamID) != nil else {
+            throw RestartRoundConfigurationError.unknownDefenseTeam(
+                predecessor.defenseTeamID
+            )
+        }
+        guard predecessor.defenseTeamID != predecessor.offenseTeamID else {
+            throw RestartRoundConfigurationError.sameTeamMatchup(
+                predecessor.offenseTeamID
+            )
+        }
+        guard let defenseJersey = catalog.jersey(
+            id: predecessor.defenseJerseyID
+        ) else {
+            throw RestartRoundConfigurationError.unknownDefenseJersey(
+                predecessor.defenseJerseyID
+            )
+        }
+        guard defenseJersey.teamID == predecessor.defenseTeamID else {
+            throw RestartRoundConfigurationError
+                .defenseJerseyDoesNotBelongToTeam(
+                    jerseyID: defenseJersey.id,
+                    teamID: predecessor.defenseTeamID
+                )
+        }
+
+        return RunConfiguration(
+            runID: runID,
+            randomSeed: randomSeed,
+            offenseTeamID: predecessor.offenseTeamID,
+            offenseJerseyID: predecessor.offenseJerseyID,
+            defenseTeamID: predecessor.defenseTeamID,
+            defenseJerseyID: predecessor.defenseJerseyID,
+            footballID: predecessor.footballID,
+            economyVersion: predecessor.economyVersion,
+            startedAt: startedAt
+        )
+    }
+
+    private func normalizedSeed(_ seed: UInt32) -> UInt32 {
+        seed == 0 ? GameplayConfig.defaultSeed : seed
+    }
+}
+
 /// Production boundary around the deterministic simulation.
 ///
 /// This value owns only one configured run. It cannot restart itself, and its
@@ -234,5 +356,16 @@ struct GameplaySession {
         )
         completedRun = run
         return run
+    }
+
+    /// Seals an active, explicitly paused session for app-owned Restart Round
+    /// orchestration. Cancellation never calls this seam. The successor is a
+    /// separate session created only after durable settlement succeeds.
+    mutating func abandonForConfirmedRestart(
+        endedAt: Date
+    ) -> ConfirmedRestartAbandonment? {
+        guard isApplicationActive, state.phase == .paused else { return nil }
+        guard let completedRun = abandon(endedAt: endedAt) else { return nil }
+        return ConfirmedRestartAbandonment(completedRun: completedRun)
     }
 }

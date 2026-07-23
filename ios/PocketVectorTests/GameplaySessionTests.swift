@@ -27,6 +27,547 @@ final class GameplaySessionTests: XCTestCase {
         XCTAssertTrue(session.settings.reducedMotion)
     }
 
+    func testRestartFactoryPreservesValidatedMatchupLoadoutAndEconomy() throws {
+        let catalog = LaunchCatalog.approved
+        let offense = catalog.teams[0]
+        let defense = catalog.teams[1]
+        let predecessor = RunConfiguration(
+            runID: fixedRunID(551),
+            randomSeed: 41,
+            offenseTeamID: offense.id,
+            offenseJerseyID: offense.alternateJersey.id,
+            defenseTeamID: defense.id,
+            defenseJerseyID: defense.alternateJersey.id,
+            footballID: LaunchFootballID.alternate,
+            economyVersion: 37,
+            startedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        let restartAbandonment = try makeRestartAbandonment(
+            configuration: predecessor,
+            endedAt: predecessor.startedAt.addingTimeInterval(8)
+        )
+        let inventory = PlayerInventory(
+            ownedTeamIDs: [offense.id],
+            ownedJerseyIDs: [offense.alternateJersey.id],
+            ownedFootballIDs: [LaunchFootballID.alternate]
+        )
+        let successorStart = restartAbandonment.completedRun.endedAt
+            .addingTimeInterval(1)
+
+        let successor = try RestartRoundConfigurationFactory(
+            catalog: catalog
+        ).makeSuccessor(
+            after: restartAbandonment,
+            inventory: inventory,
+            runID: fixedRunID(552),
+            randomSeed: 42,
+            startedAt: successorStart
+        )
+
+        XCTAssertEqual(predecessor.runID, fixedRunID(551))
+        XCTAssertEqual(predecessor.randomSeed, 41)
+        XCTAssertEqual(predecessor.startedAt, Date(timeIntervalSince1970: 1_000))
+        XCTAssertEqual(successor.runID, fixedRunID(552))
+        XCTAssertEqual(successor.randomSeed, 42)
+        XCTAssertEqual(successor.startedAt, successorStart)
+        XCTAssertEqual(successor.offenseTeamID, predecessor.offenseTeamID)
+        XCTAssertEqual(successor.offenseJerseyID, predecessor.offenseJerseyID)
+        XCTAssertEqual(successor.defenseTeamID, predecessor.defenseTeamID)
+        XCTAssertEqual(successor.defenseJerseyID, predecessor.defenseJerseyID)
+        XCTAssertEqual(successor.footballID, predecessor.footballID)
+        XCTAssertEqual(successor.economyVersion, 37)
+    }
+
+    func testRestartFactoryFailsClosedForInvalidAuthority() throws {
+        let catalog = LaunchCatalog.approved
+        let predecessor = makeConfiguration(seed: 61)
+        let restartAbandonment = try makeRestartAbandonment(
+            configuration: predecessor,
+            endedAt: predecessor.startedAt.addingTimeInterval(8)
+        )
+        let validInventory = PlayerInventory(
+            ownedTeamIDs: [predecessor.offenseTeamID],
+            ownedJerseyIDs: [predecessor.offenseJerseyID],
+            ownedFootballIDs: [predecessor.footballID]
+        )
+        let factory = RestartRoundConfigurationFactory(catalog: catalog)
+        let successorID = fixedRunID(553)
+        let successorStart = restartAbandonment.completedRun.endedAt
+            .addingTimeInterval(1)
+
+        XCTAssertThrowsError(
+            try factory.makeSuccessor(
+                after: restartAbandonment,
+                inventory: validInventory,
+                runID: predecessor.runID,
+                randomSeed: 62,
+                startedAt: successorStart
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RestartRoundConfigurationError,
+                .reusedRunID(predecessor.runID)
+            )
+        }
+        XCTAssertThrowsError(
+            try factory.makeSuccessor(
+                after: restartAbandonment,
+                inventory: validInventory,
+                runID: successorID,
+                randomSeed: predecessor.randomSeed,
+                startedAt: successorStart
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RestartRoundConfigurationError,
+                .reusedRandomSeed(predecessor.randomSeed)
+            )
+        }
+
+        let zeroSeedPredecessor = replacingConfiguration(
+            predecessor,
+            randomSeed: 0
+        )
+        let zeroSeedAbandonment = try makeRestartAbandonment(
+            configuration: zeroSeedPredecessor,
+            endedAt: restartAbandonment.completedRun.endedAt
+        )
+        XCTAssertThrowsError(
+            try factory.makeSuccessor(
+                after: zeroSeedAbandonment,
+                inventory: validInventory,
+                runID: successorID,
+                randomSeed: GameplayConfig.defaultSeed,
+                startedAt: successorStart
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RestartRoundConfigurationError,
+                .reusedRandomSeed(GameplayConfig.defaultSeed)
+            )
+        }
+        XCTAssertThrowsError(
+            try factory.makeSuccessor(
+                after: restartAbandonment,
+                inventory: validInventory,
+                runID: successorID,
+                randomSeed: 62,
+                startedAt: restartAbandonment.completedRun.endedAt
+                    .addingTimeInterval(-1)
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RestartRoundConfigurationError,
+                .invalidChronology
+            )
+        }
+
+        let nonfinitePredecessor = replacingConfiguration(
+            predecessor,
+            startedAt: Date(timeIntervalSince1970: .infinity)
+        )
+        let nonfiniteAbandonment = try makeRestartAbandonment(
+            configuration: nonfinitePredecessor,
+            endedAt: Date(timeIntervalSince1970: .infinity)
+        )
+        XCTAssertThrowsError(
+            try factory.makeSuccessor(
+                after: nonfiniteAbandonment,
+                inventory: validInventory,
+                runID: successorID,
+                randomSeed: 62,
+                startedAt: successorStart
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RestartRoundConfigurationError,
+                .invalidChronology
+            )
+        }
+
+        XCTAssertThrowsError(
+            try factory.makeSuccessor(
+                after: restartAbandonment,
+                inventory: validInventory,
+                runID: successorID,
+                randomSeed: 62,
+                startedAt: Date(timeIntervalSince1970: .infinity)
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RestartRoundConfigurationError,
+                .invalidChronology
+            )
+        }
+        XCTAssertThrowsError(
+            try factory.makeSuccessor(
+                after: restartAbandonment,
+                inventory: PlayerInventory(
+                    ownedJerseyIDs: [predecessor.offenseJerseyID],
+                    ownedFootballIDs: [predecessor.footballID]
+                ),
+                runID: successorID,
+                randomSeed: 62,
+                startedAt: successorStart
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RestartRoundConfigurationError,
+                .invalidOffenseSelection(
+                    .teamNotOwned(predecessor.offenseTeamID)
+                )
+            )
+        }
+
+        let unknownDefense = TeamID("unknown.restart.defense")
+        let unknownDefenseAbandonment = try makeRestartAbandonment(
+            configuration: replacingConfiguration(
+                predecessor,
+                defenseTeamID: unknownDefense
+            ),
+            endedAt: restartAbandonment.completedRun.endedAt
+        )
+        XCTAssertThrowsError(
+            try factory.makeSuccessor(
+                after: unknownDefenseAbandonment,
+                inventory: validInventory,
+                runID: successorID,
+                randomSeed: 62,
+                startedAt: successorStart
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RestartRoundConfigurationError,
+                .unknownDefenseTeam(unknownDefense)
+            )
+        }
+
+        let sameTeamAbandonment = try makeRestartAbandonment(
+            configuration: replacingConfiguration(
+                predecessor,
+                defenseTeamID: predecessor.offenseTeamID,
+                defenseJerseyID: predecessor.offenseJerseyID
+            ),
+            endedAt: restartAbandonment.completedRun.endedAt
+        )
+        XCTAssertThrowsError(
+            try factory.makeSuccessor(
+                after: sameTeamAbandonment,
+                inventory: validInventory,
+                runID: successorID,
+                randomSeed: 62,
+                startedAt: successorStart
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RestartRoundConfigurationError,
+                .sameTeamMatchup(predecessor.offenseTeamID)
+            )
+        }
+
+        let unknownDefenseJersey = JerseyID("unknown.restart.defense.jersey")
+        let unknownDefenseJerseyAbandonment = try makeRestartAbandonment(
+            configuration: replacingConfiguration(
+                predecessor,
+                defenseJerseyID: unknownDefenseJersey
+            ),
+            endedAt: restartAbandonment.completedRun.endedAt
+        )
+        XCTAssertThrowsError(
+            try factory.makeSuccessor(
+                after: unknownDefenseJerseyAbandonment,
+                inventory: validInventory,
+                runID: successorID,
+                randomSeed: 62,
+                startedAt: successorStart
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RestartRoundConfigurationError,
+                .unknownDefenseJersey(unknownDefenseJersey)
+            )
+        }
+
+        let thirdTeam = catalog.teams[2]
+        let mismatchedDefenseAbandonment = try makeRestartAbandonment(
+            configuration: replacingConfiguration(
+                predecessor,
+                defenseJerseyID: thirdTeam.primaryJersey.id
+            ),
+            endedAt: restartAbandonment.completedRun.endedAt
+        )
+        XCTAssertThrowsError(
+            try factory.makeSuccessor(
+                after: mismatchedDefenseAbandonment,
+                inventory: validInventory,
+                runID: successorID,
+                randomSeed: 62,
+                startedAt: successorStart
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? RestartRoundConfigurationError,
+                .defenseJerseyDoesNotBelongToTeam(
+                    jerseyID: thirdTeam.primaryJersey.id,
+                    teamID: predecessor.defenseTeamID
+                )
+            )
+        }
+    }
+
+    func testRestartSuccessorBeginsResetAndRemainsDeterministic() throws {
+        let predecessorConfiguration = makeConfiguration(seed: 71)
+        var predecessor = GameplaySession(
+            configuration: predecessorConfiguration,
+            settings: PlayerSettings()
+        )
+        _ = predecessor.advance(
+            deltaMilliseconds: GameplayConfig.countdownDurationMilliseconds,
+            endedAt: predecessorConfiguration.startedAt.addingTimeInterval(3)
+        )
+        let touchdownReceiver = try XCTUnwrap(
+            predecessor.state.receivers.first {
+                $0.laneID == .touchdown
+            }
+        )
+        let touchdownLane = GameplayConfig.lane(.touchdown)
+        var targetX = touchdownReceiver.x
+        for _ in 0 ..< 8 {
+            let target = WorldPoint(
+                x: targetX,
+                depth: touchdownLane.depth,
+                height: 0.5
+            )
+            let trajectory = Trajectory.parameters(
+                start: GameplayConfig.quarterbackStart,
+                target: target,
+                releaseSpeedPixelsPerMillisecond:
+                    GameplayConfig.Throw.fastSpeedPixelsPerMillisecond
+            )
+            targetX = ReceiverMotion.position(
+                from: touchdownReceiver.x,
+                direction: touchdownReceiver.direction,
+                baseSpeedPerMillisecond: touchdownReceiver.speedPerMillisecond,
+                deltaMilliseconds: trajectory.durationMilliseconds
+                    * GameplayConfig.Throw.catchProgress
+            )
+        }
+        XCTAssertTrue(
+            predecessor.throwBall(
+                target: WorldPoint(
+                    x: targetX,
+                    depth: touchdownLane.depth,
+                    height: 0.5
+                ),
+                releaseSpeedPixelsPerMillisecond:
+                    GameplayConfig.Throw.fastSpeedPixelsPerMillisecond,
+                aimMarker: .zero
+            )
+        )
+        var resolvedOutcome: PassOutcome?
+        for step in 1 ... 120 {
+            let result = predecessor.advance(
+                deltaMilliseconds: GameplayConfig.fixedStepMilliseconds,
+                endedAt: predecessorConfiguration.startedAt
+                    .addingTimeInterval(3 + Double(step) / 60)
+            )
+            if let outcome = result.update.passResolved {
+                resolvedOutcome = outcome
+                break
+            }
+        }
+        XCTAssertEqual(resolvedOutcome, .touchdown)
+        XCTAssertGreaterThan(predecessor.state.score, 0)
+        XCTAssertGreaterThan(predecessor.state.statistics.attempts, 0)
+        XCTAssertGreaterThan(predecessor.state.statistics.touchdowns, 0)
+        XCTAssertNotNil(predecessor.state.feedback)
+        XCTAssertTrue(predecessor.pause())
+        let restartAbandonment = try XCTUnwrap(
+            predecessor.abandonForConfirmedRestart(
+                endedAt: predecessorConfiguration.startedAt.addingTimeInterval(6)
+            )
+        )
+        let successorConfiguration = try RestartRoundConfigurationFactory()
+            .makeSuccessor(
+                after: restartAbandonment,
+                inventory: InventoryRules.initialInventory(),
+                runID: fixedRunID(554),
+                randomSeed: 72,
+                startedAt: restartAbandonment.completedRun.endedAt
+            )
+
+        var first = GameplaySession(
+            configuration: successorConfiguration,
+            settings: PlayerSettings()
+        )
+        var repeated = GameplaySession(
+            configuration: successorConfiguration,
+            settings: PlayerSettings()
+        )
+
+        XCTAssertEqual(first.state, repeated.state)
+        XCTAssertEqual(first.state.phase, .countdown)
+        XCTAssertNil(first.state.phaseBeforePause)
+        XCTAssertEqual(
+            first.state.countdownRemainingMilliseconds,
+            GameplayConfig.countdownDurationMilliseconds
+        )
+        XCTAssertEqual(
+            first.state.remainingMilliseconds,
+            GameplayConfig.sessionDurationMilliseconds
+        )
+        XCTAssertEqual(first.state.elapsedGameplayMilliseconds, 0)
+        XCTAssertEqual(first.state.finalBallGraceRemainingMilliseconds,
+                       GameplayConfig.finalBallGraceMilliseconds)
+        XCTAssertEqual(first.state.score, 0)
+        XCTAssertEqual(first.state.touchdownMeter, 0)
+        XCTAssertEqual(first.state.touchdownStreak, 0)
+        XCTAssertNil(first.state.ball)
+        XCTAssertNil(first.state.feedback)
+        XCTAssertNil(first.state.lastPlayScore)
+        XCTAssertEqual(first.state.statistics, RunStatistics())
+        XCTAssertEqual(first.state.randomState, 72)
+        XCTAssertNil(first.completedRun)
+        XCTAssertFalse(first.canThrow)
+        XCTAssertEqual(
+            predecessor.completedRun,
+            restartAbandonment.completedRun
+        )
+
+        let beforeCountdown = first.state
+        let firstCountdownStep = first.advance(
+            deltaMilliseconds: 2_999,
+            endedAt: successorConfiguration.startedAt.addingTimeInterval(2.999)
+        )
+        let repeatedCountdownStep = repeated.advance(
+            deltaMilliseconds: 2_999,
+            endedAt: successorConfiguration.startedAt.addingTimeInterval(2.999)
+        )
+        XCTAssertEqual(firstCountdownStep, repeatedCountdownStep)
+        XCTAssertEqual(first.state, repeated.state)
+        XCTAssertEqual(first.state.remainingMilliseconds,
+                       beforeCountdown.remainingMilliseconds)
+        XCTAssertEqual(first.state.elapsedGameplayMilliseconds, 0)
+        XCTAssertEqual(first.state.score, 0)
+        XCTAssertEqual(first.state.statistics, RunStatistics())
+
+        let firstPlayingStep = first.advance(
+            deltaMilliseconds: 1_001,
+            endedAt: successorConfiguration.startedAt.addingTimeInterval(4)
+        )
+        let repeatedPlayingStep = repeated.advance(
+            deltaMilliseconds: 1_001,
+            endedAt: successorConfiguration.startedAt.addingTimeInterval(4)
+        )
+        XCTAssertEqual(firstPlayingStep, repeatedPlayingStep)
+        XCTAssertEqual(first.state, repeated.state)
+        XCTAssertEqual(first.state.phase, .playing)
+        XCTAssertEqual(first.state.elapsedGameplayMilliseconds, 0)
+
+        let firstActiveStep = first.advance(
+            deltaMilliseconds: 1_000,
+            endedAt: successorConfiguration.startedAt.addingTimeInterval(5)
+        )
+        let repeatedActiveStep = repeated.advance(
+            deltaMilliseconds: 1_000,
+            endedAt: successorConfiguration.startedAt.addingTimeInterval(5)
+        )
+        XCTAssertEqual(firstActiveStep, repeatedActiveStep)
+        XCTAssertEqual(first.state, repeated.state)
+        XCTAssertEqual(first.state.elapsedGameplayMilliseconds, 1_000)
+        XCTAssertNotEqual(
+            first.state.randomState,
+            predecessorConfiguration.randomSeed
+        )
+    }
+
+    func testConfirmedRestartRequiresActivePausedSessionAndIsExactOnce() throws {
+        let configuration = makeConfiguration(seed: 81)
+        var session = GameplaySession(
+            configuration: configuration,
+            settings: PlayerSettings()
+        )
+        let endedAt = configuration.startedAt.addingTimeInterval(6)
+
+        XCTAssertNil(session.abandonForConfirmedRestart(endedAt: endedAt))
+        _ = session.advance(
+            deltaMilliseconds: GameplayConfig.countdownDurationMilliseconds,
+            endedAt: configuration.startedAt.addingTimeInterval(3)
+        )
+        XCTAssertEqual(session.state.phase, .playing)
+        XCTAssertNil(session.abandonForConfirmedRestart(endedAt: endedAt))
+
+        XCTAssertTrue(session.pause())
+        let pausedState = session.state
+        session.setApplicationActive(false)
+        XCTAssertNil(session.abandonForConfirmedRestart(endedAt: endedAt))
+        XCTAssertEqual(session.state, pausedState)
+
+        session.setApplicationActive(true)
+        let restartAbandonment = try XCTUnwrap(
+            session.abandonForConfirmedRestart(endedAt: endedAt)
+        )
+        XCTAssertEqual(restartAbandonment.completedRun.finishReason, .abandoned)
+        XCTAssertEqual(
+            restartAbandonment.completedRun.configuration,
+            configuration
+        )
+        XCTAssertNil(session.abandonForConfirmedRestart(
+            endedAt: endedAt.addingTimeInterval(1)
+        ))
+        XCTAssertFalse(session.resume())
+        XCTAssertEqual(session.completedRun, restartAbandonment.completedRun)
+    }
+
+    func testVersion11AllowsMoreThanThreeConfirmedRestartSuccessors() throws {
+        let initialConfiguration = makeConfiguration(seed: 91)
+        let inventory = InventoryRules.initialInventory()
+        let factory = RestartRoundConfigurationFactory()
+        var current = try makeRestartAbandonment(
+            configuration: initialConfiguration,
+            endedAt: initialConfiguration.startedAt.addingTimeInterval(6)
+        )
+        var successorConfigurations: [RunConfiguration] = []
+
+        for restartIndex in 1 ... 4 {
+            let successor = try factory.makeSuccessor(
+                after: current,
+                inventory: inventory,
+                runID: fixedRunID(560 + restartIndex),
+                randomSeed: UInt32(91 + restartIndex),
+                startedAt: current.completedRun.endedAt
+            )
+            successorConfigurations.append(successor)
+
+            var session = GameplaySession(
+                configuration: successor,
+                settings: PlayerSettings()
+            )
+            _ = session.advance(
+                deltaMilliseconds: GameplayConfig.countdownDurationMilliseconds,
+                endedAt: successor.startedAt.addingTimeInterval(3)
+            )
+            XCTAssertTrue(session.pause())
+            current = try XCTUnwrap(
+                session.abandonForConfirmedRestart(
+                    endedAt: successor.startedAt.addingTimeInterval(4)
+                )
+            )
+        }
+
+        XCTAssertEqual(successorConfigurations.count, 4)
+        XCTAssertEqual(Set(successorConfigurations.map(\.runID)).count, 4)
+        XCTAssertEqual(
+            successorConfigurations.map(\.defenseTeamID),
+            Array(repeating: initialConfiguration.defenseTeamID, count: 4)
+        )
+        XCTAssertEqual(
+            successorConfigurations.map(\.defenseJerseyID),
+            Array(repeating: initialConfiguration.defenseJerseyID, count: 4)
+        )
+        XCTAssertEqual(current.completedRun.finishReason, .abandoned)
+    }
+
     func testLiveSnapshotExposesTouchdownInclusiveCompletionContract() {
         var state = GameState()
         state.phase = .paused
@@ -594,6 +1135,51 @@ final class GameplaySessionTests: XCTestCase {
     }
 
     @MainActor
+    func testMountedSceneConfirmedRestartUsesSharedCompletionGate() async throws {
+        let configuration = makeConfiguration(seed: 809)
+        var callbacks: [CompletedRun] = []
+        let scene = GameScene(
+            size: GameProjection.sceneSize,
+            configuration: configuration,
+            settings: PlayerSettings(isMuted: true, reducedMotion: true),
+            now: { configuration.startedAt.addingTimeInterval(6) },
+            onCompletedRun: { callbacks.append($0) }
+        )
+        let view = SKView(frame: CGRect(origin: .zero, size: GameProjection.sceneSize))
+        scene.didMove(to: view)
+
+        XCTAssertNil(scene.commitConfirmedRestartRound())
+        let readinessDeadline = ProcessInfo.processInfo.systemUptime + 8
+        while scene.visualReadiness == .preparing,
+              ProcessInfo.processInfo.systemUptime < readinessDeadline {
+            await Task.yield()
+        }
+        XCTAssertEqual(scene.visualReadiness, .ready)
+
+        scene.update(0)
+        for step in 1 ... 31 {
+            scene.update(TimeInterval(step) / 10)
+        }
+        XCTAssertNil(scene.commitConfirmedRestartRound())
+        XCTAssertTrue(scene.pause())
+        scene.setApplicationActive(false)
+        XCTAssertNil(scene.commitConfirmedRestartRound())
+        scene.setApplicationActive(true)
+
+        let restartAbandonment = try XCTUnwrap(
+            scene.commitConfirmedRestartRound()
+        )
+        XCTAssertNil(scene.commitConfirmedRestartRound())
+        scene.commitConfirmedExitRun()
+        XCTAssertEqual(callbacks.count, 1)
+        XCTAssertEqual(callbacks.first?.finishReason, .abandoned)
+        XCTAssertEqual(callbacks.first?.configuration, configuration)
+        XCTAssertEqual(restartAbandonment.completedRun, callbacks.first)
+
+        scene.willMove(from: view)
+    }
+
+    @MainActor
     func testMountedScenePublishesExplicitPauseResumeAndIgnoresPausedInput() async throws {
         let configuration = makeConfiguration(seed: 809)
         var snapshots: [GameplaySceneSnapshot] = []
@@ -880,9 +1466,7 @@ final class GameplaySessionTests: XCTestCase {
         let offense = catalog.teams[0]
         let defense = catalog.teams[1]
         return RunConfiguration(
-            runID: RunID(
-                UUID(uuidString: "00000000-0000-0000-0000-000000000551")!
-            ),
+            runID: fixedRunID(551),
             randomSeed: seed,
             offenseTeamID: offense.id,
             offenseJerseyID: offense.primaryJersey.id,
@@ -891,6 +1475,55 @@ final class GameplaySessionTests: XCTestCase {
             footballID: LaunchFootballID.standard,
             economyVersion: EconomyConfiguration.currentVersion,
             startedAt: Date(timeIntervalSince1970: 1_000)
+        )
+    }
+
+    private func makeRestartAbandonment(
+        configuration: RunConfiguration,
+        endedAt: Date
+    ) throws -> ConfirmedRestartAbandonment {
+        var session = GameplaySession(
+            configuration: configuration,
+            settings: PlayerSettings()
+        )
+        _ = session.advance(
+            deltaMilliseconds: GameplayConfig.countdownDurationMilliseconds,
+            endedAt: configuration.startedAt.addingTimeInterval(3)
+        )
+        XCTAssertTrue(session.pause())
+        return try XCTUnwrap(
+            session.abandonForConfirmedRestart(endedAt: endedAt)
+        )
+    }
+
+    private func replacingConfiguration(
+        _ configuration: RunConfiguration,
+        randomSeed: UInt32? = nil,
+        defenseTeamID: TeamID? = nil,
+        defenseJerseyID: JerseyID? = nil,
+        startedAt: Date? = nil
+    ) -> RunConfiguration {
+        RunConfiguration(
+            runID: configuration.runID,
+            randomSeed: randomSeed ?? configuration.randomSeed,
+            offenseTeamID: configuration.offenseTeamID,
+            offenseJerseyID: configuration.offenseJerseyID,
+            defenseTeamID: defenseTeamID ?? configuration.defenseTeamID,
+            defenseJerseyID: defenseJerseyID ?? configuration.defenseJerseyID,
+            footballID: configuration.footballID,
+            economyVersion: configuration.economyVersion,
+            startedAt: startedAt ?? configuration.startedAt
+        )
+    }
+
+    private func fixedRunID(_ suffix: Int) -> RunID {
+        RunID(
+            UUID(
+                uuidString: String(
+                    format: "00000000-0000-0000-0000-%012d",
+                    suffix
+                )
+            )!
         )
     }
 }

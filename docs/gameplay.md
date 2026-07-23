@@ -35,7 +35,10 @@ simulation state.
 The app validates the selected owned team, jersey, and football before creating
 an immutable run configuration. The opponent is randomized from the other 15
 teams, including locked teams, and uniform clash resolution chooses the more
-readable of that opponent's primary and alternate uniforms.
+readable of that opponent's primary and alternate uniforms. A confirmed paused
+Restart Round is distinct from a new menu launch: it preserves that exact
+opponent, both teams' uniforms, the offense football, and the captured economy
+version while assigning fresh run identity and deterministic simulation seed.
 
 The gameplay lifecycle is:
 
@@ -142,6 +145,30 @@ one immutable abandoned run, which must complete the normal durable settlement
 path before navigation changes. Mute state affects music and sound effects and
 persists through the profile settings model.
 
+Restart Round is a separate paused-only confirmed abandon action. Canceling its
+confirmation leaves the current session unchanged. Confirmation seals the
+current immutable session exactly once as an abandoned run; it never resets a
+`GameplaySession` or `GameScene` in place. The abandoned run must finish normal
+durable settlement before a successor is created, and it receives no Results
+presentation, coins or signing bonus, career completion, achievement progress,
+Game Center or leaderboard submission, or rewarded-ad progress or offer
+change.
+
+The paused-only seal also mints a non-persisted restart authority. An ordinary
+Exit abandonment, decoded completed-run history, or settlement receipt cannot
+be used to construct a successor. After settlement, the app consumes the
+in-memory authority to create a successor with a fresh run ID, start date, and
+normalized-distinct random seed. It preserves the prior offense team, offense
+jersey, football, defense team, defense jersey, and economy version after
+current catalog and ownership validation. A separate session begins from zero
+score, statistics, clock progress, Adrenaline, multiplier state, actors, ball,
+recorder facts, and audio playback, then presents a fresh countdown. Version
+1.1 permits unlimited confirmed restarts and defines no ad requirement,
+restart cap, counter, or durable restart lineage. A later build may introduce
+a rewarded-ad gate after three restarts, but that is deferred product direction
+only: Version 1.1 does not count or persist restarts toward that threshold,
+offer or consume a restart-related ad, or otherwise implement the future gate.
+
 The gameplay snapshot requests bottom-edge system-gesture deferral throughout
 the complete active gameplay surface: initial visual preparation and countdown,
 Playing, and final-ball resolution. It clears that request during Pause, Results,
@@ -156,7 +183,7 @@ the deliberate repeat gesture provided by iOS.
 - `ios/PocketVector/Game/Core/GameSimulation.swift`: deterministic state
   transitions, collision resolution, outcomes, and scoring application.
 - `ios/PocketVector/Game/Core/GameplaySession.swift`: immutable completed-run
-  projection.
+  projection and validated Restart Round successor configuration.
 - `ios/PocketVector/Game/Rendering/GameScene.swift`: SpriteKit input,
   presentation, readiness, audio events, and completion callback.
 - `ios/PocketVector/UI/LegacyGameplayAdapterView.swift`: SwiftUI/SpriteKit
