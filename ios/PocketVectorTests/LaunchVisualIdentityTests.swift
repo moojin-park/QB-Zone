@@ -1232,6 +1232,100 @@ final class LaunchVisualIdentityTests: XCTestCase {
         XCTAssertFalse(requestState.requestResume(whilePaused: true))
         XCTAssertEqual(requestState.confirmedExitRequestID, 1)
         XCTAssertTrue(requestState.confirmedExitRequestPending)
+        XCTAssertEqual(requestState.confirmedRestartRequestID, 0)
+        XCTAssertFalse(requestState.confirmedRestartRequestPending)
+    }
+
+    func testPausedGameplayConfirmedRestartRequiresAcceptedCoordinatorDisposition() {
+        var requestState = GameplayPauseRequestState()
+        var callbackCount = 0
+
+        XCTAssertFalse(
+            requestState.requestConfirmedRestart(
+                whilePaused: true,
+                onConfirmRestart: {
+                    callbackCount += 1
+                    return false
+                }
+            )
+        )
+        XCTAssertEqual(callbackCount, 1)
+        XCTAssertEqual(requestState.confirmedRestartRequestID, 0)
+        XCTAssertFalse(requestState.confirmedRestartRequestPending)
+        XCTAssertEqual(requestState.confirmedExitRequestID, 0)
+        XCTAssertFalse(requestState.confirmedExitRequestPending)
+        XCTAssertTrue(requestState.requestResume(whilePaused: true))
+
+        var acceptedRequestState = GameplayPauseRequestState()
+        XCTAssertTrue(
+            acceptedRequestState.requestConfirmedRestart(
+                whilePaused: true,
+                onConfirmRestart: {
+                    callbackCount += 1
+                    return true
+                }
+            )
+        )
+        XCTAssertEqual(callbackCount, 2)
+        XCTAssertEqual(acceptedRequestState.confirmedRestartRequestID, 1)
+        XCTAssertTrue(acceptedRequestState.confirmedRestartRequestPending)
+        XCTAssertEqual(acceptedRequestState.confirmedExitRequestID, 0)
+        XCTAssertFalse(acceptedRequestState.confirmedExitRequestPending)
+        XCTAssertFalse(acceptedRequestState.requestResume(whilePaused: true))
+        XCTAssertFalse(acceptedRequestState.requestConfirmedExit(whilePaused: true))
+
+        XCTAssertFalse(
+            acceptedRequestState.requestConfirmedRestart(
+                whilePaused: true,
+                onConfirmRestart: {
+                    callbackCount += 1
+                    return true
+                }
+            )
+        )
+        XCTAssertEqual(callbackCount, 2)
+        XCTAssertEqual(acceptedRequestState.confirmedRestartRequestID, 1)
+    }
+
+    @MainActor
+    func testPausedGameplayAdapterExposesRestartAcceptanceCallback() throws {
+        var callbackWasInvoked = false
+        let adapter = LegacyGameplayAdapterView(
+            configuration: try launchRunConfiguration(),
+            settings: PlayerSettings(),
+            isSettling: false,
+            settlementErrorMessage: nil,
+            freezesPresentation: false,
+            onCompletedRun: { _ in },
+            onRetrySettlement: {},
+            onConfirmRestart: {
+                callbackWasInvoked = true
+                return true
+            }
+        )
+
+        XCTAssertTrue(adapter.onConfirmRestart())
+        XCTAssertTrue(callbackWasInvoked)
+    }
+
+    func testPausedGameplayStaleRestartDoesNotInvokeCoordinatorDisposition() {
+        var requestState = GameplayPauseRequestState()
+        var callbackWasInvoked = false
+
+        XCTAssertFalse(
+            requestState.requestConfirmedRestart(
+                whilePaused: false,
+                onConfirmRestart: {
+                    callbackWasInvoked = true
+                    return true
+                }
+            )
+        )
+        XCTAssertFalse(callbackWasInvoked)
+        XCTAssertEqual(requestState.confirmedRestartRequestID, 0)
+        XCTAssertFalse(requestState.confirmedRestartRequestPending)
+        XCTAssertEqual(requestState.confirmedExitRequestID, 0)
+        XCTAssertFalse(requestState.confirmedExitRequestPending)
     }
 
     private func gameplaySnapshot(phase: GamePhase) -> GameplaySceneSnapshot {
@@ -1254,6 +1348,57 @@ final class LaunchVisualIdentityTests: XCTestCase {
         XCTAssertFalse(confirmation.isPresented)
         XCTAssertEqual(requestState.resumeRequestID, 0)
         XCTAssertEqual(requestState.confirmedExitRequestID, 0)
+    }
+
+    func testPausedGameplayRestartConfirmationCancelLeavesRequestsUntouched() {
+        var confirmation = GameplayRestartConfirmationState()
+        let requestState = GameplayPauseRequestState()
+
+        XCTAssertFalse(confirmation.present(whilePaused: false))
+        XCTAssertTrue(confirmation.present(whilePaused: true))
+        XCTAssertFalse(confirmation.present(whilePaused: true))
+        XCTAssertTrue(confirmation.isPresented)
+
+        confirmation.cancel()
+
+        XCTAssertFalse(confirmation.isPresented)
+        XCTAssertEqual(requestState.resumeRequestID, 0)
+        XCTAssertEqual(requestState.confirmedRestartRequestID, 0)
+        XCTAssertEqual(requestState.confirmedExitRequestID, 0)
+    }
+
+    func testPausedGameplayRestartPresentationUsesApprovedCopy() {
+        XCTAssertEqual(GameplayRestartPresentation.actionTitle, "RESTART ROUND")
+        XCTAssertEqual(
+            GameplayRestartPresentation.confirmationTitle,
+            "RESTART THIS ROUND?"
+        )
+        XCTAssertEqual(
+            GameplayRestartPresentation.confirmationBody,
+            "Current score and progress will be discarded. This attempt earns no coins, achievements, leaderboard, or ad progress."
+        )
+        XCTAssertEqual(GameplayRestartPresentation.keepPlayingTitle, "KEEP PLAYING")
+    }
+
+    func testConfirmedRestartUsesDistinctSettlementPendingCopy() {
+        XCTAssertEqual(
+            GameplaySettlementPresentation.pendingCopy(
+                isConfirmedRestart: true
+            ),
+            GameplaySettlementPresentation.PendingCopy(
+                title: "Restarting Round",
+                message: "Saving this abandoned attempt before the new round begins."
+            )
+        )
+        XCTAssertEqual(
+            GameplaySettlementPresentation.pendingCopy(
+                isConfirmedRestart: false
+            ),
+            GameplaySettlementPresentation.PendingCopy(
+                title: "Saving Run",
+                message: "Keeping your score, progress, and rewards consistent."
+            )
+        )
     }
 
     func testPausedGameplayStatsUseSuccessfulCompletions() throws {
@@ -1309,6 +1454,27 @@ final class LaunchVisualIdentityTests: XCTestCase {
 
         for size in sizes {
             let layout = GameplayExitConfirmationLayout(availableSize: size)
+            XCTAssertGreaterThanOrEqual(layout.buttonHeight, 44)
+            XCTAssertLessThanOrEqual(
+                layout.panelWidth + (layout.outerMargin * 2),
+                size.width
+            )
+            XCTAssertLessThanOrEqual(
+                layout.panelHeight + (layout.outerMargin * 2),
+                size.height
+            )
+        }
+    }
+
+    func testPausedGameplayRestartConfirmationFitsRepresentativeLandscapeSafeAreas() {
+        let sizes = [
+            CGSize(width: 579, height: 354),
+            CGSize(width: 852, height: 409),
+            CGSize(width: 1_194, height: 834),
+        ]
+
+        for size in sizes {
+            let layout = GameplayRestartConfirmationLayout(availableSize: size)
             XCTAssertGreaterThanOrEqual(layout.buttonHeight, 44)
             XCTAssertLessThanOrEqual(
                 layout.panelWidth + (layout.outerMargin * 2),

@@ -14,8 +14,10 @@ struct LegacyGameplayAdapterView: View {
     let freezesPresentation: Bool
     let onCompletedRun: (CompletedRun) -> Void
     let onRetrySettlement: () -> Void
+    var onConfirmRestart: () -> Bool = { false }
 
     @State private var exitConfirmation = GameplayExitConfirmationState()
+    @State private var restartConfirmation = GameplayRestartConfirmationState()
     @State private var gameplaySnapshot: GameplaySceneSnapshot?
     @State private var pauseRequests = GameplayPauseRequestState()
 
@@ -37,6 +39,7 @@ struct LegacyGameplayAdapterView: View {
                     gameplaySnapshot = snapshot
                     if !snapshot.isPaused {
                         exitConfirmation.dismiss()
+                        restartConfirmation.dismiss()
                     }
                 }
             )
@@ -57,20 +60,33 @@ struct LegacyGameplayAdapterView: View {
                     accent: pauseAccent,
                     accentForeground: pauseAccentForeground,
                     resumeIsPending: pauseRequests.resumeRequestPending,
-                    exitIsPending: pauseRequests.confirmedExitRequestPending || isSettling,
+                    confirmedActionIsPending:
+                        pauseRequests.confirmedRestartRequestPending
+                        || pauseRequests.confirmedExitRequestPending
+                        || isSettling,
                     onResume: requestResume,
-                    onExit: {
-                        _ = exitConfirmation.present(whilePaused: true)
-                    }
+                    onRestart: presentRestartConfirmation,
+                    onExit: presentExitConfirmation
                 )
-                .allowsHitTesting(!exitConfirmation.isPresented)
-                .accessibilityHidden(exitConfirmation.isPresented)
+                .allowsHitTesting(!isPauseConfirmationPresented)
+                .accessibilityHidden(isPauseConfirmationPresented)
 
-                if exitConfirmation.isPresented {
+                if restartConfirmation.isPresented {
+                    RestartRoundConfirmationOverlay(
+                        accent: pauseAccent,
+                        accentForeground: pauseAccentForeground,
+                        actionsAreDisabled: isSettling
+                            || pauseRequests.confirmedRestartRequestPending
+                            || pauseRequests.confirmedExitRequestPending,
+                        onKeepPlaying: { restartConfirmation.cancel() },
+                        onRestartRound: confirmRestart
+                    )
+                } else if exitConfirmation.isPresented {
                     ExitRunConfirmationOverlay(
                         accent: pauseAccent,
                         accentForeground: pauseAccentForeground,
                         actionsAreDisabled: isSettling
+                            || pauseRequests.confirmedRestartRequestPending
                             || pauseRequests.confirmedExitRequestPending,
                         onKeepPlaying: { exitConfirmation.cancel() },
                         onEndRun: confirmExit
@@ -123,6 +139,34 @@ struct LegacyGameplayAdapterView: View {
         )
     }
 
+    private var isPauseConfirmationPresented: Bool {
+        restartConfirmation.isPresented || exitConfirmation.isPresented
+    }
+
+    private func presentRestartConfirmation() {
+        guard !exitConfirmation.isPresented else { return }
+        _ = restartConfirmation.present(
+            whilePaused: gameplaySnapshot?.isPaused == true
+        )
+    }
+
+    private func presentExitConfirmation() {
+        guard !restartConfirmation.isPresented else { return }
+        _ = exitConfirmation.present(
+            whilePaused: gameplaySnapshot?.isPaused == true
+        )
+    }
+
+    private func confirmRestart() {
+        guard !isSettling,
+              pauseRequests.requestConfirmedRestart(
+                whilePaused: gameplaySnapshot?.isPaused == true,
+                onConfirmRestart: onConfirmRestart
+              ) else { return }
+
+        restartConfirmation.dismiss()
+    }
+
     private func confirmExit() {
         guard !isSettling,
               pauseRequests.requestConfirmedExit(
@@ -143,9 +187,9 @@ struct LegacyGameplayAdapterView: View {
                     ProgressView()
                         .controlSize(.large)
                         .tint(PocketVectorTheme.cyan)
-                    Text("Saving Run")
+                    Text(settlementPendingCopy.title)
                         .font(.title2.weight(.bold))
-                    Text("Keeping your score, progress, and rewards consistent.")
+                    Text(settlementPendingCopy.message)
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.76))
                 } else if let settlementErrorMessage {
@@ -174,6 +218,12 @@ struct LegacyGameplayAdapterView: View {
             .padding(24)
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private var settlementPendingCopy: GameplaySettlementPresentation.PendingCopy {
+        GameplaySettlementPresentation.pendingCopy(
+            isConfirmedRestart: pauseRequests.confirmedRestartRequestPending
+        )
     }
 }
 
@@ -266,8 +316,10 @@ private final class GameplayRendererFreezeProbeView: UIView {
 
 struct GameplayPauseRequestState: Equatable {
     private(set) var resumeRequestID = 0
+    private(set) var confirmedRestartRequestID = 0
     private(set) var confirmedExitRequestID = 0
     private(set) var resumeRequestPending = false
+    private(set) var confirmedRestartRequestPending = false
     private(set) var confirmedExitRequestPending = false
 
     mutating func receive(_ snapshot: GameplaySceneSnapshot) {
@@ -280,6 +332,7 @@ struct GameplayPauseRequestState: Equatable {
     mutating func requestResume(whilePaused: Bool) -> Bool {
         guard whilePaused,
               !resumeRequestPending,
+              !confirmedRestartRequestPending,
               !confirmedExitRequestPending else { return false }
 
         resumeRequestPending = true
@@ -289,13 +342,33 @@ struct GameplayPauseRequestState: Equatable {
 
     @discardableResult
     mutating func requestConfirmedExit(whilePaused: Bool) -> Bool {
-        guard whilePaused,
-              !resumeRequestPending,
-              !confirmedExitRequestPending else { return false }
+        guard canRequestConfirmedAction(whilePaused: whilePaused) else {
+            return false
+        }
 
         confirmedExitRequestPending = true
         confirmedExitRequestID &+= 1
         return true
+    }
+
+    @discardableResult
+    mutating func requestConfirmedRestart(
+        whilePaused: Bool,
+        onConfirmRestart: () -> Bool
+    ) -> Bool {
+        guard canRequestConfirmedAction(whilePaused: whilePaused),
+              onConfirmRestart() else { return false }
+
+        confirmedRestartRequestPending = true
+        confirmedRestartRequestID &+= 1
+        return true
+    }
+
+    private func canRequestConfirmedAction(whilePaused: Bool) -> Bool {
+        whilePaused
+            && !resumeRequestPending
+            && !confirmedRestartRequestPending
+            && !confirmedExitRequestPending
     }
 }
 
@@ -315,6 +388,53 @@ struct GameplayExitConfirmationState: Equatable {
 
     mutating func dismiss() {
         isPresented = false
+    }
+}
+
+struct GameplayRestartConfirmationState: Equatable {
+    private(set) var isPresented = false
+
+    @discardableResult
+    mutating func present(whilePaused: Bool) -> Bool {
+        guard whilePaused, !isPresented else { return false }
+        isPresented = true
+        return true
+    }
+
+    mutating func cancel() {
+        isPresented = false
+    }
+
+    mutating func dismiss() {
+        isPresented = false
+    }
+}
+
+struct GameplayRestartPresentation {
+    static let actionTitle = "RESTART ROUND"
+    static let confirmationTitle = "RESTART THIS ROUND?"
+    static let confirmationBody = "Current score and progress will be discarded. This attempt earns no coins, achievements, leaderboard, or ad progress."
+    static let keepPlayingTitle = "KEEP PLAYING"
+}
+
+struct GameplaySettlementPresentation {
+    struct PendingCopy: Equatable {
+        let title: String
+        let message: String
+    }
+
+    static func pendingCopy(isConfirmedRestart: Bool) -> PendingCopy {
+        if isConfirmedRestart {
+            return PendingCopy(
+                title: "Restarting Round",
+                message: "Saving this abandoned attempt before the new round begins."
+            )
+        }
+
+        return PendingCopy(
+            title: "Saving Run",
+            message: "Keeping your score, progress, and rewards consistent."
+        )
     }
 }
 
@@ -353,8 +473,8 @@ struct GameplayPauseLayout: Equatable {
             + headerHeight
             + 1
             + gridHeight
-            + buttonHeight
-            + (sectionSpacing * 3)
+            + (buttonHeight * 2)
+            + (sectionSpacing * 4)
     }
 }
 
@@ -379,6 +499,37 @@ struct GameplayExitConfirmationLayout: Equatable {
         buttonHeight = isCompact ? 48 : 54
         panelWidth = min(
             isCompact ? 520 : 560,
+            max(0, availableSize.width - (outerMargin * 2))
+        )
+        panelHeight = (panelPadding * 2)
+            + headerHeight
+            + messageHeight
+            + buttonHeight
+            + (sectionSpacing * 2)
+    }
+}
+
+struct GameplayRestartConfirmationLayout: Equatable {
+    let isCompact: Bool
+    let panelWidth: CGFloat
+    let panelHeight: CGFloat
+    let panelPadding: CGFloat
+    let sectionSpacing: CGFloat
+    let headerHeight: CGFloat
+    let messageHeight: CGFloat
+    let buttonHeight: CGFloat
+    let outerMargin: CGFloat
+
+    init(availableSize: CGSize) {
+        isCompact = availableSize.width < 700 || availableSize.height < 390
+        outerMargin = isCompact ? 10 : 24
+        panelPadding = isCompact ? 14 : 20
+        sectionSpacing = isCompact ? 8 : 12
+        headerHeight = isCompact ? 40 : 48
+        messageHeight = isCompact ? 66 : 58
+        buttonHeight = isCompact ? 48 : 54
+        panelWidth = min(
+            isCompact ? 560 : 680,
             max(0, availableSize.width - (outerMargin * 2))
         )
         panelHeight = (panelPadding * 2)
@@ -439,8 +590,9 @@ private struct PausedGameplayOverlay: View {
     let accent: Color
     let accentForeground: Color
     let resumeIsPending: Bool
-    let exitIsPending: Bool
+    let confirmedActionIsPending: Bool
     let onResume: () -> Void
+    let onRestart: () -> Void
     let onExit: () -> Void
 
     var body: some View {
@@ -471,8 +623,9 @@ private struct PausedGameplayOverlay: View {
                     accent: accent,
                     accentForeground: accentForeground,
                     resumeIsPending: resumeIsPending,
-                    exitIsPending: exitIsPending,
+                    confirmedActionIsPending: confirmedActionIsPending,
                     onResume: onResume,
+                    onRestart: onRestart,
                     onExit: onExit
                 )
                 .position(
@@ -482,6 +635,189 @@ private struct PausedGameplayOverlay: View {
             }
         }
         .ignoresSafeArea()
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct RestartRoundConfirmationOverlay: View {
+    let accent: Color
+    let accentForeground: Color
+    let actionsAreDisabled: Bool
+    let onKeepPlaying: () -> Void
+    let onRestartRound: () -> Void
+
+    var body: some View {
+        GeometryReader { geometry in
+            let safeWidth = max(
+                0,
+                geometry.size.width
+                    - geometry.safeAreaInsets.leading
+                    - geometry.safeAreaInsets.trailing
+            )
+            let safeHeight = max(
+                0,
+                geometry.size.height
+                    - geometry.safeAreaInsets.top
+                    - geometry.safeAreaInsets.bottom
+            )
+            let availableSize = CGSize(width: safeWidth, height: safeHeight)
+            let layout = GameplayRestartConfirmationLayout(
+                availableSize: availableSize
+            )
+
+            ZStack {
+                Color.black.opacity(0.68)
+                    .contentShape(Rectangle())
+                    .accessibilityHidden(true)
+
+                RestartRoundConfirmationPanel(
+                    layout: layout,
+                    accent: accent,
+                    accentForeground: accentForeground,
+                    actionsAreDisabled: actionsAreDisabled,
+                    onKeepPlaying: onKeepPlaying,
+                    onRestartRound: onRestartRound
+                )
+                .position(
+                    x: geometry.safeAreaInsets.leading + (safeWidth / 2),
+                    y: geometry.safeAreaInsets.top + (safeHeight / 2)
+                )
+            }
+        }
+        .ignoresSafeArea()
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct RestartRoundConfirmationPanel: View {
+    let layout: GameplayRestartConfirmationLayout
+    let accent: Color
+    let accentForeground: Color
+    let actionsAreDisabled: Bool
+    let onKeepPlaying: () -> Void
+    let onRestartRound: () -> Void
+
+    var body: some View {
+        VStack(spacing: layout.sectionSpacing) {
+            HStack(spacing: layout.isCompact ? 9 : 12) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(
+                        size: layout.isCompact ? 20 : 25,
+                        weight: .black
+                    ))
+                    .foregroundStyle(GameplayPauseButtonStyle.restartGold)
+                    .accessibilityHidden(true)
+
+                Text(GameplayRestartPresentation.confirmationTitle)
+                    .font(.system(
+                        size: layout.isCompact ? 22 : 28,
+                        weight: .black,
+                        design: .rounded
+                    ))
+                    .tracking(layout.isCompact ? 0.7 : 1.1)
+                    .foregroundStyle(PocketVectorTheme.textPrimary)
+                    .shadow(color: .black, radius: 0, x: 2, y: 3)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .frame(maxWidth: .infinity, minHeight: layout.headerHeight)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(GameplayRestartPresentation.confirmationTitle)
+            .accessibilityAddTraits(.isHeader)
+
+            Text(GameplayRestartPresentation.confirmationBody)
+                .font(.system(
+                    size: layout.isCompact ? 12 : 14,
+                    weight: .semibold,
+                    design: .rounded
+                ))
+                .foregroundStyle(PocketVectorTheme.textSecondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(layout.isCompact ? 4 : 3)
+                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, minHeight: layout.messageHeight)
+
+            HStack(spacing: layout.isCompact ? 8 : 12) {
+                Button(action: onKeepPlaying) {
+                    Label(
+                        GameplayRestartPresentation.keepPlayingTitle,
+                        systemImage: "arrow.uturn.backward"
+                    )
+                    .frame(maxWidth: .infinity, minHeight: layout.buttonHeight)
+                }
+                .buttonStyle(
+                    GameplayPauseButtonStyle(
+                        kind: .primary,
+                        tint: accent,
+                        foreground: accentForeground
+                    )
+                )
+                .disabled(actionsAreDisabled)
+                .accessibilityHint("Closes this confirmation and returns to the pause menu")
+
+                Button(action: onRestartRound) {
+                    Label(
+                        GameplayRestartPresentation.actionTitle,
+                        systemImage: "arrow.clockwise"
+                    )
+                    .frame(maxWidth: .infinity, minHeight: layout.buttonHeight)
+                }
+                .buttonStyle(
+                    GameplayPauseButtonStyle(
+                        kind: .warning,
+                        tint: GameplayPauseButtonStyle.restartGold,
+                        foreground: .black
+                    )
+                )
+                .disabled(actionsAreDisabled)
+                .accessibilityHint("Confirms this round should restart without progress")
+            }
+        }
+        .padding(layout.panelPadding)
+        .frame(width: layout.panelWidth, height: layout.panelHeight)
+        .background {
+            BroadcastPlateShape(cut: layout.isCompact ? 9 : 13)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.04, green: 0.08, blue: 0.13),
+                            Color(red: 0.08, green: 0.13, blue: 0.19),
+                            Color(red: 0.025, green: 0.05, blue: 0.09),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .shadow(color: .black.opacity(0.95), radius: 0, x: 0, y: 8)
+        }
+        .overlay {
+            BroadcastPlateShape(cut: layout.isCompact ? 9 : 13)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.88),
+                            Color(red: 0.30, green: 0.38, blue: 0.47),
+                            Color(red: 0.12, green: 0.17, blue: 0.23),
+                            Color.white.opacity(0.58),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: layout.isCompact ? 3 : 4
+                )
+        }
+        .overlay {
+            BroadcastPlateShape(cut: layout.isCompact ? 7 : 10)
+                .inset(by: layout.isCompact ? 6 : 8)
+                .strokeBorder(
+                    GameplayPauseButtonStyle.restartGold.opacity(0.86),
+                    lineWidth: 1.5
+                )
+        }
+        .overlay {
+            GameplayPauseRivets(inset: layout.isCompact ? 7 : 10)
+        }
         .accessibilityElement(children: .contain)
     }
 }
@@ -662,8 +998,9 @@ private struct PausedGameplayPanel: View {
     let accent: Color
     let accentForeground: Color
     let resumeIsPending: Bool
-    let exitIsPending: Bool
+    let confirmedActionIsPending: Bool
     let onResume: () -> Void
+    let onRestart: () -> Void
     let onExit: () -> Void
 
     private var statColumns: [GridItem] {
@@ -696,23 +1033,40 @@ private struct PausedGameplayPanel: View {
                 }
             }
 
+            Button(action: onResume) {
+                Label(
+                    resumeIsPending ? "RESUMING" : "RESUME",
+                    systemImage: "play.fill"
+                )
+                .frame(maxWidth: .infinity, minHeight: layout.buttonHeight)
+            }
+            .buttonStyle(
+                GameplayPauseButtonStyle(
+                    kind: .primary,
+                    tint: accent,
+                    foreground: accentForeground
+                )
+            )
+            .disabled(resumeIsPending || confirmedActionIsPending)
+            .accessibilityHint("Returns to the paused run")
+
             HStack(spacing: layout.isCompact ? 8 : 12) {
-                Button(action: onResume) {
+                Button(action: onRestart) {
                     Label(
-                        resumeIsPending ? "RESUMING" : "RESUME",
-                        systemImage: "play.fill"
+                        GameplayRestartPresentation.actionTitle,
+                        systemImage: "arrow.clockwise"
                     )
                     .frame(maxWidth: .infinity, minHeight: layout.buttonHeight)
                 }
                 .buttonStyle(
                     GameplayPauseButtonStyle(
-                        kind: .primary,
-                        tint: accent,
-                        foreground: accentForeground
+                        kind: .warning,
+                        tint: GameplayPauseButtonStyle.restartGold,
+                        foreground: .black
                     )
                 )
-                .disabled(resumeIsPending || exitIsPending)
-                .accessibilityHint("Returns to the paused run")
+                .disabled(resumeIsPending || confirmedActionIsPending)
+                .accessibilityHint("Asks for confirmation before restarting this round")
 
                 Button(action: onExit) {
                     Label("EXIT RUN", systemImage: "rectangle.portrait.and.arrow.right")
@@ -725,7 +1079,7 @@ private struct PausedGameplayPanel: View {
                         foreground: .white
                     )
                 )
-                .disabled(resumeIsPending || exitIsPending)
+                .disabled(resumeIsPending || confirmedActionIsPending)
                 .accessibilityHint("Asks for confirmation before ending this run")
             }
         }
@@ -878,10 +1232,12 @@ private struct PausedGameplayStatCell: View {
 private struct GameplayPauseButtonStyle: ButtonStyle {
     enum Kind {
         case primary
+        case warning
         case destructive
     }
 
     static let exitCoral = Color(red: 1, green: 0.30, blue: 0.34)
+    static let restartGold = PocketVectorTheme.gold
 
     let kind: Kind
     let tint: Color
