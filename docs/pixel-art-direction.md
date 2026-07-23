@@ -7,10 +7,11 @@ landscape iPhones without obscuring the playfield.
 
 ## Team identity
 
-The launch catalog contains eight original fictional teams. Every team has a
-primary and alternate uniform palette, an emblem, a wordmark, and field/HUD
-colors. The selected offense controls the field, end zone, scorebug, aim guide,
-and player uniform. The randomized opponent controls defender uniforms.
+The Version 1.1 art set supports sixteen original fictional teams. Every team
+has a primary and alternate uniform palette, an emblem, a wordmark, and
+field/HUD colors. Once the matching catalog descriptors are integrated, the
+selected offense controls the field, end zone, scorebug, aim guide, and player
+uniform. The randomized opponent controls defender uniforms.
 
 Team identity is data-driven in:
 
@@ -38,7 +39,7 @@ team-specific uniform sets author jersey, pants, helmet, trim, and sock colors
 directly into the source art and must be loaded without runtime recoloring,
 tinting, or semantic masks. Transparent padding, skin details, authored
 shading, helmet structure, and pose silhouettes remain independent materials.
-All eight launch teams have primary and alternate baked sets. The shared
+All sixteen approved teams have primary and alternate baked sets. The shared
 generic set is an emergency/development fallback only and is not approved as
 the launch presentation for any team.
 

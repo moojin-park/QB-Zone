@@ -106,6 +106,39 @@ enum EmblemMotif: String, CaseIterable, Codable, Hashable, Sendable {
     case reactorCore
     case auroraGridWave
     case redshiftBars
+    case quasarJet
+    case pulsarBeacon
+    case tectonicFault
+    case counterCurrent
+    case arcRails
+    case wingedCrown
+    case gravityLens
+    case spireVortex
+}
+
+/// Art-owned identifiers let the approved expansion presentation ship independently from the
+/// Technical catalog change. TeamID's value semantics make these specs resolve automatically
+/// when the catalog adopts the same stable identifiers.
+enum ExpansionTeamPresentationID {
+    static let obsidianValeQuasars = TeamID("obsidian_vale_quasars")
+    static let cobaltJunctionPulsars = TeamID("cobalt_junction_pulsars")
+    static let copperHollowTremors = TeamID("copper_hollow_tremors")
+    static let sunreefCurrents = TeamID("sunreef_currents")
+    static let crownRiftArclights = TeamID("crown_rift_arclights")
+    static let gildedDeltaMonarchs = TeamID("gilded_delta_monarchs")
+    static let axiomPointGravitons = TeamID("axiom_point_gravitons")
+    static let emeraldSpireVortices = TeamID("emerald_spire_vortices")
+
+    static let all: [TeamID] = [
+        obsidianValeQuasars,
+        cobaltJunctionPulsars,
+        copperHollowTremors,
+        sunreefCurrents,
+        crownRiftArclights,
+        gildedDeltaMonarchs,
+        axiomPointGravitons,
+        emeraldSpireVortices,
+    ]
 }
 
 enum UnitCanvasOrigin: String, Codable, Equatable, Hashable, Sendable {
@@ -137,6 +170,14 @@ enum WordmarkLayout: String, Codable, Equatable, Hashable, Sendable {
     case coreStack
     case waveStack
     case recedingStack
+    case polarJetStack
+    case signalStack
+    case faultStack
+    case currentStack
+    case railStack
+    case crownStack
+    case lensStack
+    case vortexStack
 }
 
 enum WordmarkAlignment: String, Codable, Equatable, Hashable, Sendable {
@@ -165,6 +206,14 @@ enum EndZoneMotifLayout: String, Codable, Equatable, Hashable, Sendable {
     case radialCore
     case waveBands
     case frequencySteps
+    case polarJets
+    case pulseSteps
+    case faultStrata
+    case currentChannels
+    case staggeredRails
+    case crownWings
+    case lensGrid
+    case vortexFins
 }
 
 struct EndZoneTreatment: Codable, Equatable, Hashable, Sendable {
@@ -270,8 +319,7 @@ struct LaunchVisualIdentityCatalog: Sendable {
 
     init?(catalog: LaunchCatalog) {
         let specs = Self.identitySpecs
-        guard catalog.teams.count == specs.count,
-              Set(catalog.teams.map(\.id)) == Set(specs.keys),
+        guard Set(catalog.teams.map(\.id)).isSubset(of: Set(specs.keys)),
               catalog.footballs.count == Self.footballStyles.count,
               Set(catalog.footballs.map(\.id)) == Set(Self.footballStyles.keys)
         else {
@@ -282,34 +330,10 @@ struct LaunchVisualIdentityCatalog: Sendable {
         identities.reserveCapacity(catalog.teams.count)
 
         for team in catalog.teams {
-            guard let spec = specs[team.id],
-                  Self.matchesApprovedDescriptor(team, spec: spec)
-            else {
+            guard let identity = Self.knownTeam(for: team) else {
                 return nil
             }
-
-            let brandPalette = TeamBrandPalette(
-                primary: team.primaryColor,
-                secondary: team.secondaryColor,
-                accent: team.accentColor
-            )
-            let jerseys = team.jerseys.map(Self.makeJerseyIdentity)
-            identities.append(
-                TeamVisualIdentity(
-                    teamID: team.id,
-                    displayName: team.displayName,
-                    palette: spec.emblemPalette,
-                    emblem: spec.emblem,
-                    wordmark: spec.wordmark,
-                    endZone: spec.endZone,
-                    hud: HUDVisualPalette(
-                        primary: brandPalette.primary,
-                        secondary: brandPalette.secondary,
-                        accent: brandPalette.accent
-                    ),
-                    jerseys: jerseys
-                )
-            )
+            identities.append(identity)
         }
 
         let footballs = catalog.footballs.compactMap { Self.footballStyles[$0.id] }
@@ -319,6 +343,37 @@ struct LaunchVisualIdentityCatalog: Sendable {
         allFootballStyles = footballs
         teamsByID = Dictionary(uniqueKeysWithValues: identities.map { ($0.teamID, $0) })
         footballsByID = Dictionary(uniqueKeysWithValues: footballs.map { ($0.footballID, $0) })
+    }
+
+    /// Resolves any approved current or expansion descriptor without requiring that descriptor
+    /// to be present in the active product catalog. The complete descriptor is validated so
+    /// previews cannot silently accept an unknown ID, renamed team, or altered palette.
+    static func knownTeam(for descriptor: TeamDescriptor) -> TeamVisualIdentity? {
+        guard let spec = identitySpecs[descriptor.id],
+              matchesApprovedDescriptor(descriptor, spec: spec)
+        else {
+            return nil
+        }
+
+        let brandPalette = TeamBrandPalette(
+            primary: descriptor.primaryColor,
+            secondary: descriptor.secondaryColor,
+            accent: descriptor.accentColor
+        )
+        return TeamVisualIdentity(
+            teamID: descriptor.id,
+            displayName: descriptor.displayName,
+            palette: spec.emblemPalette,
+            emblem: spec.emblem,
+            wordmark: spec.wordmark,
+            endZone: spec.endZone,
+            hud: HUDVisualPalette(
+                primary: brandPalette.primary,
+                secondary: brandPalette.secondary,
+                accent: brandPalette.accent
+            ),
+            jerseys: descriptor.jerseys.map(makeJerseyIdentity)
+        )
     }
 
     var allJerseys: [JerseyVisualIdentity] {
@@ -801,6 +856,333 @@ private extension LaunchVisualIdentityCatalog {
             ),
             endZone: endZone(layout: .frequencySteps, repeatCount: 4, background: .primary)
         ),
+        ExpansionTeamPresentationID.obsidianValeQuasars: IdentitySpec(
+            displayName: "Obsidian Vale Quasars",
+            palette: palette("#0B0D10", "#E5484D", "#C5CFD8"),
+            emblemPalette: palette("#11151A", "#E5484D", "#C5CFD8"),
+            emblem: EmblemDefinition(
+                motif: .quasarJet,
+                primitives: [
+                    .polygon(
+                        vertices: [
+                            p(0.10, 0.49), p(0.35, 0.19), p(0.47, 0.29),
+                            p(0.30, 0.48), p(0.45, 0.60), p(0.34, 0.75),
+                        ],
+                        fill: .accent
+                    ),
+                    .polygon(
+                        vertices: [
+                            p(0.90, 0.51), p(0.65, 0.21), p(0.53, 0.31),
+                            p(0.70, 0.50), p(0.55, 0.62), p(0.66, 0.77),
+                        ],
+                        fill: .accent
+                    ),
+                    .polygon(
+                        vertices: [
+                            p(0.49, 0.04), p(0.58, 0.23), p(0.53, 0.45),
+                            p(0.61, 0.68), p(0.48, 0.95), p(0.45, 0.68),
+                            p(0.39, 0.52), p(0.47, 0.31),
+                        ],
+                        fill: .secondary
+                    ),
+                    .polygon(
+                        vertices: [
+                            p(0.50, 0.31), p(0.63, 0.49), p(0.50, 0.69),
+                            p(0.37, 0.50),
+                        ],
+                        fill: .primary
+                    ),
+                    .polyline(
+                        vertices: [
+                            p(0.50, 0.35), p(0.60, 0.49), p(0.50, 0.64),
+                            p(0.40, 0.50), p(0.50, 0.35),
+                        ],
+                        lineWidth: 0.030, color: .accent
+                    ),
+                ]
+            ),
+            wordmark: wordmark(
+                market: "OBSIDIAN VALE", nickname: "QUASARS", layout: .polarJetStack,
+                alignment: .centered, tracking: 0.08, slant: -4
+            ),
+            endZone: endZone(layout: .polarJets, repeatCount: 4, background: .primary)
+        ),
+        ExpansionTeamPresentationID.cobaltJunctionPulsars: IdentitySpec(
+            displayName: "Cobalt Junction Pulsars",
+            palette: palette("#14284F", "#72C9F2", "#F26678"),
+            emblemPalette: palette("#2460B9", "#72C9F2", "#F26678"),
+            emblem: EmblemDefinition(
+                motif: .pulsarBeacon,
+                primitives: [
+                    .roundedBar(frame: rect(0.05, 0.44, 0.24, 0.12), cornerRadius: 0.025, fill: .primary),
+                    .roundedBar(frame: rect(0.12, 0.63, 0.25, 0.10), cornerRadius: 0.025, fill: .secondary),
+                    .roundedBar(frame: rect(0.12, 0.27, 0.25, 0.10), cornerRadius: 0.025, fill: .secondary),
+                    .roundedBar(frame: rect(0.71, 0.44, 0.24, 0.12), cornerRadius: 0.025, fill: .primary),
+                    .roundedBar(frame: rect(0.63, 0.63, 0.25, 0.10), cornerRadius: 0.025, fill: .secondary),
+                    .roundedBar(frame: rect(0.63, 0.27, 0.25, 0.10), cornerRadius: 0.025, fill: .secondary),
+                    .polygon(
+                        vertices: [
+                            p(0.50, 0.12), p(0.58, 0.39), p(0.86, 0.50), p(0.58, 0.61),
+                            p(0.50, 0.88), p(0.42, 0.61), p(0.14, 0.50), p(0.42, 0.39),
+                        ],
+                        fill: .accent
+                    ),
+                    .polygon(
+                        vertices: [p(0.50, 0.35), p(0.65, 0.50), p(0.50, 0.65), p(0.35, 0.50)],
+                        fill: .primary
+                    ),
+                    .disk(center: p(0.50, 0.50), radius: 0.055, fill: .secondary),
+                ]
+            ),
+            wordmark: wordmark(
+                market: "COBALT JUNCTION", nickname: "PULSARS", layout: .signalStack,
+                alignment: .leading, tracking: 0.06, slant: -3
+            ),
+            endZone: endZone(layout: .pulseSteps, repeatCount: 5, background: .primary)
+        ),
+        ExpansionTeamPresentationID.copperHollowTremors: IdentitySpec(
+            displayName: "Copper Hollow Tremors",
+            palette: palette("#43271D", "#F57422", "#F3DFC1"),
+            emblemPalette: palette("#5A3020", "#F57422", "#F3DFC1"),
+            emblem: EmblemDefinition(
+                motif: .tectonicFault,
+                primitives: [
+                    .polygon(
+                        vertices: [
+                            p(0.17, 0.16), p(0.49, 0.08), p(0.67, 0.21),
+                            p(0.62, 0.38), p(0.49, 0.48), p(0.28, 0.45),
+                            p(0.15, 0.31),
+                        ],
+                        fill: .primary
+                    ),
+                    .polygon(
+                        vertices: [
+                            p(0.51, 0.52), p(0.70, 0.48), p(0.86, 0.62),
+                            p(0.82, 0.82), p(0.58, 0.92), p(0.31, 0.81),
+                            p(0.25, 0.65), p(0.38, 0.55),
+                        ],
+                        fill: .primary
+                    ),
+                    .polyline(
+                        vertices: [
+                            p(0.74, 0.12), p(0.61, 0.34), p(0.54, 0.42),
+                            p(0.45, 0.54), p(0.38, 0.63), p(0.25, 0.88),
+                        ],
+                        lineWidth: 0.065, color: .secondary
+                    ),
+                    .polyline(
+                        vertices: [p(0.23, 0.27), p(0.39, 0.22), p(0.52, 0.31)],
+                        lineWidth: 0.025, color: .accent
+                    ),
+                    .polyline(
+                        vertices: [p(0.51, 0.70), p(0.65, 0.76), p(0.76, 0.69)],
+                        lineWidth: 0.025, color: .accent
+                    ),
+                ]
+            ),
+            wordmark: wordmark(
+                market: "COPPER HOLLOW", nickname: "TREMORS", layout: .faultStack,
+                alignment: .trailing, tracking: 0.08, slant: -6
+            ),
+            endZone: endZone(layout: .faultStrata, repeatCount: 4, background: .primary)
+        ),
+        ExpansionTeamPresentationID.sunreefCurrents: IdentitySpec(
+            displayName: "Sunreef Currents",
+            palette: palette("#003F3C", "#FF8C72", "#F4E8D8"),
+            emblemPalette: palette("#075952", "#FF8C72", "#F4E8D8"),
+            emblem: EmblemDefinition(
+                motif: .counterCurrent,
+                primitives: [
+                    .polygon(
+                        vertices: [
+                            p(0.08, 0.82), p(0.78, 0.82), p(0.90, 0.70),
+                            p(0.90, 0.51), p(0.61, 0.51), p(0.61, 0.62),
+                            p(0.34, 0.62), p(0.34, 0.47), p(0.08, 0.47),
+                        ],
+                        fill: .primary
+                    ),
+                    .polygon(
+                        vertices: [
+                            p(0.92, 0.18), p(0.22, 0.18), p(0.10, 0.30),
+                            p(0.10, 0.49), p(0.39, 0.49), p(0.39, 0.38),
+                            p(0.66, 0.38), p(0.66, 0.53), p(0.92, 0.53),
+                        ],
+                        fill: .secondary
+                    ),
+                    .polygon(
+                        vertices: [p(0.50, 0.36), p(0.64, 0.50), p(0.50, 0.64), p(0.36, 0.50)],
+                        fill: .accent
+                    ),
+                ]
+            ),
+            wordmark: wordmark(
+                market: "SUNREEF", nickname: "CURRENTS", layout: .currentStack,
+                alignment: .leading, tracking: 0.09, slant: -5
+            ),
+            endZone: endZone(layout: .currentChannels, repeatCount: 3, background: .primary)
+        ),
+        ExpansionTeamPresentationID.crownRiftArclights: IdentitySpec(
+            displayName: "Crown Rift Arclights",
+            palette: palette("#40215F", "#D9AE36", "#F2EAF8"),
+            emblemPalette: palette("#5A2D7D", "#D9AE36", "#F2EAF8"),
+            emblem: EmblemDefinition(
+                motif: .arcRails,
+                primitives: [
+                    .polygon(
+                        vertices: [
+                            p(0.08, 0.54), p(0.19, 0.54), p(0.62, 0.85),
+                            p(0.71, 0.85), p(0.68, 0.73), p(0.24, 0.43),
+                            p(0.08, 0.43),
+                        ],
+                        fill: .primary
+                    ),
+                    .polygon(
+                        vertices: [
+                            p(0.29, 0.15), p(0.38, 0.15), p(0.81, 0.46),
+                            p(0.92, 0.46), p(0.92, 0.57), p(0.76, 0.57),
+                            p(0.32, 0.27),
+                        ],
+                        fill: .primary
+                    ),
+                    .polygon(
+                        vertices: [p(0.40, 0.49), p(0.50, 0.56), p(0.56, 0.52), p(0.47, 0.45)],
+                        fill: .secondary
+                    ),
+                    .polygon(
+                        vertices: [p(0.45, 0.35), p(0.55, 0.42), p(0.61, 0.38), p(0.52, 0.31)],
+                        fill: .secondary
+                    ),
+                    .roundedBar(
+                        frame: rect(0.08, 0.43, 0.055, 0.11), cornerRadius: 0.01,
+                        fill: .accent
+                    ),
+                    .roundedBar(
+                        frame: rect(0.865, 0.46, 0.055, 0.11), cornerRadius: 0.01,
+                        fill: .accent
+                    ),
+                ]
+            ),
+            wordmark: wordmark(
+                market: "CROWN RIFT", nickname: "ARCLIGHTS", layout: .railStack,
+                alignment: .centered, tracking: 0.07, slant: -4
+            ),
+            endZone: endZone(layout: .staggeredRails, repeatCount: 3, background: .primary)
+        ),
+        ExpansionTeamPresentationID.gildedDeltaMonarchs: IdentitySpec(
+            displayName: "Gilded Delta Monarchs",
+            palette: palette("#26303B", "#C2A36A", "#F6F0E4"),
+            emblemPalette: palette("#344150", "#C2A36A", "#F6F0E4"),
+            emblem: EmblemDefinition(
+                motif: .wingedCrown,
+                primitives: [
+                    .polygon(
+                        vertices: [p(0.05, 0.60), p(0.27, 0.68), p(0.38, 0.55), p(0.28, 0.43), p(0.08, 0.46)],
+                        fill: .primary
+                    ),
+                    .polygon(
+                        vertices: [p(0.95, 0.60), p(0.73, 0.68), p(0.62, 0.55), p(0.72, 0.43), p(0.92, 0.46)],
+                        fill: .primary
+                    ),
+                    .polygon(
+                        vertices: [
+                            p(0.25, 0.35), p(0.34, 0.72), p(0.44, 0.54), p(0.50, 0.84),
+                            p(0.56, 0.54), p(0.66, 0.72), p(0.75, 0.35),
+                        ],
+                        fill: .secondary
+                    ),
+                    .roundedBar(frame: rect(0.27, 0.25, 0.46, 0.13), cornerRadius: 0.035, fill: .accent),
+                    .polygon(
+                        vertices: [p(0.42, 0.25), p(0.50, 0.38), p(0.58, 0.25)],
+                        fill: .primary
+                    ),
+                ]
+            ),
+            wordmark: wordmark(
+                market: "GILDED DELTA", nickname: "MONARCHS", layout: .crownStack,
+                alignment: .centered, tracking: 0.06
+            ),
+            endZone: endZone(layout: .crownWings, repeatCount: 3, background: .primary)
+        ),
+        ExpansionTeamPresentationID.axiomPointGravitons: IdentitySpec(
+            displayName: "Axiom Point Gravitons",
+            palette: palette("#1648B8", "#EFCB32", "#F4F7FC"),
+            emblemPalette: palette("#1648B8", "#EFCB32", "#F4F7FC"),
+            emblem: EmblemDefinition(
+                motif: .gravityLens,
+                primitives: [
+                    .polyline(
+                        vertices: [p(0.06, 0.28), p(0.28, 0.28), p(0.39, 0.39)],
+                        lineWidth: 0.055, color: .secondary
+                    ),
+                    .polyline(
+                        vertices: [p(0.06, 0.72), p(0.28, 0.72), p(0.39, 0.61)],
+                        lineWidth: 0.055, color: .accent
+                    ),
+                    .polyline(
+                        vertices: [p(0.94, 0.28), p(0.72, 0.28), p(0.61, 0.39)],
+                        lineWidth: 0.055, color: .accent
+                    ),
+                    .polyline(
+                        vertices: [p(0.94, 0.72), p(0.72, 0.72), p(0.61, 0.61)],
+                        lineWidth: 0.055, color: .secondary
+                    ),
+                    .polygon(
+                        vertices: [p(0.50, 0.22), p(0.78, 0.50), p(0.50, 0.78), p(0.22, 0.50)],
+                        fill: .primary
+                    ),
+                    .polygon(
+                        vertices: [p(0.50, 0.34), p(0.66, 0.50), p(0.50, 0.66), p(0.34, 0.50)],
+                        fill: .secondary
+                    ),
+                    .disk(center: p(0.50, 0.50), radius: 0.065, fill: .accent),
+                ]
+            ),
+            wordmark: wordmark(
+                market: "AXIOM POINT", nickname: "GRAVITONS", layout: .lensStack,
+                alignment: .trailing, tracking: 0.07, slant: -4
+            ),
+            endZone: endZone(layout: .lensGrid, repeatCount: 4, background: .primary)
+        ),
+        ExpansionTeamPresentationID.emeraldSpireVortices: IdentitySpec(
+            displayName: "Emerald Spire Vortices",
+            palette: palette("#0D8642", "#000000", "#FFFFFF"),
+            emblemPalette: palette("#0D8642", "#111318", "#FFFFFF"),
+            emblem: EmblemDefinition(
+                motif: .spireVortex,
+                primitives: [
+                    .polygon(
+                        vertices: [
+                            p(0.47, 0.06), p(0.55, 0.16), p(0.52, 0.40),
+                            p(0.58, 0.56), p(0.53, 0.94), p(0.46, 0.80),
+                            p(0.49, 0.58), p(0.43, 0.42),
+                        ],
+                        fill: .secondary
+                    ),
+                    .polygon(
+                        vertices: [p(0.49, 0.58), p(0.25, 0.72), p(0.17, 0.61), p(0.39, 0.46)],
+                        fill: .primary
+                    ),
+                    .polygon(
+                        vertices: [p(0.51, 0.56), p(0.75, 0.69), p(0.82, 0.55), p(0.60, 0.43)],
+                        fill: .primary
+                    ),
+                    .polygon(
+                        vertices: [p(0.49, 0.44), p(0.25, 0.31), p(0.18, 0.45), p(0.40, 0.57)],
+                        fill: .primary
+                    ),
+                    .polygon(
+                        vertices: [p(0.51, 0.42), p(0.75, 0.28), p(0.83, 0.39), p(0.61, 0.54)],
+                        fill: .primary
+                    ),
+                    .disk(center: p(0.50, 0.50), radius: 0.055, fill: .accent),
+                ]
+            ),
+            wordmark: wordmark(
+                market: "EMERALD SPIRE", nickname: "VORTICES", layout: .vortexStack,
+                alignment: .leading, tracking: 0.08, slant: -5
+            ),
+            endZone: endZone(layout: .vortexFins, repeatCount: 3, background: .secondary)
+        ),
     ]
 
     static let footballStyles: [FootballID: FootballVisualStyle] = [
@@ -830,21 +1212,35 @@ private extension LaunchVisualIdentityCatalog {
         )
         let primary = team.primaryJersey
         let alternate = team.alternateJersey
+        let assetRoot = "teams/\(team.id.rawValue)"
 
         return team.displayName == spec.displayName
             && expectedPalette == spec.palette
+            && team.assets == TeamAssetKeys(
+                logo: "\(assetRoot)/logo",
+                endZone: "\(assetRoot)/end-zone",
+                fieldBranding: "\(assetRoot)/field-branding"
+            )
             && primary.id == JerseyID("jersey.\(team.id.rawValue).primary")
             && primary.teamID == team.id
             && primary.kind == .primary
+            && primary.displayName == "Primary"
             && primary.primaryColor == team.primaryColor
             && primary.secondaryColor == team.secondaryColor
             && primary.accentColor == team.accentColor
+            && primary.assets == JerseyAssetKeys(
+                paletteToken: "\(assetRoot)/primary"
+            )
             && alternate.id == JerseyID("jersey.\(team.id.rawValue).alternate")
             && alternate.teamID == team.id
             && alternate.kind == .alternate
+            && alternate.displayName == "Alternate"
             && alternate.primaryColor == team.secondaryColor
             && alternate.secondaryColor == team.accentColor
             && alternate.accentColor == team.primaryColor
+            && alternate.assets == JerseyAssetKeys(
+                paletteToken: "\(assetRoot)/alternate"
+            )
     }
 
     static func makeJerseyIdentity(_ jersey: JerseyDescriptor) -> JerseyVisualIdentity {

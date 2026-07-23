@@ -281,6 +281,7 @@ const pixelGlyphs = {
   N: ['10001', '11001', '10101', '10011', '10001', '10001', '10001'],
   O: ['01110', '10001', '10001', '10001', '10001', '10001', '01110'],
   P: ['11110', '10001', '10001', '11110', '10000', '10000', '10000'],
+  Q: ['01110', '10001', '10001', '10001', '10101', '10010', '01101'],
   R: ['11110', '10001', '10001', '11110', '10100', '10010', '10001'],
   S: ['01111', '10000', '10000', '01110', '00001', '00001', '11110'],
   T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
@@ -398,8 +399,8 @@ try {
   if (spec.canvas.width !== 1728 || spec.canvas.height !== 768) {
     throw new Error('Field layer specification must remain exactly 1728x768.');
   }
-  if (spec.teams.length !== 8 || new Set(spec.teams.map(({ id }) => id)).size !== 8) {
-    throw new Error('Field layer specification must contain eight unique launch teams.');
+  if (spec.teams.length !== 16 || new Set(spec.teams.map(({ id }) => id)).size !== 16) {
+    throw new Error('Field layer specification must contain sixteen unique teams.');
   }
 
   mkdirSync(runtimeRoot, { recursive: true });

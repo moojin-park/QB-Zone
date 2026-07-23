@@ -22,10 +22,20 @@ struct TeamSelectionView: View {
         return coordinator.catalog.jersey(id: jerseyID) ?? team.primaryJersey
     }
 
+    private var opponentCount: Int {
+        max(0, coordinator.catalog.teams.count - 1)
+    }
+
+    private var initialOwnershipSummary: String {
+        let freeCount = coordinator.catalog.teams.filter(\.initiallyOwned).count
+        let unlockCount = coordinator.catalog.teams.count - freeCount
+        return "\(freeCount) FREE  •  \(unlockCount) UNLOCKS"
+    }
+
     var body: some View {
         ChampionshipSubmenuScreen(
             title: "Choose Your Offense",
-            subtitle: "The defense is randomized from the other seven teams.",
+            subtitle: "The defense is randomized from the other \(opponentCount) teams.",
             onBack: coordinator.goBack,
             headerAccessory: {
                 BalanceBadge(
@@ -37,7 +47,7 @@ struct TeamSelectionView: View {
             VStack(spacing: 10) {
                 HStack {
                     Spacer()
-                    Text("4 FREE  •  4 UNLOCKS")
+                    Text(initialOwnershipSummary)
                         .font(.system(.caption2, design: .monospaced, weight: .bold))
                         .tracking(0.7)
                         .foregroundStyle(PocketVectorTheme.championshipSilver)

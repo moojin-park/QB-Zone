@@ -164,6 +164,133 @@
         { "type": "roundedBar", "frame": [0.42, 0.72, 0.40, 0.11], "cornerRadius": 0.05, "role": "secondary" },
         { "type": "polyline", "points": [[0.845, 0.12], [0.845, 0.90]], "lineWidth": 0.05, "role": "accent" }
       ]
+    },
+    {
+      "id": "obsidian_vale_quasars",
+      "market": "OBSIDIAN VALE",
+      "nickname": "QUASARS",
+      "palette": { "primary": "#0B0D10", "secondary": "#E5484D", "accent": "#C5CFD8" },
+      "endZoneBackground": "primary",
+      "fieldPaintRole": "accent",
+      "emblem": [
+        { "type": "polygon", "points": [[0.10, 0.49], [0.35, 0.19], [0.47, 0.29], [0.30, 0.48], [0.45, 0.60], [0.34, 0.75]], "role": "accent" },
+        { "type": "polygon", "points": [[0.90, 0.51], [0.65, 0.21], [0.53, 0.31], [0.70, 0.50], [0.55, 0.62], [0.66, 0.77]], "role": "accent" },
+        { "type": "polygon", "points": [[0.49, 0.04], [0.58, 0.23], [0.53, 0.45], [0.61, 0.68], [0.48, 0.95], [0.45, 0.68], [0.39, 0.52], [0.47, 0.31]], "role": "secondary" },
+        { "type": "polygon", "points": [[0.50, 0.31], [0.63, 0.49], [0.50, 0.69], [0.37, 0.50]], "role": "primary" },
+        { "type": "polyline", "points": [[0.50, 0.35], [0.60, 0.49], [0.50, 0.64], [0.40, 0.50], [0.50, 0.35]], "lineWidth": 0.03, "role": "accent" }
+      ]
+    },
+    {
+      "id": "cobalt_junction_pulsars",
+      "market": "COBALT JUNCTION",
+      "nickname": "PULSARS",
+      "palette": { "primary": "#14284F", "secondary": "#72C9F2", "accent": "#F26678" },
+      "endZoneBackground": "primary",
+      "fieldPaintRole": "secondary",
+      "emblem": [
+        { "type": "roundedBar", "frame": [0.05, 0.44, 0.24, 0.12], "cornerRadius": 0.025, "role": "primary" },
+        { "type": "roundedBar", "frame": [0.12, 0.63, 0.25, 0.10], "cornerRadius": 0.025, "role": "secondary" },
+        { "type": "roundedBar", "frame": [0.12, 0.27, 0.25, 0.10], "cornerRadius": 0.025, "role": "secondary" },
+        { "type": "roundedBar", "frame": [0.71, 0.44, 0.24, 0.12], "cornerRadius": 0.025, "role": "primary" },
+        { "type": "roundedBar", "frame": [0.63, 0.63, 0.25, 0.10], "cornerRadius": 0.025, "role": "secondary" },
+        { "type": "roundedBar", "frame": [0.63, 0.27, 0.25, 0.10], "cornerRadius": 0.025, "role": "secondary" },
+        { "type": "polygon", "points": [[0.50, 0.12], [0.58, 0.39], [0.86, 0.50], [0.58, 0.61], [0.50, 0.88], [0.42, 0.61], [0.14, 0.50], [0.42, 0.39]], "role": "accent" },
+        { "type": "polygon", "points": [[0.50, 0.35], [0.65, 0.50], [0.50, 0.65], [0.35, 0.50]], "role": "primary" },
+        { "type": "disk", "center": [0.50, 0.50], "radius": 0.055, "role": "secondary" }
+      ]
+    },
+    {
+      "id": "copper_hollow_tremors",
+      "market": "COPPER HOLLOW",
+      "nickname": "TREMORS",
+      "palette": { "primary": "#43271D", "secondary": "#F57422", "accent": "#F3DFC1" },
+      "endZoneBackground": "primary",
+      "fieldPaintRole": "secondary",
+      "emblem": [
+        { "type": "polygon", "points": [[0.17, 0.16], [0.49, 0.08], [0.67, 0.21], [0.62, 0.38], [0.49, 0.48], [0.28, 0.45], [0.15, 0.31]], "role": "primary" },
+        { "type": "polygon", "points": [[0.51, 0.52], [0.70, 0.48], [0.86, 0.62], [0.82, 0.82], [0.58, 0.92], [0.31, 0.81], [0.25, 0.65], [0.38, 0.55]], "role": "primary" },
+        { "type": "polyline", "points": [[0.74, 0.12], [0.61, 0.34], [0.54, 0.42], [0.45, 0.54], [0.38, 0.63], [0.25, 0.88]], "lineWidth": 0.065, "role": "secondary" },
+        { "type": "polyline", "points": [[0.23, 0.27], [0.39, 0.22], [0.52, 0.31]], "lineWidth": 0.025, "role": "accent" },
+        { "type": "polyline", "points": [[0.51, 0.70], [0.65, 0.76], [0.76, 0.69]], "lineWidth": 0.025, "role": "accent" }
+      ]
+    },
+    {
+      "id": "sunreef_currents",
+      "market": "SUNREEF",
+      "nickname": "CURRENTS",
+      "palette": { "primary": "#003F3C", "secondary": "#FF8C72", "accent": "#F4E8D8" },
+      "endZoneBackground": "primary",
+      "fieldPaintRole": "secondary",
+      "emblem": [
+        { "type": "polygon", "points": [[0.08, 0.82], [0.78, 0.82], [0.90, 0.70], [0.90, 0.51], [0.61, 0.51], [0.61, 0.62], [0.34, 0.62], [0.34, 0.47], [0.08, 0.47]], "role": "primary" },
+        { "type": "polygon", "points": [[0.92, 0.18], [0.22, 0.18], [0.10, 0.30], [0.10, 0.49], [0.39, 0.49], [0.39, 0.38], [0.66, 0.38], [0.66, 0.53], [0.92, 0.53]], "role": "secondary" },
+        { "type": "polygon", "points": [[0.50, 0.36], [0.64, 0.50], [0.50, 0.64], [0.36, 0.50]], "role": "accent" }
+      ]
+    },
+    {
+      "id": "crown_rift_arclights",
+      "market": "CROWN RIFT",
+      "nickname": "ARCLIGHTS",
+      "palette": { "primary": "#40215F", "secondary": "#D9AE36", "accent": "#F2EAF8" },
+      "endZoneBackground": "primary",
+      "fieldPaintRole": "secondary",
+      "emblem": [
+        { "type": "polygon", "points": [[0.08, 0.54], [0.19, 0.54], [0.62, 0.85], [0.71, 0.85], [0.68, 0.73], [0.24, 0.43], [0.08, 0.43]], "role": "primary" },
+        { "type": "polygon", "points": [[0.29, 0.15], [0.38, 0.15], [0.81, 0.46], [0.92, 0.46], [0.92, 0.57], [0.76, 0.57], [0.32, 0.27]], "role": "primary" },
+        { "type": "polygon", "points": [[0.40, 0.49], [0.50, 0.56], [0.56, 0.52], [0.47, 0.45]], "role": "secondary" },
+        { "type": "polygon", "points": [[0.45, 0.35], [0.55, 0.42], [0.61, 0.38], [0.52, 0.31]], "role": "secondary" },
+        { "type": "roundedBar", "frame": [0.08, 0.43, 0.055, 0.11], "cornerRadius": 0.01, "role": "accent" },
+        { "type": "roundedBar", "frame": [0.865, 0.46, 0.055, 0.11], "cornerRadius": 0.01, "role": "accent" }
+      ]
+    },
+    {
+      "id": "gilded_delta_monarchs",
+      "market": "GILDED DELTA",
+      "nickname": "MONARCHS",
+      "palette": { "primary": "#26303B", "secondary": "#C2A36A", "accent": "#F6F0E4" },
+      "endZoneBackground": "primary",
+      "fieldPaintRole": "secondary",
+      "emblem": [
+        { "type": "polygon", "points": [[0.05, 0.60], [0.27, 0.68], [0.38, 0.55], [0.28, 0.43], [0.08, 0.46]], "role": "primary" },
+        { "type": "polygon", "points": [[0.95, 0.60], [0.73, 0.68], [0.62, 0.55], [0.72, 0.43], [0.92, 0.46]], "role": "primary" },
+        { "type": "polygon", "points": [[0.25, 0.35], [0.34, 0.72], [0.44, 0.54], [0.50, 0.84], [0.56, 0.54], [0.66, 0.72], [0.75, 0.35]], "role": "secondary" },
+        { "type": "roundedBar", "frame": [0.27, 0.25, 0.46, 0.13], "cornerRadius": 0.035, "role": "accent" },
+        { "type": "polygon", "points": [[0.42, 0.25], [0.50, 0.38], [0.58, 0.25]], "role": "primary" }
+      ]
+    },
+    {
+      "id": "axiom_point_gravitons",
+      "market": "AXIOM POINT",
+      "nickname": "GRAVITONS",
+      "palette": { "primary": "#1648B8", "secondary": "#EFCB32", "accent": "#F4F7FC" },
+      "endZoneBackground": "primary",
+      "fieldPaintRole": "secondary",
+      "emblem": [
+        { "type": "polyline", "points": [[0.06, 0.28], [0.28, 0.28], [0.39, 0.39]], "lineWidth": 0.055, "role": "secondary" },
+        { "type": "polyline", "points": [[0.06, 0.72], [0.28, 0.72], [0.39, 0.61]], "lineWidth": 0.055, "role": "accent" },
+        { "type": "polyline", "points": [[0.94, 0.28], [0.72, 0.28], [0.61, 0.39]], "lineWidth": 0.055, "role": "accent" },
+        { "type": "polyline", "points": [[0.94, 0.72], [0.72, 0.72], [0.61, 0.61]], "lineWidth": 0.055, "role": "secondary" },
+        { "type": "polygon", "points": [[0.50, 0.22], [0.78, 0.50], [0.50, 0.78], [0.22, 0.50]], "role": "primary" },
+        { "type": "polygon", "points": [[0.50, 0.34], [0.66, 0.50], [0.50, 0.66], [0.34, 0.50]], "role": "secondary" },
+        { "type": "disk", "center": [0.50, 0.50], "radius": 0.065, "role": "accent" }
+      ]
+    },
+    {
+      "id": "emerald_spire_vortices",
+      "market": "EMERALD SPIRE",
+      "nickname": "VORTICES",
+      "palette": { "primary": "#0D8642", "secondary": "#000000", "accent": "#FFFFFF" },
+      "endZoneBackground": "secondary",
+      "fieldPaintRole": "primary",
+      "fieldPaintColor": "#38C96A",
+      "emblem": [
+        { "type": "polygon", "points": [[0.47, 0.06], [0.55, 0.16], [0.52, 0.40], [0.58, 0.56], [0.53, 0.94], [0.46, 0.80], [0.49, 0.58], [0.43, 0.42]], "role": "secondary" },
+        { "type": "polygon", "points": [[0.49, 0.58], [0.25, 0.72], [0.17, 0.61], [0.39, 0.46]], "role": "primary" },
+        { "type": "polygon", "points": [[0.51, 0.56], [0.75, 0.69], [0.82, 0.55], [0.60, 0.43]], "role": "primary" },
+        { "type": "polygon", "points": [[0.49, 0.44], [0.25, 0.31], [0.18, 0.45], [0.40, 0.57]], "role": "primary" },
+        { "type": "polygon", "points": [[0.51, 0.42], [0.75, 0.28], [0.83, 0.39], [0.61, 0.54]], "role": "primary" },
+        { "type": "disk", "center": [0.50, 0.50], "radius": 0.055, "role": "accent" }
+      ]
     }
   ]
 }
