@@ -36,7 +36,7 @@ The complete contract is in `../docs/production-architecture.md`.
 ## Resources
 
 The app bundles `PocketVector/Resources/GameAssets/` as an opaque resource
-folder. `GameAssets/native-assets.json` is the authoritative 620-file inventory,
+folder. `GameAssets/native-assets.json` is the authoritative 1,180-file inventory,
 and `GameCoreTests.testNativeAssetManifestMatchesBundledResources` checks both
 directions: every manifest path exists and every physical bundled file is
 declared.

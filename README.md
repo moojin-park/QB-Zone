@@ -81,7 +81,7 @@ suite requires that manifest to match the physical bundled files exactly.
 
 ## Production status
 
-The gameplay core, production shell, eight-team catalog, persistence model,
+The gameplay core, production shell, sixteen-team catalog, persistence model,
 tutorial, shipping visuals, diagnostics, private-cloud profile association, and
 online-only commerce composition are implemented. The configured runtime now
 fails closed unless both CloudKit and StoreKit configuration are complete;
