@@ -89,6 +89,7 @@ struct AppleTelemetryLogEntry: Equatable, Sendable {
         name = payload.name
         switch payload {
         case .runStarted,
+             .runRestarted,
              .replayStarted,
              .adOfferShown,
              .adOfferAccepted,

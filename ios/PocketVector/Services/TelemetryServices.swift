@@ -18,6 +18,7 @@ struct ReplayCorrelationID: Codable, Hashable, Sendable {
 
 enum TelemetryEventName: String, Codable, Equatable, Sendable {
     case runStarted = "run_started"
+    case runRestarted = "run_restarted"
     case runResultsShown = "run_results_shown"
     case replayStarted = "replay_started"
     case adOfferShown = "ad_offer_shown"
@@ -80,6 +81,7 @@ enum TelemetrySyncOutcome: String, Codable, Equatable, Sendable {
 
 enum TelemetryPayload: Codable, Equatable, Sendable {
     case runStarted
+    case runRestarted
     case runResultsShown(
         correlationID: ReplayCorrelationID,
         scoreBand: TelemetryScoreBand,
@@ -98,6 +100,7 @@ enum TelemetryPayload: Codable, Equatable, Sendable {
     var name: TelemetryEventName {
         switch self {
         case .runStarted: .runStarted
+        case .runRestarted: .runRestarted
         case .runResultsShown: .runResultsShown
         case .replayStarted: .replayStarted
         case .adOfferShown: .adOfferShown

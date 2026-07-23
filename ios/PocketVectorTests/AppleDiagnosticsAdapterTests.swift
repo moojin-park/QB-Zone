@@ -55,6 +55,7 @@ final class AppleDiagnosticsAdapterTests: XCTestCase {
         let correlationID = ReplayCorrelationID()
         let fixtures: [(TelemetryPayload, TelemetryEventName, [AppleTelemetryLogAttribute])] = [
             (.runStarted, .runStarted, []),
+            (.runRestarted, .runRestarted, []),
             (
                 .runResultsShown(
                     correlationID: correlationID,

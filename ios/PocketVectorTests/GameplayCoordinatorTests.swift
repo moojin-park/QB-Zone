@@ -75,6 +75,228 @@ final class GameplayCoordinatorTests: XCTestCase {
     }
 
     @MainActor
+    func testRestartRoundSettlesAbandonedRunBeforeReplacingGameplay() async throws {
+        let runIDs = [
+            RunID(UUID(uuidString: "00000000-0000-0000-0000-000000000701")!),
+            RunID(UUID(uuidString: "00000000-0000-0000-0000-000000000702")!),
+        ]
+        let seeds: [UInt32] = [701, 702]
+        let dates = [
+            Date(timeIntervalSince1970: 7_010),
+            Date(timeIntervalSince1970: 7_080),
+        ]
+        var runIDIndex = 0
+        var seedIndex = 0
+        var dateIndex = 0
+        var events: [AppLifecycleEvent] = []
+        var settledRuns: [CompletedRun] = []
+        var initialState = AppCoordinatorState.launchDefault()
+        initialState.settings.tutorialCompleted = true
+
+        let coordinator = AppCoordinator(
+            environment: AppCoordinatorEnvironment(
+                loadInitialState: {
+                    .loaded(self.authoritativeSnapshot(initialState))
+                },
+                makeRunID: {
+                    defer { runIDIndex += 1 }
+                    return runIDs[runIDIndex]
+                },
+                makeSeed: {
+                    defer { seedIndex += 1 }
+                    return seeds[seedIndex]
+                },
+                now: {
+                    defer { dateIndex += 1 }
+                    return dates[dateIndex]
+                },
+                performExternalRequest: nil,
+                observeLifecycleEvent: { events.append($0) },
+                settleCompletedRun: { run in
+                    settledRuns.append(run)
+                    return .settled(
+                        authoritativeSnapshot: self.authoritativeSnapshot(
+                            initialState,
+                            playerRevision: 1,
+                            economyRevision: 1
+                        ),
+                        results: nil
+                    )
+                }
+            )
+        )
+        await coordinator.bootstrap()
+        let source = try launchConfiguration(from: coordinator)
+        XCTAssertTrue(coordinator.prepareRestartRound(source))
+        XCTAssertFalse(coordinator.prepareRestartRound(source))
+
+        let abandoned = makeCompletedRun(
+            configuration: source,
+            reason: .abandoned
+        )
+        await coordinator.handleCompletedRun(abandoned)
+
+        guard case let .gameplay(replacement) = coordinator.currentDestination else {
+            return XCTFail("Expected a replacement gameplay destination")
+        }
+        XCTAssertEqual(settledRuns, [abandoned])
+        XCTAssertEqual(coordinator.navigationPath, [.mainMenu, .gameplay(replacement)])
+        XCTAssertNotEqual(replacement.runID, source.runID)
+        XCTAssertNotEqual(replacement.randomSeed, source.randomSeed)
+        XCTAssertEqual(replacement.startedAt, dates[1])
+        XCTAssertEqual(replacement.offenseTeamID, source.offenseTeamID)
+        XCTAssertEqual(replacement.offenseJerseyID, source.offenseJerseyID)
+        XCTAssertEqual(replacement.defenseTeamID, source.defenseTeamID)
+        XCTAssertEqual(replacement.defenseJerseyID, source.defenseJerseyID)
+        XCTAssertEqual(replacement.footballID, source.footballID)
+        XCTAssertEqual(replacement.economyVersion, source.economyVersion)
+        XCTAssertEqual(
+            events,
+            [
+                .didLaunchRun(source),
+                .didExitRun(source.runID),
+                .didLaunchRun(replacement),
+            ]
+        )
+    }
+
+    @MainActor
+    func testRestartRoundRemainsUnlimitedAfterThreeConfirmedRestarts() async throws {
+        var identity = 710
+        var revision: UInt64 = 0
+        var initialState = AppCoordinatorState.launchDefault()
+        initialState.settings.tutorialCompleted = true
+        let coordinator = AppCoordinator(
+            environment: AppCoordinatorEnvironment(
+                loadInitialState: {
+                    .loaded(self.authoritativeSnapshot(initialState))
+                },
+                makeRunID: {
+                    defer { identity += 1 }
+                    return RunID(
+                        UUID(
+                            uuidString: String(
+                                format: "00000000-0000-0000-0000-%012d",
+                                identity
+                            )
+                        )!
+                    )
+                },
+                makeSeed: {
+                    UInt32(identity * 13)
+                },
+                now: {
+                    Date(timeIntervalSince1970: TimeInterval(identity * 100))
+                },
+                performExternalRequest: nil,
+                observeLifecycleEvent: nil,
+                settleCompletedRun: { _ in
+                    revision += 1
+                    return .settled(
+                        authoritativeSnapshot: self.authoritativeSnapshot(
+                            initialState,
+                            playerRevision: revision,
+                            economyRevision: revision
+                        ),
+                        results: nil
+                    )
+                }
+            )
+        )
+        await coordinator.bootstrap()
+        var configuration = try launchConfiguration(from: coordinator)
+
+        for _ in 1 ... 5 {
+            XCTAssertTrue(coordinator.prepareRestartRound(configuration))
+            await coordinator.handleCompletedRun(
+                makeCompletedRun(
+                    configuration: configuration,
+                    reason: .abandoned
+                )
+            )
+            guard case let .gameplay(replacement) = coordinator.currentDestination else {
+                return XCTFail("Expected restart to remain available")
+            }
+            configuration = replacement
+        }
+
+        XCTAssertEqual(coordinator.currentDestination, .gameplay(configuration))
+        XCTAssertNil(coordinator.pendingCompletedRun)
+        XCTAssertNil(coordinator.settlementErrorMessage)
+    }
+
+    @MainActor
+    func testRestartSettlementFailureRetainsDispositionUntilRetrySucceeds() async throws {
+        var identity = 730
+        var attempts = 0
+        var initialState = AppCoordinatorState.launchDefault()
+        initialState.settings.tutorialCompleted = true
+        let coordinator = AppCoordinator(
+            environment: AppCoordinatorEnvironment(
+                loadInitialState: {
+                    .loaded(self.authoritativeSnapshot(initialState))
+                },
+                makeRunID: {
+                    defer { identity += 1 }
+                    return RunID(
+                        UUID(
+                            uuidString: String(
+                                format: "00000000-0000-0000-0000-%012d",
+                                identity
+                            )
+                        )!
+                    )
+                },
+                makeSeed: { UInt32(identity * 17) },
+                now: {
+                    Date(timeIntervalSince1970: TimeInterval(identity * 100))
+                },
+                performExternalRequest: nil,
+                observeLifecycleEvent: nil,
+                settleCompletedRun: { _ in
+                    attempts += 1
+                    if attempts == 1 {
+                        return .failed(message: "Save temporarily unavailable.")
+                    }
+                    return .settled(
+                        authoritativeSnapshot: self.authoritativeSnapshot(
+                            initialState,
+                            playerRevision: 1,
+                            economyRevision: 1
+                        ),
+                        results: nil
+                    )
+                }
+            )
+        )
+        await coordinator.bootstrap()
+        let source = try launchConfiguration(from: coordinator)
+        XCTAssertTrue(coordinator.prepareRestartRound(source))
+        let abandoned = makeCompletedRun(
+            configuration: source,
+            reason: .abandoned
+        )
+
+        await coordinator.handleCompletedRun(abandoned)
+        XCTAssertEqual(coordinator.currentDestination, .gameplay(source))
+        XCTAssertEqual(coordinator.pendingCompletedRun, abandoned)
+        XCTAssertEqual(
+            coordinator.settlementErrorMessage,
+            "Save temporarily unavailable."
+        )
+
+        await coordinator.retryCompletedRunSettlement()
+
+        XCTAssertEqual(attempts, 2)
+        XCTAssertNil(coordinator.pendingCompletedRun)
+        XCTAssertNil(coordinator.settlementErrorMessage)
+        guard case let .gameplay(replacement) = coordinator.currentDestination else {
+            return XCTFail("Expected retry to install the replacement scene")
+        }
+        XCTAssertNotEqual(replacement.runID, source.runID)
+    }
+
+    @MainActor
     func testSettlementFailureRetainsGameplayAndRetryRecovers() async throws {
         var attempts = 0
         var authoritativeState = AppCoordinatorState.launchDefault()

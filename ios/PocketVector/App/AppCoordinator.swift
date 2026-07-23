@@ -21,6 +21,7 @@ final class AppCoordinator {
     private let matchupGenerator: MatchupGenerator
     private var bootstrapIsRunning: Bool
     private var visibleResultsTelemetry: VisibleResultsTelemetry?
+    private var pendingRestartSource: RunConfiguration?
 
     init(
         catalog: LaunchCatalog = .approved,
@@ -42,6 +43,7 @@ final class AppCoordinator {
         stateUpdateConsumerIsRunning = false
         bootstrapIsRunning = false
         visibleResultsTelemetry = nil
+        pendingRestartSource = nil
     }
 
     var currentDestination: AppDestination {
@@ -180,6 +182,7 @@ final class AppCoordinator {
 
     func returnToMainMenu() {
         visibleResultsTelemetry = nil
+        pendingRestartSource = nil
         navigationPath = [.mainMenu]
     }
 
@@ -455,6 +458,10 @@ final class AppCoordinator {
             return
         }
 
+        if completedRun.finishReason != .abandoned {
+            pendingRestartSource = nil
+        }
+
         if let pendingCompletedRun {
             guard pendingCompletedRun == completedRun else { return }
         } else {
@@ -467,6 +474,25 @@ final class AppCoordinator {
     func retryCompletedRunSettlement() async {
         guard pendingCompletedRun != nil else { return }
         await settlePendingCompletedRun()
+    }
+
+    /// Registers the post-settlement disposition before the paused scene is
+    /// allowed to emit its terminal `.abandoned` completion. The UI must issue
+    /// the confirmed-abandon request only when this method accepts the exact
+    /// currently presented configuration.
+    @discardableResult
+    func prepareRestartRound(_ configuration: RunConfiguration) -> Bool {
+        guard bootstrapState == .ready,
+              pendingRequest == nil,
+              pendingCompletedRun == nil,
+              !isRunSettlementInFlight,
+              pendingRestartSource == nil,
+              currentDestination == .gameplay(configuration) else {
+            return false
+        }
+
+        pendingRestartSource = configuration
+        return true
     }
 
     func showRunResults(_ results: RunResultsPresentation) {
@@ -527,11 +553,30 @@ final class AppCoordinator {
                 showVerifiedRunResults(results)
 
             case .abandoned:
+                let restartSource = pendingRestartSource == completedRun.configuration
+                    ? completedRun.configuration
+                    : nil
                 pendingCompletedRun = nil
                 settlementErrorMessage = nil
                 noticeMessage = nil
                 environment.observeLifecycleEvent?(.didExitRun(completedRun.runID))
-                returnToMainMenu()
+                pendingRestartSource = nil
+
+                if let restartSource {
+                    guard let replacement = makeRestartConfiguration(
+                        from: restartSource
+                    ) else {
+                        noticeMessage = "The round was saved, but its loadout is no longer available. Choose your equipment before starting again."
+                        returnToMainMenuPreservingNotice()
+                        return
+                    }
+                    replaceGameplay(
+                        source: restartSource,
+                        with: replacement
+                    )
+                } else {
+                    returnToMainMenu()
+                }
 
             case .debugPreview:
                 // Guarded before invoking the production seam.
@@ -542,6 +587,79 @@ final class AppCoordinator {
 
     private func exposeSettlementFailure(_ message: String) {
         settlementErrorMessage = message
+    }
+
+    private func makeRestartConfiguration(
+        from source: RunConfiguration
+    ) -> RunConfiguration? {
+        let selection = PlayerSelection(
+            selectedTeamID: source.offenseTeamID,
+            selectedJerseyByTeam: [
+                source.offenseTeamID: source.offenseJerseyID
+            ],
+            selectedFootballID: source.footballID
+        )
+
+        do {
+            try InventoryRules.validate(
+                selection: selection,
+                inventory: state.inventory,
+                catalog: catalog
+            )
+        } catch {
+            return nil
+        }
+
+        guard source.offenseTeamID != source.defenseTeamID,
+              let defenseJersey = catalog.jersey(id: source.defenseJerseyID),
+              defenseJersey.teamID == source.defenseTeamID,
+              catalog.team(id: source.defenseTeamID) != nil else {
+            return nil
+        }
+
+        let runID = environment.makeRunID()
+        guard runID != source.runID else { return nil }
+
+        var seed = environment.makeSeed()
+        if seed == source.randomSeed {
+            seed = environment.makeSeed()
+        }
+        guard seed != source.randomSeed else { return nil }
+
+        return RunConfiguration(
+            runID: runID,
+            randomSeed: seed,
+            offenseTeamID: source.offenseTeamID,
+            offenseJerseyID: source.offenseJerseyID,
+            defenseTeamID: source.defenseTeamID,
+            defenseJerseyID: source.defenseJerseyID,
+            footballID: source.footballID,
+            economyVersion: source.economyVersion,
+            startedAt: environment.now()
+        )
+    }
+
+    private func replaceGameplay(
+        source: RunConfiguration,
+        with replacement: RunConfiguration
+    ) {
+        guard currentDestination == .gameplay(source),
+              !navigationPath.isEmpty else {
+            noticeMessage = "The round was saved, but gameplay changed before restart could begin."
+            returnToMainMenuPreservingNotice()
+            return
+        }
+
+        visibleResultsTelemetry = nil
+        navigationPath[navigationPath.count - 1] = .gameplay(replacement)
+        environment.observeLifecycleEvent?(.didLaunchRun(replacement))
+        recordTelemetry(.runRestarted, at: replacement.startedAt)
+    }
+
+    private func returnToMainMenuPreservingNotice() {
+        visibleResultsTelemetry = nil
+        pendingRestartSource = nil
+        navigationPath = [.mainMenu]
     }
 
     func replayAfterResults() {
