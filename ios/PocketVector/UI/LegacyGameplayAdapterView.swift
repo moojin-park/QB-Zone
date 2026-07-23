@@ -15,6 +15,8 @@ struct LegacyGameplayAdapterView: View {
     let onCompletedRun: (CompletedRun) -> Void
     let onRetrySettlement: () -> Void
     var onConfirmRestart: () -> Bool = { false }
+    var onConfirmedRestartAbandonment:
+        (ConfirmedRestartAbandonment) -> Void = { _ in }
 
     @State private var exitConfirmation = GameplayExitConfirmationState()
     @State private var restartConfirmation = GameplayRestartConfirmationState()
@@ -29,10 +31,18 @@ struct LegacyGameplayAdapterView: View {
                 configuration: configuration,
                 settings: settings,
                 abandonRequestID: pauseRequests.confirmedExitRequestID,
+                restartRequestID:
+                    pauseRequests.confirmedRestartRequestID,
                 resumeRequestID: pauseRequests.resumeRequestID,
                 freezesPresentation: freezesPresentation,
                 onCompletedRun: { completedRun in
                     onCompletedRun(completedRun)
+                },
+                onConfirmedRestartAbandonment: {
+                    restartAbandonment in
+                    onConfirmedRestartAbandonment(
+                        restartAbandonment
+                    )
                 },
                 onGameplaySnapshotChanged: { snapshot in
                     pauseRequests.receive(snapshot)

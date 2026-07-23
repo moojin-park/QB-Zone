@@ -130,10 +130,15 @@ final class GameplayCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.prepareRestartRound(source))
         XCTAssertFalse(coordinator.prepareRestartRound(source))
 
-        let abandoned = makeCompletedRun(
-            configuration: source,
-            reason: .abandoned
+        let restartAbandonment = try makeRestartAbandonment(
+            configuration: source
         )
+        XCTAssertTrue(
+            coordinator.retainConfirmedRestartAbandonment(
+                restartAbandonment
+            )
+        )
+        let abandoned = restartAbandonment.completedRun
         await coordinator.handleCompletedRun(abandoned)
 
         guard case let .gameplay(replacement) = coordinator.currentDestination else {
@@ -208,11 +213,16 @@ final class GameplayCoordinatorTests: XCTestCase {
 
         for _ in 1 ... 5 {
             XCTAssertTrue(coordinator.prepareRestartRound(configuration))
-            await coordinator.handleCompletedRun(
-                makeCompletedRun(
-                    configuration: configuration,
-                    reason: .abandoned
+            let restartAbandonment = try makeRestartAbandonment(
+                configuration: configuration
+            )
+            XCTAssertTrue(
+                coordinator.retainConfirmedRestartAbandonment(
+                    restartAbandonment
                 )
+            )
+            await coordinator.handleCompletedRun(
+                restartAbandonment.completedRun
             )
             guard case let .gameplay(replacement) = coordinator.currentDestination else {
                 return XCTFail("Expected restart to remain available")
@@ -223,6 +233,55 @@ final class GameplayCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.currentDestination, .gameplay(configuration))
         XCTAssertNil(coordinator.pendingCompletedRun)
         XCTAssertNil(coordinator.settlementErrorMessage)
+    }
+
+    @MainActor
+    func testPreparedRestartCannotTurnOrdinaryExitHistoryIntoSuccessor()
+        async throws {
+        var initialState = AppCoordinatorState.launchDefault()
+        initialState.settings.tutorialCompleted = true
+        let coordinator = AppCoordinator(
+            environment: AppCoordinatorEnvironment(
+                loadInitialState: {
+                    .loaded(self.authoritativeSnapshot(initialState))
+                },
+                makeRunID: {
+                    RunID(
+                        UUID(
+                            uuidString:
+                                "00000000-0000-0000-0000-000000000721"
+                        )!
+                    )
+                },
+                makeSeed: { 721 },
+                now: { Date(timeIntervalSince1970: 7_210) },
+                performExternalRequest: nil,
+                observeLifecycleEvent: nil,
+                settleCompletedRun: { _ in
+                    .settled(
+                        authoritativeSnapshot: self.authoritativeSnapshot(
+                            initialState,
+                            playerRevision: 1,
+                            economyRevision: 1
+                        ),
+                        results: nil
+                    )
+                }
+            )
+        )
+        await coordinator.bootstrap()
+        let source = try launchConfiguration(from: coordinator)
+        XCTAssertTrue(coordinator.prepareRestartRound(source))
+
+        await coordinator.handleCompletedRun(
+            makeCompletedRun(
+                configuration: source,
+                reason: .abandoned
+            )
+        )
+
+        XCTAssertEqual(coordinator.currentDestination, .mainMenu)
+        XCTAssertNil(coordinator.pendingCompletedRun)
     }
 
     @MainActor
@@ -272,10 +331,15 @@ final class GameplayCoordinatorTests: XCTestCase {
         await coordinator.bootstrap()
         let source = try launchConfiguration(from: coordinator)
         XCTAssertTrue(coordinator.prepareRestartRound(source))
-        let abandoned = makeCompletedRun(
-            configuration: source,
-            reason: .abandoned
+        let restartAbandonment = try makeRestartAbandonment(
+            configuration: source
         )
+        XCTAssertTrue(
+            coordinator.retainConfirmedRestartAbandonment(
+                restartAbandonment
+            )
+        )
+        let abandoned = restartAbandonment.completedRun
 
         await coordinator.handleCompletedRun(abandoned)
         XCTAssertEqual(coordinator.currentDestination, .gameplay(source))
@@ -452,6 +516,7 @@ final class GameplayCoordinatorTests: XCTestCase {
         let bridge = GameplaySceneBridge(
             target: scene,
             initialResumeRequestID: 0,
+            initialConfirmedRestartRequestID: 0,
             initialConfirmedExitRequestID: 0
         )
 
@@ -599,6 +664,26 @@ final class GameplayCoordinatorTests: XCTestCase {
         )
     }
 
+    private func makeRestartAbandonment(
+        configuration: RunConfiguration
+    ) throws -> ConfirmedRestartAbandonment {
+        var session = GameplaySession(
+            configuration: configuration,
+            settings: PlayerSettings()
+        )
+        _ = session.advance(
+            deltaMilliseconds:
+                GameplayConfig.countdownDurationMilliseconds,
+            endedAt: configuration.startedAt.addingTimeInterval(3)
+        )
+        XCTAssertTrue(session.pause())
+        return try XCTUnwrap(
+            session.abandonForConfirmedRestart(
+                endedAt: configuration.startedAt.addingTimeInterval(60)
+            )
+        )
+    }
+
     private func makeResults(
         run: CompletedRun,
         state: AppCoordinatorState
@@ -634,6 +719,7 @@ final class GameplaySceneBridgeTests: XCTestCase {
         let bridge = GameplaySceneBridge(
             target: target,
             initialResumeRequestID: 7,
+            initialConfirmedRestartRequestID: 0,
             initialConfirmedExitRequestID: 11
         )
         var receivedSnapshots: [GameplaySceneSnapshot] = []
@@ -672,6 +758,7 @@ final class GameplaySceneBridgeTests: XCTestCase {
         let bridge = GameplaySceneBridge(
             target: target,
             initialResumeRequestID: 0,
+            initialConfirmedRestartRequestID: 0,
             initialConfirmedExitRequestID: 0
         )
         var snapshots: [GameplaySceneSnapshot] = []
@@ -694,6 +781,7 @@ final class GameplaySceneBridgeTests: XCTestCase {
         let bridge = GameplaySceneBridge(
             target: target,
             initialResumeRequestID: 21,
+            initialConfirmedRestartRequestID: 0,
             initialConfirmedExitRequestID: 0
         )
 
@@ -713,6 +801,7 @@ final class GameplaySceneBridgeTests: XCTestCase {
         let bridge = GameplaySceneBridge(
             target: target,
             initialResumeRequestID: 0,
+            initialConfirmedRestartRequestID: 0,
             initialConfirmedExitRequestID: 31
         )
 
@@ -722,22 +811,96 @@ final class GameplaySceneBridgeTests: XCTestCase {
 
         XCTAssertEqual(target.confirmedExitCallCount, 1)
     }
+
+    @MainActor
+    func testConfirmedRestartRequestReturnsAuthorityExactlyOnceForDuplicateID()
+        throws {
+        let restartAbandonment = try makeRestartAbandonment()
+        let target = GameplaySceneActionTargetSpy(
+            currentSnapshot: GameplaySceneSnapshot(state: GameState()),
+            restartAbandonment: restartAbandonment
+        )
+        let bridge = GameplaySceneBridge(
+            target: target,
+            initialResumeRequestID: 0,
+            initialConfirmedRestartRequestID: 41,
+            initialConfirmedExitRequestID: 0
+        )
+
+        XCTAssertNil(bridge.requestConfirmedRestart(id: 41))
+        XCTAssertEqual(
+            bridge.requestConfirmedRestart(id: 42),
+            restartAbandonment
+        )
+        XCTAssertNil(bridge.requestConfirmedRestart(id: 42))
+        XCTAssertEqual(target.confirmedRestartCallCount, 1)
+        XCTAssertEqual(target.confirmedExitCallCount, 0)
+    }
+
+    private func makeRestartAbandonment()
+        throws -> ConfirmedRestartAbandonment {
+        let catalog = LaunchCatalog.approved
+        let offense = catalog.teams[0]
+        let defense = catalog.teams[1]
+        let configuration = RunConfiguration(
+            runID: RunID(
+                UUID(
+                    uuidString:
+                        "00000000-0000-0000-0000-000000000743"
+                )!
+            ),
+            randomSeed: 743,
+            offenseTeamID: offense.id,
+            offenseJerseyID: offense.primaryJersey.id,
+            defenseTeamID: defense.id,
+            defenseJerseyID: defense.primaryJersey.id,
+            footballID: LaunchFootballID.standard,
+            economyVersion: EconomyConfiguration.currentVersion,
+            startedAt: Date(timeIntervalSince1970: 7_430)
+        )
+        var session = GameplaySession(
+            configuration: configuration,
+            settings: PlayerSettings()
+        )
+        _ = session.advance(
+            deltaMilliseconds:
+                GameplayConfig.countdownDurationMilliseconds,
+            endedAt: configuration.startedAt.addingTimeInterval(3)
+        )
+        XCTAssertTrue(session.pause())
+        return try XCTUnwrap(
+            session.abandonForConfirmedRestart(
+                endedAt: configuration.startedAt.addingTimeInterval(4)
+            )
+        )
+    }
 }
 
 @MainActor
 private final class GameplaySceneActionTargetSpy: GameplaySceneActionTarget {
     var currentSnapshot: GameplaySceneSnapshot
     private(set) var resumeCallCount = 0
+    private(set) var confirmedRestartCallCount = 0
     private(set) var confirmedExitCallCount = 0
     private(set) var applicationActiveValues: [Bool] = []
+    private let restartAbandonment: ConfirmedRestartAbandonment?
 
-    init(currentSnapshot: GameplaySceneSnapshot) {
+    init(
+        currentSnapshot: GameplaySceneSnapshot,
+        restartAbandonment: ConfirmedRestartAbandonment? = nil
+    ) {
         self.currentSnapshot = currentSnapshot
+        self.restartAbandonment = restartAbandonment
     }
 
     func resume() -> Bool {
         resumeCallCount += 1
         return true
+    }
+
+    func commitConfirmedRestartRound() -> ConfirmedRestartAbandonment? {
+        confirmedRestartCallCount += 1
+        return restartAbandonment
     }
 
     func commitConfirmedExitRun() {

@@ -22,6 +22,7 @@ final class AppCoordinator {
     private var bootstrapIsRunning: Bool
     private var visibleResultsTelemetry: VisibleResultsTelemetry?
     private var pendingRestartSource: RunConfiguration?
+    private var pendingRestartAbandonment: ConfirmedRestartAbandonment?
 
     init(
         catalog: LaunchCatalog = .approved,
@@ -44,6 +45,7 @@ final class AppCoordinator {
         bootstrapIsRunning = false
         visibleResultsTelemetry = nil
         pendingRestartSource = nil
+        pendingRestartAbandonment = nil
     }
 
     var currentDestination: AppDestination {
@@ -183,6 +185,7 @@ final class AppCoordinator {
     func returnToMainMenu() {
         visibleResultsTelemetry = nil
         pendingRestartSource = nil
+        pendingRestartAbandonment = nil
         navigationPath = [.mainMenu]
     }
 
@@ -460,6 +463,7 @@ final class AppCoordinator {
 
         if completedRun.finishReason != .abandoned {
             pendingRestartSource = nil
+            pendingRestartAbandonment = nil
         }
 
         if let pendingCompletedRun {
@@ -492,6 +496,27 @@ final class AppCoordinator {
         }
 
         pendingRestartSource = configuration
+        return true
+    }
+
+    /// Retains the process-only proof returned by the paused scene before the
+    /// asynchronously scheduled completed-run settlement can begin.
+    @discardableResult
+    func retainConfirmedRestartAbandonment(
+        _ restartAbandonment: ConfirmedRestartAbandonment
+    ) -> Bool {
+        let completedRun = restartAbandonment.completedRun
+        let configuration = completedRun.configuration
+        guard completedRun.finishReason == .abandoned,
+              pendingRestartSource == configuration,
+              pendingRestartAbandonment == nil,
+              currentDestination == .gameplay(configuration),
+              pendingCompletedRun == nil
+                || pendingCompletedRun == completedRun else {
+            return false
+        }
+
+        pendingRestartAbandonment = restartAbandonment
         return true
     }
 
@@ -553,25 +578,28 @@ final class AppCoordinator {
                 showVerifiedRunResults(results)
 
             case .abandoned:
-                let restartSource = pendingRestartSource == completedRun.configuration
-                    ? completedRun.configuration
+                let restartAbandonment =
+                    pendingRestartSource == completedRun.configuration
+                    && pendingRestartAbandonment?.completedRun == completedRun
+                    ? pendingRestartAbandonment
                     : nil
                 pendingCompletedRun = nil
                 settlementErrorMessage = nil
                 noticeMessage = nil
                 environment.observeLifecycleEvent?(.didExitRun(completedRun.runID))
                 pendingRestartSource = nil
+                pendingRestartAbandonment = nil
 
-                if let restartSource {
+                if let restartAbandonment {
                     guard let replacement = makeRestartConfiguration(
-                        from: restartSource
+                        from: restartAbandonment
                     ) else {
                         noticeMessage = "The round was saved, but its loadout is no longer available. Choose your equipment before starting again."
                         returnToMainMenuPreservingNotice()
                         return
                     }
                     replaceGameplay(
-                        source: restartSource,
+                        source: restartAbandonment.completedRun.configuration,
                         with: replacement
                     )
                 } else {
@@ -590,53 +618,33 @@ final class AppCoordinator {
     }
 
     private func makeRestartConfiguration(
-        from source: RunConfiguration
+        from restartAbandonment: ConfirmedRestartAbandonment
     ) -> RunConfiguration? {
-        let selection = PlayerSelection(
-            selectedTeamID: source.offenseTeamID,
-            selectedJerseyByTeam: [
-                source.offenseTeamID: source.offenseJerseyID
-            ],
-            selectedFootballID: source.footballID
-        )
+        let runID = environment.makeRunID()
+        var seed = environment.makeSeed()
+        let startedAt = environment.now()
+        let factory = RestartRoundConfigurationFactory(catalog: catalog)
 
         do {
-            try InventoryRules.validate(
-                selection: selection,
+            return try factory.makeSuccessor(
+                after: restartAbandonment,
                 inventory: state.inventory,
-                catalog: catalog
+                runID: runID,
+                randomSeed: seed,
+                startedAt: startedAt
+            )
+        } catch RestartRoundConfigurationError.reusedRandomSeed {
+            seed = environment.makeSeed()
+            return try? factory.makeSuccessor(
+                after: restartAbandonment,
+                inventory: state.inventory,
+                runID: runID,
+                randomSeed: seed,
+                startedAt: startedAt
             )
         } catch {
             return nil
         }
-
-        guard source.offenseTeamID != source.defenseTeamID,
-              let defenseJersey = catalog.jersey(id: source.defenseJerseyID),
-              defenseJersey.teamID == source.defenseTeamID,
-              catalog.team(id: source.defenseTeamID) != nil else {
-            return nil
-        }
-
-        let runID = environment.makeRunID()
-        guard runID != source.runID else { return nil }
-
-        var seed = environment.makeSeed()
-        if seed == source.randomSeed {
-            seed = environment.makeSeed()
-        }
-        guard seed != source.randomSeed else { return nil }
-
-        return RunConfiguration(
-            runID: runID,
-            randomSeed: seed,
-            offenseTeamID: source.offenseTeamID,
-            offenseJerseyID: source.offenseJerseyID,
-            defenseTeamID: source.defenseTeamID,
-            defenseJerseyID: source.defenseJerseyID,
-            footballID: source.footballID,
-            economyVersion: source.economyVersion,
-            startedAt: environment.now()
-        )
     }
 
     private func replaceGameplay(
@@ -659,6 +667,7 @@ final class AppCoordinator {
     private func returnToMainMenuPreservingNotice() {
         visibleResultsTelemetry = nil
         pendingRestartSource = nil
+        pendingRestartAbandonment = nil
         navigationPath = [.mainMenu]
     }
 

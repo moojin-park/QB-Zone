@@ -199,6 +199,17 @@ struct RetainedRunSurface: View {
                 },
                 onRetrySettlement: {
                     Task { await coordinator.retryCompletedRunSettlement() }
+                },
+                onConfirmRestart: {
+                    coordinator.prepareRestartRound(
+                        presentation.configuration
+                    )
+                },
+                onConfirmedRestartAbandonment: {
+                    restartAbandonment in
+                    _ = coordinator.retainConfirmedRestartAbandonment(
+                        restartAbandonment
+                    )
                 }
             )
             .id(presentation.sceneIdentity)

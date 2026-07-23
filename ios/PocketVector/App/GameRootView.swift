@@ -8,8 +8,11 @@ struct GameRootView: View {
     let configuration: RunConfiguration
     let settings: PlayerSettings
     let abandonRequestID: Int
+    let restartRequestID: Int
     let resumeRequestID: Int
     let freezesPresentation: Bool
+    let onConfirmedRestartAbandonment:
+        @MainActor (ConfirmedRestartAbandonment) -> Void
     let onGameplaySnapshotChanged: @MainActor (GameplaySceneSnapshot) -> Void
 
     @StateObject private var sceneHost: GameplaySceneHost
@@ -18,22 +21,29 @@ struct GameRootView: View {
         configuration: RunConfiguration,
         settings: PlayerSettings,
         abandonRequestID: Int,
+        restartRequestID: Int = 0,
         resumeRequestID: Int = 0,
         freezesPresentation: Bool = false,
         onCompletedRun: @escaping @MainActor (CompletedRun) -> Void,
+        onConfirmedRestartAbandonment:
+            @escaping @MainActor (ConfirmedRestartAbandonment) -> Void = { _ in },
         onGameplaySnapshotChanged: @escaping @MainActor (GameplaySceneSnapshot) -> Void = { _ in }
     ) {
         self.configuration = configuration
         self.settings = settings
         self.abandonRequestID = abandonRequestID
+        self.restartRequestID = restartRequestID
         self.resumeRequestID = resumeRequestID
         self.freezesPresentation = freezesPresentation
+        self.onConfirmedRestartAbandonment =
+            onConfirmedRestartAbandonment
         self.onGameplaySnapshotChanged = onGameplaySnapshotChanged
         _sceneHost = StateObject(
             wrappedValue: GameplaySceneHost(
                 configuration: configuration,
                 settings: settings,
                 initialResumeRequestID: resumeRequestID,
+                initialConfirmedRestartRequestID: restartRequestID,
                 initialConfirmedExitRequestID: abandonRequestID,
                 onCompletedRun: onCompletedRun
             )
@@ -72,6 +82,13 @@ struct GameRootView: View {
         .onChange(of: resumeRequestID) { _, newValue in
             sceneHost.bridge.requestResume(id: newValue)
         }
+        .onChange(of: restartRequestID) { _, newValue in
+            guard let restartAbandonment =
+                    sceneHost.bridge.requestConfirmedRestart(id: newValue) else {
+                return
+            }
+            onConfirmedRestartAbandonment(restartAbandonment)
+        }
         .onChange(of: abandonRequestID) { _, newValue in
             sceneHost.bridge.requestConfirmedExit(id: newValue)
         }
@@ -101,6 +118,9 @@ protocol GameplaySceneActionTarget: AnyObject {
     @discardableResult
     func resume() -> Bool
 
+    @discardableResult
+    func commitConfirmedRestartRound() -> ConfirmedRestartAbandonment?
+
     func commitConfirmedExitRun()
     func setApplicationActive(_ isActive: Bool)
 }
@@ -111,6 +131,7 @@ extension GameScene: GameplaySceneActionTarget {}
 final class GameplaySceneBridge {
     private let target: any GameplaySceneActionTarget
     private var lastResumeRequestID: Int
+    private var lastConfirmedRestartRequestID: Int
     private var lastConfirmedExitRequestID: Int
     private var snapshotReceiver: (@MainActor (GameplaySceneSnapshot) -> Void)?
     private var lastForwardedSnapshot: GameplaySceneSnapshot?
@@ -118,10 +139,12 @@ final class GameplaySceneBridge {
     init(
         target: any GameplaySceneActionTarget,
         initialResumeRequestID: Int,
+        initialConfirmedRestartRequestID: Int,
         initialConfirmedExitRequestID: Int
     ) {
         self.target = target
         lastResumeRequestID = initialResumeRequestID
+        lastConfirmedRestartRequestID = initialConfirmedRestartRequestID
         lastConfirmedExitRequestID = initialConfirmedExitRequestID
     }
 
@@ -148,6 +171,14 @@ final class GameplaySceneBridge {
         guard requestID != lastResumeRequestID else { return }
         lastResumeRequestID = requestID
         target.resume()
+    }
+
+    func requestConfirmedRestart(
+        id requestID: Int
+    ) -> ConfirmedRestartAbandonment? {
+        guard requestID != lastConfirmedRestartRequestID else { return nil }
+        lastConfirmedRestartRequestID = requestID
+        return target.commitConfirmedRestartRound()
     }
 
     func requestConfirmedExit(id requestID: Int) {
@@ -189,6 +220,7 @@ private final class GameplaySceneHost: ObservableObject {
         configuration: RunConfiguration,
         settings: PlayerSettings,
         initialResumeRequestID: Int,
+        initialConfirmedRestartRequestID: Int,
         initialConfirmedExitRequestID: Int,
         onCompletedRun: @escaping @MainActor (CompletedRun) -> Void
     ) {
@@ -203,6 +235,8 @@ private final class GameplaySceneHost: ObservableObject {
         let bridge = GameplaySceneBridge(
             target: scene,
             initialResumeRequestID: initialResumeRequestID,
+            initialConfirmedRestartRequestID:
+                initialConfirmedRestartRequestID,
             initialConfirmedExitRequestID: initialConfirmedExitRequestID
         )
         scene.scaleMode = .aspectFit
