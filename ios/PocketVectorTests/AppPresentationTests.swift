@@ -809,20 +809,51 @@ final class AppPresentationTests: XCTestCase {
         }
     }
 
-    func testTeamPresentationUsesAllEightApprovedTeamsAndLockedPrices() throws {
+    func testTeamPresentationUsesSixteenApprovedTeamsWithFourOwnedAndTwelveLocked() throws {
         let catalog = LaunchCatalog.approved
         let state = AppCoordinatorState.launchDefault(catalog: catalog)
         let cards = AppPresentation.teams(catalog: catalog, state: state)
 
         XCTAssertEqual(cards.map(\.id), catalog.teams.map(\.id))
-        XCTAssertEqual(cards.count, 8)
+        XCTAssertEqual(cards.count, 16)
         XCTAssertEqual(cards.filter(\.isOwned).count, 4)
-        XCTAssertEqual(cards.filter(\.isLocked).count, 4)
+        XCTAssertEqual(cards.filter(\.isLocked).count, 12)
         XCTAssertTrue(cards.first?.isSelected == true)
         XCTAssertEqual(
             Set(cards.filter(\.isLocked).compactMap(\.unlockItem?.price)),
-            [EconomyConfiguration.lockedTeamPrice]
+            [1_500]
         )
+
+        let expansionCards = cards.filter {
+            Set(LaunchTeamID.expansionEight).contains($0.id)
+        }
+        XCTAssertEqual(expansionCards.count, 8)
+        for card in expansionCards {
+            let team = card.team
+            let assetRoot = "teams/\(team.id.rawValue)"
+            let identity = try XCTUnwrap(
+                LaunchVisualIdentityCatalog.knownTeam(for: team)
+            )
+
+            XCTAssertTrue(card.isLocked)
+            XCTAssertEqual(card.unlockItem?.price, 1_500)
+            XCTAssertEqual(team.assets.logo, "\(assetRoot)/logo")
+            XCTAssertEqual(team.assets.fieldBranding, "\(assetRoot)/field-branding")
+            XCTAssertEqual(
+                identity.jerseys.map(\.jerseyID),
+                [team.primaryJersey.id, team.alternateJersey.id]
+            )
+            XCTAssertNotNil(
+                GameAssetResources.url(
+                    for: "pixel/\(team.assets.endZone).png"
+                )
+            )
+            XCTAssertNotNil(
+                GameAssetResources.url(
+                    for: "pixel/\(team.assets.fieldBranding).png"
+                )
+            )
+        }
     }
 
     func testLockerPresentationKeepsAlternateJerseyTeamScopedAndFootballGlobal() throws {
