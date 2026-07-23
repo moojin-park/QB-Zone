@@ -33,8 +33,9 @@ simulation state.
 ## Run lifecycle
 
 The app validates the selected owned team, jersey, and football before creating
-an immutable run configuration. The opponent is randomized from the other seven
-teams, and uniform clash resolution chooses a readable defensive combination.
+an immutable run configuration. The opponent is randomized from the other 15
+teams, including locked teams, and uniform clash resolution chooses the more
+readable of that opponent's primary and alternate uniforms.
 
 The gameplay lifecycle is:
 
