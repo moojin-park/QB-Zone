@@ -129,6 +129,136 @@ private actor FallbackOnlyUniformTexturePreparer: UniformTexturePreparing {
     }
 }
 
+private struct ExpansionTeamVisualFixture {
+    let id: TeamID
+    let displayName: String
+    let primary: RGBColor
+    let secondary: RGBColor
+    let accent: RGBColor
+    let motif: EmblemMotif
+}
+
+private let expansionTeamVisualFixtures: [ExpansionTeamVisualFixture] = [
+    ExpansionTeamVisualFixture(
+        id: ExpansionTeamPresentationID.obsidianValeQuasars,
+        displayName: "Obsidian Vale Quasars",
+        primary: RGBColor(hex: "#0B0D10"),
+        secondary: RGBColor(hex: "#E5484D"),
+        accent: RGBColor(hex: "#C5CFD8"),
+        motif: .quasarJet
+    ),
+    ExpansionTeamVisualFixture(
+        id: ExpansionTeamPresentationID.cobaltJunctionPulsars,
+        displayName: "Cobalt Junction Pulsars",
+        primary: RGBColor(hex: "#14284F"),
+        secondary: RGBColor(hex: "#72C9F2"),
+        accent: RGBColor(hex: "#F26678"),
+        motif: .pulsarBeacon
+    ),
+    ExpansionTeamVisualFixture(
+        id: ExpansionTeamPresentationID.copperHollowTremors,
+        displayName: "Copper Hollow Tremors",
+        primary: RGBColor(hex: "#43271D"),
+        secondary: RGBColor(hex: "#F57422"),
+        accent: RGBColor(hex: "#F3DFC1"),
+        motif: .tectonicFault
+    ),
+    ExpansionTeamVisualFixture(
+        id: ExpansionTeamPresentationID.sunreefCurrents,
+        displayName: "Sunreef Currents",
+        primary: RGBColor(hex: "#003F3C"),
+        secondary: RGBColor(hex: "#FF8C72"),
+        accent: RGBColor(hex: "#F4E8D8"),
+        motif: .counterCurrent
+    ),
+    ExpansionTeamVisualFixture(
+        id: ExpansionTeamPresentationID.crownRiftArclights,
+        displayName: "Crown Rift Arclights",
+        primary: RGBColor(hex: "#40215F"),
+        secondary: RGBColor(hex: "#D9AE36"),
+        accent: RGBColor(hex: "#F2EAF8"),
+        motif: .arcRails
+    ),
+    ExpansionTeamVisualFixture(
+        id: ExpansionTeamPresentationID.gildedDeltaMonarchs,
+        displayName: "Gilded Delta Monarchs",
+        primary: RGBColor(hex: "#26303B"),
+        secondary: RGBColor(hex: "#C2A36A"),
+        accent: RGBColor(hex: "#F6F0E4"),
+        motif: .wingedCrown
+    ),
+    ExpansionTeamVisualFixture(
+        id: ExpansionTeamPresentationID.axiomPointGravitons,
+        displayName: "Axiom Point Gravitons",
+        primary: RGBColor(hex: "#1648B8"),
+        secondary: RGBColor(hex: "#EFCB32"),
+        accent: RGBColor(hex: "#F4F7FC"),
+        motif: .gravityLens
+    ),
+    ExpansionTeamVisualFixture(
+        id: ExpansionTeamPresentationID.emeraldSpireVortices,
+        displayName: "Emerald Spire Vortices",
+        primary: RGBColor(hex: "#0D8642"),
+        secondary: RGBColor(hex: "#000000"),
+        accent: RGBColor(hex: "#FFFFFF"),
+        motif: .spireVortex
+    ),
+]
+
+private func makeExpansionVisualCatalog() -> LaunchCatalog {
+    func makeTeam(_ fixture: ExpansionTeamVisualFixture) -> TeamDescriptor {
+        let primaryJersey = JerseyDescriptor(
+            id: JerseyID("jersey.\(fixture.id.rawValue).primary"),
+            teamID: fixture.id,
+            kind: .primary,
+            displayName: "Primary",
+            primaryColor: fixture.primary,
+            secondaryColor: fixture.secondary,
+            accentColor: fixture.accent,
+            assets: JerseyAssetKeys(
+                paletteToken: "teams/\(fixture.id.rawValue)/primary"
+            )
+        )
+        let alternateJersey = JerseyDescriptor(
+            id: JerseyID("jersey.\(fixture.id.rawValue).alternate"),
+            teamID: fixture.id,
+            kind: .alternate,
+            displayName: "Alternate",
+            primaryColor: fixture.secondary,
+            secondaryColor: fixture.accent,
+            accentColor: fixture.primary,
+            assets: JerseyAssetKeys(
+                paletteToken: "teams/\(fixture.id.rawValue)/alternate"
+            )
+        )
+        return TeamDescriptor(
+            id: fixture.id,
+            displayName: fixture.displayName,
+            initiallyOwned: false,
+            primaryColor: fixture.primary,
+            secondaryColor: fixture.secondary,
+            accentColor: fixture.accent,
+            primaryJersey: primaryJersey,
+            alternateJersey: alternateJersey,
+            assets: TeamAssetKeys(
+                logo: "teams/\(fixture.id.rawValue)/logo",
+                endZone: "teams/\(fixture.id.rawValue)/end-zone",
+                fieldBranding: "teams/\(fixture.id.rawValue)/field-branding"
+            )
+        )
+    }
+
+    let current = LaunchCatalog.approved
+    let existingTeamIDs = Set(current.teams.map(\.id))
+    return LaunchCatalog(
+        teams: current.teams + expansionTeamVisualFixtures
+            .filter { !existingTeamIDs.contains($0.id) }
+            .map(makeTeam),
+        footballs: current.footballs,
+        unlockableItems: current.unlockableItems
+    )
+}
+
 @MainActor
 private final class FirstTextureGatePreloader: UniformTexturePreloading {
     private let firstStarted: VisualLifecycleReceipt
@@ -211,19 +341,65 @@ final class LaunchVisualIdentityTests: XCTestCase {
                 secondary: RGBColor(hex: "#D77B46"),
                 accent: RGBColor(hex: "#F4F2EA")
             ),
+            ExpansionTeamPresentationID.obsidianValeQuasars: TeamBrandPalette(
+                primary: RGBColor(hex: "#11151A"),
+                secondary: RGBColor(hex: "#E5484D"),
+                accent: RGBColor(hex: "#C5CFD8")
+            ),
+            ExpansionTeamPresentationID.cobaltJunctionPulsars: TeamBrandPalette(
+                primary: RGBColor(hex: "#2460B9"),
+                secondary: RGBColor(hex: "#72C9F2"),
+                accent: RGBColor(hex: "#F26678")
+            ),
+            ExpansionTeamPresentationID.copperHollowTremors: TeamBrandPalette(
+                primary: RGBColor(hex: "#5A3020"),
+                secondary: RGBColor(hex: "#F57422"),
+                accent: RGBColor(hex: "#F3DFC1")
+            ),
+            ExpansionTeamPresentationID.sunreefCurrents: TeamBrandPalette(
+                primary: RGBColor(hex: "#075952"),
+                secondary: RGBColor(hex: "#FF8C72"),
+                accent: RGBColor(hex: "#F4E8D8")
+            ),
+            ExpansionTeamPresentationID.crownRiftArclights: TeamBrandPalette(
+                primary: RGBColor(hex: "#5A2D7D"),
+                secondary: RGBColor(hex: "#D9AE36"),
+                accent: RGBColor(hex: "#F2EAF8")
+            ),
+            ExpansionTeamPresentationID.gildedDeltaMonarchs: TeamBrandPalette(
+                primary: RGBColor(hex: "#344150"),
+                secondary: RGBColor(hex: "#C2A36A"),
+                accent: RGBColor(hex: "#F6F0E4")
+            ),
+            ExpansionTeamPresentationID.axiomPointGravitons: TeamBrandPalette(
+                primary: RGBColor(hex: "#1648B8"),
+                secondary: RGBColor(hex: "#EFCB32"),
+                accent: RGBColor(hex: "#F4F7FC")
+            ),
+            ExpansionTeamPresentationID.emeraldSpireVortices: TeamBrandPalette(
+                primary: RGBColor(hex: "#0D8642"),
+                secondary: RGBColor(hex: "#111318"),
+                accent: RGBColor(hex: "#FFFFFF")
+            ),
         ]
 
         XCTAssertEqual(visuals.allTeams.map(\.teamID), productCatalog.teams.map(\.id))
-        XCTAssertEqual(visuals.allTeams.count, 8)
-        XCTAssertEqual(visuals.allJerseys.count, 16)
-        XCTAssertEqual(Set(visuals.allJerseys.map(\.jerseyID)).count, 16)
+        XCTAssertEqual(visuals.allTeams.count, productCatalog.teams.count)
+        XCTAssertEqual(visuals.allJerseys.count, productCatalog.teams.count * 2)
+        XCTAssertEqual(
+            Set(visuals.allJerseys.map(\.jerseyID)).count,
+            productCatalog.teams.count * 2
+        )
         XCTAssertEqual(
             visuals.allFootballStyles.map(\.footballID),
             productCatalog.footballs.map(\.id)
         )
         XCTAssertEqual(visuals.allFootballStyles.count, 2)
         XCTAssertEqual(Set(visuals.allFootballStyles.map(\.panelTreatment)).count, 2)
-        XCTAssertEqual(Set(visuals.allTeams.map(\.palette)).count, 8)
+        XCTAssertEqual(
+            Set(visuals.allTeams.map(\.palette)).count,
+            productCatalog.teams.count
+        )
         for football in productCatalog.footballs {
             XCTAssertEqual(visuals.football(id: football.id)?.footballID, football.id)
         }
@@ -284,8 +460,14 @@ final class LaunchVisualIdentityTests: XCTestCase {
         let productCatalog = LaunchCatalog.approved
         let visuals = LaunchVisualIdentityCatalog.approved
 
-        XCTAssertEqual(Set(visuals.allTeams.map { $0.emblem.motif }).count, 8)
-        XCTAssertEqual(Set(visuals.allTeams.map { $0.emblem.motif }), Set(EmblemMotif.allCases))
+        XCTAssertEqual(
+            Set(visuals.allTeams.map { $0.emblem.motif }).count,
+            productCatalog.teams.count
+        )
+        XCTAssertTrue(
+            Set(visuals.allTeams.map { $0.emblem.motif })
+                .isSubset(of: Set(EmblemMotif.allCases))
+        )
 
         for team in productCatalog.teams {
             guard let identity = visuals.team(id: team.id) else {
@@ -295,6 +477,159 @@ final class LaunchVisualIdentityTests: XCTestCase {
             let fullWordmark = "\(identity.wordmark.marketLine) \(identity.wordmark.nicknameLine)"
             XCTAssertEqual(fullWordmark, team.displayName.uppercased())
         }
+    }
+
+    func testAllSixteenApprovedPresentationSpecsResolveThroughSyntheticCatalog() throws {
+        let catalog = makeExpansionVisualCatalog()
+        let visuals = try XCTUnwrap(LaunchVisualIdentityCatalog(catalog: catalog))
+
+        XCTAssertEqual(catalog.teams.count, 16)
+        XCTAssertEqual(visuals.allTeams.map(\.teamID), catalog.teams.map(\.id))
+        XCTAssertEqual(visuals.allTeams.count, 16)
+        XCTAssertEqual(visuals.allJerseys.count, 32)
+        XCTAssertEqual(Set(visuals.allTeams.map { $0.emblem.motif }), Set(EmblemMotif.allCases))
+        XCTAssertEqual(Set(visuals.allTeams.map { $0.wordmark.layout }).count, 16)
+        XCTAssertEqual(Set(visuals.allTeams.map { $0.endZone.motifLayout }).count, 16)
+
+        for fixture in expansionTeamVisualFixtures {
+            let identity = try XCTUnwrap(visuals.team(id: fixture.id))
+            let descriptor = try XCTUnwrap(catalog.team(id: fixture.id))
+            XCTAssertEqual(
+                LaunchVisualIdentityCatalog.knownTeam(for: descriptor),
+                identity
+            )
+            XCTAssertEqual(identity.displayName, fixture.displayName)
+            XCTAssertEqual(identity.emblem.motif, fixture.motif)
+            XCTAssertEqual(
+                "\(identity.wordmark.marketLine) \(identity.wordmark.nicknameLine)",
+                fixture.displayName.uppercased()
+            )
+            XCTAssertEqual(
+                identity.hud,
+                HUDVisualPalette(
+                    primary: fixture.primary,
+                    secondary: fixture.secondary,
+                    accent: fixture.accent
+                )
+            )
+            XCTAssertFalse(identity.emblem.primitives.isEmpty)
+            XCTAssertTrue(identity.emblem.primitives.allSatisfy(\.usesNormalizedCanvas))
+            XCTAssertEqual(identity.jerseys.count, 2)
+        }
+    }
+
+    func testExpansionPresentationRejectsAnUnknownOrMismatchedDescriptor() throws {
+        let catalog = makeExpansionVisualCatalog()
+        let firstExpansionIndex = try XCTUnwrap(
+            catalog.teams.firstIndex {
+                $0.id == ExpansionTeamPresentationID.obsidianValeQuasars
+            }
+        )
+        let approved = catalog.teams[firstExpansionIndex]
+        let mismatch = TeamDescriptor(
+            id: approved.id,
+            displayName: approved.displayName,
+            initiallyOwned: approved.initiallyOwned,
+            primaryColor: RGBColor(hex: "#010203"),
+            secondaryColor: approved.secondaryColor,
+            accentColor: approved.accentColor,
+            primaryJersey: approved.primaryJersey,
+            alternateJersey: approved.alternateJersey,
+            assets: approved.assets
+        )
+        var teams = catalog.teams
+        teams[firstExpansionIndex] = mismatch
+        XCTAssertNil(LaunchVisualIdentityCatalog.knownTeam(for: mismatch))
+        XCTAssertNil(
+            LaunchVisualIdentityCatalog(catalog: LaunchCatalog(
+                teams: teams,
+                footballs: catalog.footballs,
+                unlockableItems: catalog.unlockableItems
+            ))
+        )
+
+        let mismatchedAssets = TeamDescriptor(
+            id: approved.id,
+            displayName: approved.displayName,
+            initiallyOwned: approved.initiallyOwned,
+            primaryColor: approved.primaryColor,
+            secondaryColor: approved.secondaryColor,
+            accentColor: approved.accentColor,
+            primaryJersey: approved.primaryJersey,
+            alternateJersey: approved.alternateJersey,
+            assets: TeamAssetKeys(
+                logo: "teams/wrong/logo",
+                endZone: approved.assets.endZone,
+                fieldBranding: approved.assets.fieldBranding
+            )
+        )
+        XCTAssertNil(LaunchVisualIdentityCatalog.knownTeam(for: mismatchedAssets))
+
+        let mismatchedPrimaryJersey = JerseyDescriptor(
+            id: approved.primaryJersey.id,
+            teamID: approved.id,
+            kind: .primary,
+            displayName: approved.primaryJersey.displayName,
+            primaryColor: approved.primaryJersey.primaryColor,
+            secondaryColor: approved.primaryJersey.secondaryColor,
+            accentColor: approved.primaryJersey.accentColor,
+            assets: JerseyAssetKeys(paletteToken: "teams/wrong/primary")
+        )
+        let mismatchedJerseyAssets = TeamDescriptor(
+            id: approved.id,
+            displayName: approved.displayName,
+            initiallyOwned: approved.initiallyOwned,
+            primaryColor: approved.primaryColor,
+            secondaryColor: approved.secondaryColor,
+            accentColor: approved.accentColor,
+            primaryJersey: mismatchedPrimaryJersey,
+            alternateJersey: approved.alternateJersey,
+            assets: approved.assets
+        )
+        XCTAssertNil(LaunchVisualIdentityCatalog.knownTeam(for: mismatchedJerseyAssets))
+
+        let unknownID = TeamID("unknown_expansion_team")
+        let unknown = TeamDescriptor(
+            id: unknownID,
+            displayName: "Unknown Expansion Team",
+            initiallyOwned: false,
+            primaryColor: RGBColor(hex: "#111111"),
+            secondaryColor: RGBColor(hex: "#222222"),
+            accentColor: RGBColor(hex: "#FFFFFF"),
+            primaryJersey: JerseyDescriptor(
+                id: JerseyID("jersey.unknown_expansion_team.primary"),
+                teamID: unknownID,
+                kind: .primary,
+                displayName: "Primary",
+                primaryColor: RGBColor(hex: "#111111"),
+                secondaryColor: RGBColor(hex: "#222222"),
+                accentColor: RGBColor(hex: "#FFFFFF"),
+                assets: JerseyAssetKeys(paletteToken: "teams/unknown_expansion_team/primary")
+            ),
+            alternateJersey: JerseyDescriptor(
+                id: JerseyID("jersey.unknown_expansion_team.alternate"),
+                teamID: unknownID,
+                kind: .alternate,
+                displayName: "Alternate",
+                primaryColor: RGBColor(hex: "#222222"),
+                secondaryColor: RGBColor(hex: "#FFFFFF"),
+                accentColor: RGBColor(hex: "#111111"),
+                assets: JerseyAssetKeys(paletteToken: "teams/unknown_expansion_team/alternate")
+            ),
+            assets: TeamAssetKeys(
+                logo: "teams/unknown_expansion_team/logo",
+                endZone: "teams/unknown_expansion_team/end-zone",
+                fieldBranding: "teams/unknown_expansion_team/field-branding"
+            )
+        )
+        XCTAssertNil(LaunchVisualIdentityCatalog.knownTeam(for: unknown))
+        XCTAssertNil(
+            LaunchVisualIdentityCatalog(catalog: LaunchCatalog(
+                teams: catalog.teams + [unknown],
+                footballs: catalog.footballs,
+                unlockableItems: catalog.unlockableItems
+            ))
+        )
     }
 
     func testDefensePresentationDoesNotDependOnPlayerOwnership() throws {
@@ -511,14 +846,13 @@ final class LaunchVisualIdentityTests: XCTestCase {
     }
 
     @MainActor
-    func testAllSixteenLaunchJerseysResolveEveryBakedGameplayFrame() throws {
-        let catalog = LaunchCatalog.approved
+    func testEveryApprovedPresentationJerseyResolvesEveryBakedGameplayFrame() throws {
+        let catalog = makeExpansionVisualCatalog()
         let genericFramePaths = TextureLibrary.offenseUniformPaths
             + TextureLibrary.defenseUniformPaths
         var assetRoots = Set<GameplayJerseyAssetRoot>()
         var cacheKeys = Set<UniformTextureCacheKey>()
 
-        XCTAssertEqual(catalog.teams.count, 8)
         XCTAssertEqual(genericFramePaths.count, 34)
         for team in catalog.teams {
             for jersey in team.jerseys {
@@ -567,12 +901,13 @@ final class LaunchVisualIdentityTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(assetRoots.count, 16)
-        XCTAssertEqual(cacheKeys.count, 16 * 34)
+        let jerseyCount = catalog.teams.flatMap(\.jerseys).count
+        XCTAssertEqual(assetRoots.count, jerseyCount)
+        XCTAssertEqual(cacheKeys.count, jerseyCount * genericFramePaths.count)
     }
 
-    func testRaisedForegroundQuarterbackRoutesEveryPoseForAllSixteenUniforms() throws {
-        let catalog = LaunchCatalog.approved
+    func testRaisedForegroundQuarterbackRoutesEveryPoseForEveryApprovedUniform() throws {
+        let catalog = makeExpansionVisualCatalog()
         let poses = ForegroundQuarterbackPose.allCases
         var routedFrameCount = 0
 
@@ -617,12 +952,15 @@ final class LaunchVisualIdentityTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(routedFrameCount, 16 * poses.count)
+        XCTAssertEqual(
+            routedFrameCount,
+            catalog.teams.flatMap(\.jerseys).count * poses.count
+        )
     }
 
     @MainActor
-    func testAllSixteenLaunchJerseysUseSeparateNearestNeighborCacheEntries() async throws {
-        let catalog = LaunchCatalog.approved
+    func testEveryApprovedPresentationJerseyUsesSeparateNearestNeighborCacheEntries() async throws {
+        let catalog = makeExpansionVisualCatalog()
         let preloader = RecordingUniformTexturePreloader()
         let library = TextureLibrary(
             uniformTexturePreparer: SyntheticUniformTexturePreparer(),
@@ -673,16 +1011,17 @@ final class LaunchVisualIdentityTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(cachedTextureIdentities.count, 16)
+        let jerseyCount = catalog.teams.flatMap(\.jerseys).count
+        XCTAssertEqual(cachedTextureIdentities.count, jerseyCount)
         XCTAssertEqual(
             preloader.invocationCount,
-            16 * (TextureLibrary.offenseUniformPaths.count
+            jerseyCount * (TextureLibrary.offenseUniformPaths.count
                 + TextureLibrary.defenseUniformPaths.count)
         )
     }
 
     func testRunUniformAssetRootsRejectCrossTeamJerseys() throws {
-        let catalog = LaunchCatalog.approved
+        let catalog = makeExpansionVisualCatalog()
         let offense = try XCTUnwrap(catalog.team(id: LaunchTeamID.novaCityComets))
         let defense = try XCTUnwrap(catalog.team(id: LaunchTeamID.highMesaHelions))
         let valid = RunConfiguration(
@@ -1011,8 +1350,8 @@ final class LaunchVisualIdentityTests: XCTestCase {
     }
 
     @MainActor
-    func testAllEightGameplayFieldStacksResolveAndPreloadInExactOrder() async throws {
-        let catalog = LaunchCatalog.approved
+    func testEveryGameplayFieldStackResolvesAndPreloadsInExactOrder() async throws {
+        let catalog = makeExpansionVisualCatalog()
         let preloader = RecordingUniformTexturePreloader()
         let library = TextureLibrary(uniformTexturePreloader: preloader)
         var endZonePaths = Set<String>()
@@ -1052,11 +1391,11 @@ final class LaunchVisualIdentityTests: XCTestCase {
             XCTAssertTrue(result.isComplete)
         }
 
-        XCTAssertEqual(endZonePaths.count, 8)
-        XCTAssertEqual(brandingPaths.count, 8)
+        XCTAssertEqual(endZonePaths.count, catalog.teams.count)
+        XCTAssertEqual(brandingPaths.count, catalog.teams.count)
         XCTAssertEqual(
             preloader.invocationCount,
-            18,
+            2 + (catalog.teams.count * 2),
             "Two shared layers preload once and each team contributes two unique layers"
         )
     }

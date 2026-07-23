@@ -1,6 +1,6 @@
-# Baked launch-team gameplay sprites
+# Baked team gameplay sprites
 
-Every launch team has independently authored primary and alternate source
+Every team has independently authored primary and alternate source
 strips for the quarterback, receiver, and defender. The raster colors are final
 materials, not inputs to a runtime recoloring mask.
 
@@ -42,6 +42,14 @@ Role-wide approved review sheets live under `QA/`.
 | `meridian_plains_radiants` | `#C72F4F` | `#F0A253` | `#FFF0DD` |
 | `rainport_auroras` | `#0B3A4A` | `#9DD643` | `#E5F2EA` |
 | `bayline_redshifts` | `#842C4B` | `#C87845` | `#DFE5E2` |
+| `obsidian_vale_quasars` | `#0B0D10` | `#E5484D` | `#C5CFD8` |
+| `cobalt_junction_pulsars` | `#14284F` | `#72C9F2` | `#F26678` |
+| `copper_hollow_tremors` | `#43271D` | `#F57422` | `#F3DFC1` |
+| `sunreef_currents` | `#003F3C` | `#FF8C72` | `#F4E8D8` |
+| `crown_rift_arclights` | `#40215F` | `#D9AE36` | `#F2EAF8` |
+| `gilded_delta_monarchs` | `#26303B` | `#C2A36A` | `#F6F0E4` |
+| `axiom_point_gravitons` | `#1648B8` | `#EFCB32` | `#F4F7FC` |
+| `emerald_spire_vortices` | `#0D8642` | `#000000` | `#FFFFFF` |
 
 Primary offense uses primary helmet/jersey, secondary shoulder panels/pants,
 and accent numbers/trim/socks. Alternate offense uses secondary helmet/jersey,

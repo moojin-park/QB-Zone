@@ -8,21 +8,30 @@ are intentionally kept outside that bundle.
 ## Inventory contract
 
 `ios/PocketVector/Resources/GameAssets/native-assets.json` declares the exact
-runtime inventory and its source provenance. The manifest contains 620 assets:
+runtime inventory and its source provenance. The Version 1.1 expansion
+manifest contains 1,180 assets:
 
 - 3 native control PNGs;
 - 16 WAV audio files;
-- 582 lossless character WebPs: 38 shared/fallback frames and 544 baked
-  primary/alternate uniform frames for all eight launch teams;
+- 1,126 lossless character WebPs: 38 shared/fallback frames and 1,088 baked
+  primary/alternate uniform frames for all sixteen teams;
 - 1 compatibility stadium field PNG;
 - 1 neutral stadium/turf PNG;
 - 1 universal field-markings PNG;
-- 16 team paint PNGs: one end-zone layer and one midfield layer for each of
-  the eight launch teams.
+- 32 team paint PNGs: one end-zone layer and one midfield layer for each of
+  the sixteen teams.
 
 `GameCoreTests.testNativeAssetManifestMatchesBundledResources` enumerates the
 physical bundle and requires exact set equality with the manifest, excluding
 the manifest file itself. It also decodes every image and audio asset.
+
+After adding or removing physical runtime resources, synchronize the sorted
+inventory and then use check mode in validation:
+
+```bash
+python3 ios/Tools/sync-native-asset-manifest.py
+python3 ios/Tools/sync-native-asset-manifest.py --check
+```
 
 ## Character sprites
 
@@ -42,8 +51,42 @@ ios/AssetSources/PixelCharacters/teams/<team-id>/primary/{qb,receiver,defender}-
 ios/AssetSources/PixelCharacters/teams/<team-id>/alternate/{qb,receiver,defender}-strip.png
 ```
 
-The eight valid `<team-id>` values and their palettes are documented in
+The sixteen valid `<team-id>` values and their palettes are documented in
 `ios/AssetSources/PixelCharacters/teams/README.md`.
+
+Generated primary and alternate role pairs are normalized together before
+runtime processing. This locks both jerseys to one scale and the shipped pose
+anchors without recoloring any material. After nearest-neighbor scaling, the
+normalizer repeats the 512-pixel isolated-debris check so resizing cannot turn
+a barely connected chroma artifact into a floating runtime speck:
+
+```bash
+python3 ios/Tools/extract-flat-pixel-chroma.py \
+  --input /tmp/<team>-qb-primary-chroma.png \
+  --output /tmp/<team>-qb-primary-transparent.png
+
+python3 ios/Tools/normalize-baked-team-strips.py \
+  --role qb \
+  --reference ios/AssetSources/PixelCharacters/qb-strip.png \
+  --primary-input /tmp/<team>-qb-primary-transparent.png \
+  --alternate-input /tmp/<team>-qb-alternate-transparent.png \
+  --primary-output ios/AssetSources/PixelCharacters/teams/<team-id>/primary/qb-strip.png \
+  --alternate-output ios/AssetSources/PixelCharacters/teams/<team-id>/alternate/qb-strip.png
+
+python3 -m unittest ios/Tools/test-extract-flat-pixel-chroma.py
+```
+
+The flat-key extractor removes bright key-family pixels inside the configured
+RGB-distance bound globally, including enclosed background islands. It
+flood-fills only border-connected pixels in the darker magenta edge family,
+replacing all keyed pixels with transparent black. The dark-edge hue guard
+excludes coral/red materials, while its stricter green ratio and connectivity
+gate protect authored violet uniform materials. Every non-background RGBA
+value is preserved exactly. It performs no soft matte, despill, recoloring, or
+material projection, so uniforms remain authored opaque colors instead of
+developing dark speckled holes. A final connected-component check removes only
+isolated debris of 512 pixels or fewer; player silhouettes and footballs remain
+well above that bound.
 
 The processor validates nonempty equal-width slots, shared per-role scale,
 nearest-neighbor palette preservation, transparent padding, lossless WebP
@@ -90,8 +133,8 @@ python3 ios/Tools/process-pixel-character-strips.py \
   --force
 ```
 
-All 16 team/uniform directories contain lossless 384 x 512 WebPs anchored at
-`[192, 496]`. Together they add 544 baked frames and approximately 25.14 MiB to
+All 32 team/uniform directories contain lossless 384 x 512 WebPs anchored at
+`[192, 496]`. Together they add 1,088 baked frames and approximately 44.86 MiB to
 the checked-in resource bundle. They preserve fully authored team materials
 and must be loaded without runtime uniform projection. The shared 38-frame set
 remains an emergency/development fallback rather than launch-team presentation.
