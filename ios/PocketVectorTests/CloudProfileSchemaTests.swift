@@ -679,7 +679,7 @@ final class CloudProfileSchemaTests: XCTestCase, @unchecked Sendable {
             [
                 "43ae9e723718f27a0a5f0c4c3dee93125dd448237b71e0009cb35f6efdcfed22",
                 "0285613b029667a14d7b03be9f52009a28710d4c1da958f0bc2ab289f6ee2960",
-                "534bd1938db7b0dd0b061e11ab7ae582ec886a8880e28edfe82379643be5fe4a",
+                "f4ca1eeca6382dcc372a4f4fa881a0cc7956918b2fd34b688eeebd59c335b479",
                 "0aec2fb941dd4873f0901d65a6288f558bbc92a3995f76c18db1e3fa978ee2db",
             ]
         )

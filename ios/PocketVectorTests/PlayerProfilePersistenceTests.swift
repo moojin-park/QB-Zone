@@ -6689,6 +6689,85 @@ final class PlayerProfilePersistenceTests: XCTestCase, @unchecked Sendable {
         )
     }
 
+    func testBuild160EightTeamEnvelopeRemainsValidThroughCatalogExpansion()
+        throws
+    {
+        let migrator = PlayerProfileMigrator()
+        var predecessor = PlayerProfileFactory.makeDefault(
+            profileID: UUID(
+                uuidString: "00000000-0000-4000-8000-000000000160"
+            )!,
+            accountIdentity: .local,
+            deviceID: "build-160-catalog-fixture",
+            createdAt: baseDate
+        )
+        for achievementID in
+            AchievementCatalogTransitionV2ToV3.addedAchievementIDs {
+            predecessor.player.achievementProgress.removeValue(
+                forKey: achievementID
+            )
+        }
+        predecessor.player.selection.value.selectedJerseyByTeam =
+            predecessor.player.selection.value.selectedJerseyByTeam.filter {
+                LaunchTeamID.originalEight.contains($0.key)
+            }
+
+        predecessor.player.revision = 160
+        predecessor.economyRevision = 160
+
+        let exactBuild160Bytes = try PlayerProfileCanonicalEnvelopeEncoderV1
+            .encode(
+                PlayerProfileEnvelopeV4(
+                    document: predecessor,
+                    savedAt: baseDate.addingTimeInterval(160)
+                )
+            )
+        let decoded = try migrator.decodeArtifact(exactBuild160Bytes)
+
+        XCTAssertEqual(
+            decoded.sourceSchemaVersion,
+            PlayerProfileEnvelopeV4.schemaVersion
+        )
+        XCTAssertNoThrow(try PlayerProfileValidator.validate(decoded.document))
+        XCTAssertEqual(decoded.document.player.profileID, predecessor.player.profileID)
+        XCTAssertEqual(decoded.document.player.revision, 160)
+        XCTAssertEqual(decoded.document.economyRevision, 160)
+        XCTAssertEqual(
+            decoded.document.player.selection.value,
+            predecessor.player.selection.value
+        )
+        XCTAssertEqual(
+            decoded.document.player.inventory,
+            predecessor.player.inventory
+        )
+        XCTAssertEqual(
+            Set(decoded.document.player.selection.value.selectedJerseyByTeam.keys),
+            Set(LaunchTeamID.originalEight)
+        )
+        XCTAssertTrue(
+            Set(LaunchTeamID.expansionEight).isDisjoint(
+                with: decoded.document.player.inventory.ownedTeamIDs
+            )
+        )
+        XCTAssertEqual(
+            Set(decoded.document.player.achievementProgress.keys),
+            Set(AchievementCatalog.launch.map(\.id))
+        )
+
+        let canonical = try migrator.canonicalArtifact(
+            for: decoded.document,
+            savedAt: decoded.savedAt
+        )
+        XCTAssertEqual(
+            canonical.envelope.schemaVersion,
+            PlayerProfileEnvelopeV4.schemaVersion
+        )
+        XCTAssertEqual(
+            try migrator.decodeArtifact(canonical.exactBytes).document,
+            decoded.document
+        )
+    }
+
     func testV2ToV3AchievementTransitionAddsExactDurableMarkerAndIsIdempotent()
         throws
     {

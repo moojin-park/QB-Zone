@@ -673,7 +673,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(fingerprint, CloudReplicaScopeFingerprint.make(for: base))
         XCTAssertEqual(
             fingerprint.rawValue,
-            "0071557eef7d0cee0fb1c3eccb217a6f770a5a84c820af6ca85e171f18302cb0"
+            "0c73c2cbc021bed5cf893a16ba797f8ac4d14b7e2d84d45a3e21a4b678856bf0"
         )
         XCTAssertEqual(fingerprint.rawValue.count, 64)
         XCTAssertEqual(
@@ -697,6 +697,40 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(
             LaunchAchievementCloudScopeTransitionV2ToV3.targetScope(for: base),
             fingerprint
+        )
+        let v1Hybrid = CloudReplicaScopeFingerprint.make(
+            for: base,
+            achievementMaterial:
+                LaunchAchievementCloudScopeTransitionV1ToV2
+                    .sourceAchievementFingerprintMaterial,
+            canonicalPayloadMaterial:
+                LaunchAchievementCloudScopeTransitionV1ToV2
+                    .sourceCanonicalPayloadFingerprintMaterial
+        )
+        XCTAssertEqual(
+            v1Hybrid.rawValue,
+            "f8960558b5a6cac1fdf237d2a6b0fb0a95742176c0537f1655b087bc924e189a"
+        )
+        XCTAssertNotEqual(
+            v1Hybrid,
+            LaunchAchievementCloudScopeTransitionV1ToV2.sourceScope(for: base)
+        )
+        let v2Hybrid = CloudReplicaScopeFingerprint.make(
+            for: base,
+            achievementMaterial:
+                LaunchAchievementCloudScopeTransitionV2ToV3
+                    .sourceAchievementFingerprintMaterial,
+            canonicalPayloadMaterial:
+                LaunchAchievementCloudScopeTransitionV2ToV3
+                    .sourceCanonicalPayloadFingerprintMaterial
+        )
+        XCTAssertEqual(
+            v2Hybrid.rawValue,
+            "66981d25394106d86b737a1a25caefe99b0a0210b9a7b38128009e56b486f290"
+        )
+        XCTAssertNotEqual(
+            v2Hybrid,
+            LaunchAchievementCloudScopeTransitionV2ToV3.sourceScope(for: base)
         )
         XCTAssertEqual(
             CloudReplicaScopeFingerprint.orderedMaterial(for: base),
@@ -815,7 +849,7 @@ final class CloudReplicaCheckpointTests: XCTestCase, @unchecked Sendable {
                     components: catalog.persistedFingerprintMaterial
                 )
             ),
-            "74420bf94ecb3707676b6a784a9a1df36f784faac8b83f792b8cabee786d024b"
+            "8b3414aed40d704d8cb6688e0ac99116b8b05391dcc6fe48e6995433efd74e8d"
         )
         XCTAssertEqual(
             CloudProfileDigest.hex(

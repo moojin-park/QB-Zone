@@ -156,10 +156,26 @@ struct CloudReplicaScopeFingerprint: RawRepresentable, Codable, Equatable, Hasha
         achievementMaterial: [String],
         canonicalPayloadMaterial: [String]
     ) -> Self {
+        make(
+            for: configuration,
+            achievementMaterial: achievementMaterial,
+            catalogMaterial:
+                LaunchCatalog.approved.persistedFingerprintMaterial,
+            canonicalPayloadMaterial: canonicalPayloadMaterial
+        )
+    }
+
+    static func make(
+        for configuration: ProductionCloudWriteConfiguration,
+        achievementMaterial: [String],
+        catalogMaterial: [String],
+        canonicalPayloadMaterial: [String]
+    ) -> Self {
         var hasher = SHA256()
         for value in orderedMaterial(
             for: configuration,
             achievementMaterial: achievementMaterial,
+            catalogMaterial: catalogMaterial,
             canonicalPayloadMaterial: canonicalPayloadMaterial
         ) {
             append(value, to: &hasher)
@@ -196,10 +212,26 @@ struct CloudReplicaScopeFingerprint: RawRepresentable, Codable, Equatable, Hasha
         achievementMaterial: [String],
         canonicalPayloadMaterial: [String]
     ) -> [String] {
+        orderedMaterial(
+            for: configuration,
+            achievementMaterial: achievementMaterial,
+            catalogMaterial:
+                LaunchCatalog.approved.persistedFingerprintMaterial,
+            canonicalPayloadMaterial: canonicalPayloadMaterial
+        )
+    }
+
+    static func orderedMaterial(
+        for configuration: ProductionCloudWriteConfiguration,
+        achievementMaterial: [String],
+        catalogMaterial: [String],
+        canonicalPayloadMaterial: [String]
+    ) -> [String] {
         let transport = configuration.transport.fingerprintMaterial
         let economy = configuration.economy.fingerprintMaterial
         let profile = configuration.profile.fingerprintMaterial(
             achievementMaterial: achievementMaterial,
+            catalogMaterial: catalogMaterial,
             canonicalPayloadMaterial: canonicalPayloadMaterial
         )
         return [scopeDomain, "transport", String(transport.count)]
@@ -479,6 +511,8 @@ enum LaunchAchievementCloudScopeTransitionV1ToV2 {
         LaunchAchievementCloudFingerprintHistory.catalogV1
     static let targetAchievementFingerprintMaterial =
         LaunchAchievementCloudFingerprintHistory.catalogV2
+    static let sourceCanonicalPayloadFingerprintMaterial =
+        LaunchAchievementCloudFingerprintHistory.canonicalPayloadV1
 
     static func sourceScope(
         for configuration: ProductionCloudWriteConfiguration
@@ -486,8 +520,11 @@ enum LaunchAchievementCloudScopeTransitionV1ToV2 {
         CloudReplicaScopeFingerprint.make(
             for: configuration,
             achievementMaterial: sourceAchievementFingerprintMaterial,
+            catalogMaterial:
+                LaunchCatalogTransitionV1ToV2
+                    .sourcePersistedFingerprintMaterial,
             canonicalPayloadMaterial:
-                LaunchAchievementCloudFingerprintHistory.canonicalPayloadV1
+                sourceCanonicalPayloadFingerprintMaterial
         )
     }
 
@@ -497,8 +534,11 @@ enum LaunchAchievementCloudScopeTransitionV1ToV2 {
         CloudReplicaScopeFingerprint.make(
             for: configuration,
             achievementMaterial: targetAchievementFingerprintMaterial,
+            catalogMaterial:
+                LaunchCatalogTransitionV1ToV2
+                    .sourcePersistedFingerprintMaterial,
             canonicalPayloadMaterial:
-                LaunchAchievementCloudFingerprintHistory.canonicalPayloadV1
+                sourceCanonicalPayloadFingerprintMaterial
         )
     }
 }
@@ -509,6 +549,9 @@ enum LaunchAchievementCloudScopeTransitionV1ToV2 {
 enum LaunchAchievementCloudScopeTransitionV2ToV3 {
     static let sourceAchievementFingerprintMaterial =
         LaunchAchievementCloudFingerprintHistory.catalogV2
+    static let sourceCanonicalPayloadFingerprintMaterial =
+        LaunchAchievementCloudScopeTransitionV1ToV2
+            .sourceCanonicalPayloadFingerprintMaterial
 
     static func sourceScope(
         for configuration: ProductionCloudWriteConfiguration
@@ -516,8 +559,11 @@ enum LaunchAchievementCloudScopeTransitionV2ToV3 {
         CloudReplicaScopeFingerprint.make(
             for: configuration,
             achievementMaterial: sourceAchievementFingerprintMaterial,
+            catalogMaterial:
+                LaunchCatalogTransitionV1ToV2
+                    .sourcePersistedFingerprintMaterial,
             canonicalPayloadMaterial:
-                LaunchAchievementCloudFingerprintHistory.canonicalPayloadV1
+                sourceCanonicalPayloadFingerprintMaterial
         )
     }
 

@@ -95,15 +95,15 @@ struct CloudProfileSchemaConfiguration: Equatable, Sendable {
         )
     }
 
-    /// Transition-only seam for deriving the exact predecessor replica scope
-    /// from the same live transport/profile configuration. Production never
-    /// substitutes any material except the frozen launch-achievement V1
-    /// contract.
+    /// Transition-only seam for deriving an achievement predecessor from the
+    /// same live transport/profile and launch-catalog configuration.
     func fingerprintMaterial(
         achievementMaterial achievements: [String]
     ) -> [String] {
         fingerprintMaterial(
             achievementMaterial: achievements,
+            catalogMaterial:
+                LaunchCatalog.approved.persistedFingerprintMaterial,
             canonicalPayloadMaterial:
                 CloudProfileCanonicalPayload.fingerprintMaterial
         )
@@ -115,10 +115,25 @@ struct CloudProfileSchemaConfiguration: Equatable, Sendable {
         achievementMaterial achievements: [String],
         canonicalPayloadMaterial canonicalPayload: [String]
     ) -> [String] {
+        fingerprintMaterial(
+            achievementMaterial: achievements,
+            catalogMaterial:
+                LaunchCatalog.approved.persistedFingerprintMaterial,
+            canonicalPayloadMaterial: canonicalPayload
+        )
+    }
+
+    /// Transition-only seam for reconstructing a sealed predecessor whose
+    /// achievement, launch-catalog, and canonical-payload contracts may all
+    /// differ from the live target.
+    func fingerprintMaterial(
+        achievementMaterial achievements: [String],
+        catalogMaterial catalog: [String],
+        canonicalPayloadMaterial canonicalPayload: [String]
+    ) -> [String] {
         let mergePolicy = CloudProfileMergePolicyV1.fingerprintMaterial
         let deviceIDRule = ProfileStampDeviceIDRuleV1.fingerprintMaterial
         let accountDerivation = CloudAccountDerivedBindings.profileFingerprintMaterial
-        let catalog = LaunchCatalog.approved.persistedFingerprintMaterial
 
         return [
             Self.schemaIdentifier,

@@ -17,7 +17,7 @@ final class AppCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.bootstrapState, .ready)
         XCTAssertEqual(coordinator.navigationPath, [.mainMenu])
         XCTAssertEqual(coordinator.currentDestination, .mainMenu)
-        XCTAssertEqual(coordinator.catalog.teams.count, 8)
+        XCTAssertEqual(coordinator.catalog.teams.count, 16)
         XCTAssertEqual(coordinator.state.inventory.ownedTeamIDs.count, 4)
         XCTAssertEqual(coordinator.state.selection.selectedTeamID, LaunchTeamID.novaCityComets)
         XCTAssertEqual(coordinator.state.achievementProgress.count, 14)
