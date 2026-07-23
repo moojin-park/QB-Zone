@@ -205,60 +205,6 @@ private let expansionTeamVisualFixtures: [ExpansionTeamVisualFixture] = [
     ),
 ]
 
-private func makeExpansionVisualCatalog() -> LaunchCatalog {
-    func makeTeam(_ fixture: ExpansionTeamVisualFixture) -> TeamDescriptor {
-        let primaryJersey = JerseyDescriptor(
-            id: JerseyID("jersey.\(fixture.id.rawValue).primary"),
-            teamID: fixture.id,
-            kind: .primary,
-            displayName: "Primary",
-            primaryColor: fixture.primary,
-            secondaryColor: fixture.secondary,
-            accentColor: fixture.accent,
-            assets: JerseyAssetKeys(
-                paletteToken: "teams/\(fixture.id.rawValue)/primary"
-            )
-        )
-        let alternateJersey = JerseyDescriptor(
-            id: JerseyID("jersey.\(fixture.id.rawValue).alternate"),
-            teamID: fixture.id,
-            kind: .alternate,
-            displayName: "Alternate",
-            primaryColor: fixture.secondary,
-            secondaryColor: fixture.accent,
-            accentColor: fixture.primary,
-            assets: JerseyAssetKeys(
-                paletteToken: "teams/\(fixture.id.rawValue)/alternate"
-            )
-        )
-        return TeamDescriptor(
-            id: fixture.id,
-            displayName: fixture.displayName,
-            initiallyOwned: false,
-            primaryColor: fixture.primary,
-            secondaryColor: fixture.secondary,
-            accentColor: fixture.accent,
-            primaryJersey: primaryJersey,
-            alternateJersey: alternateJersey,
-            assets: TeamAssetKeys(
-                logo: "teams/\(fixture.id.rawValue)/logo",
-                endZone: "teams/\(fixture.id.rawValue)/end-zone",
-                fieldBranding: "teams/\(fixture.id.rawValue)/field-branding"
-            )
-        )
-    }
-
-    let current = LaunchCatalog.approved
-    let existingTeamIDs = Set(current.teams.map(\.id))
-    return LaunchCatalog(
-        teams: current.teams + expansionTeamVisualFixtures
-            .filter { !existingTeamIDs.contains($0.id) }
-            .map(makeTeam),
-        footballs: current.footballs,
-        unlockableItems: current.unlockableItems
-    )
-}
-
 @MainActor
 private final class FirstTextureGatePreloader: UniformTexturePreloading {
     private let firstStarted: VisualLifecycleReceipt
@@ -479,8 +425,8 @@ final class LaunchVisualIdentityTests: XCTestCase {
         }
     }
 
-    func testAllSixteenApprovedPresentationSpecsResolveThroughSyntheticCatalog() throws {
-        let catalog = makeExpansionVisualCatalog()
+    func testAllSixteenApprovedPresentationSpecsResolveThroughProductCatalog() throws {
+        let catalog = LaunchCatalog.approved
         let visuals = try XCTUnwrap(LaunchVisualIdentityCatalog(catalog: catalog))
 
         XCTAssertEqual(catalog.teams.count, 16)
@@ -519,7 +465,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
     }
 
     func testExpansionPresentationRejectsAnUnknownOrMismatchedDescriptor() throws {
-        let catalog = makeExpansionVisualCatalog()
+        let catalog = LaunchCatalog.approved
         let firstExpansionIndex = try XCTUnwrap(
             catalog.teams.firstIndex {
                 $0.id == ExpansionTeamPresentationID.obsidianValeQuasars
@@ -748,7 +694,11 @@ final class LaunchVisualIdentityTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(resolvedCombinations, 32)
+        XCTAssertEqual(
+            resolvedCombinations,
+            productCatalog.teams.flatMap(\.jerseys).count
+                * productCatalog.footballs.count
+        )
     }
 
     func testRunVisualResolverFailsClosedForCrossTeamJerseyAndSameTeamMatchup() throws {
@@ -847,7 +797,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
 
     @MainActor
     func testEveryApprovedPresentationJerseyResolvesEveryBakedGameplayFrame() throws {
-        let catalog = makeExpansionVisualCatalog()
+        let catalog = LaunchCatalog.approved
         let genericFramePaths = TextureLibrary.offenseUniformPaths
             + TextureLibrary.defenseUniformPaths
         var assetRoots = Set<GameplayJerseyAssetRoot>()
@@ -907,7 +857,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
     }
 
     func testRaisedForegroundQuarterbackRoutesEveryPoseForEveryApprovedUniform() throws {
-        let catalog = makeExpansionVisualCatalog()
+        let catalog = LaunchCatalog.approved
         let poses = ForegroundQuarterbackPose.allCases
         var routedFrameCount = 0
 
@@ -960,7 +910,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
 
     @MainActor
     func testEveryApprovedPresentationJerseyUsesSeparateNearestNeighborCacheEntries() async throws {
-        let catalog = makeExpansionVisualCatalog()
+        let catalog = LaunchCatalog.approved
         let preloader = RecordingUniformTexturePreloader()
         let library = TextureLibrary(
             uniformTexturePreparer: SyntheticUniformTexturePreparer(),
@@ -1021,7 +971,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
     }
 
     func testRunUniformAssetRootsRejectCrossTeamJerseys() throws {
-        let catalog = makeExpansionVisualCatalog()
+        let catalog = LaunchCatalog.approved
         let offense = try XCTUnwrap(catalog.team(id: LaunchTeamID.novaCityComets))
         let defense = try XCTUnwrap(catalog.team(id: LaunchTeamID.highMesaHelions))
         let valid = RunConfiguration(
@@ -1070,38 +1020,60 @@ final class LaunchVisualIdentityTests: XCTestCase {
         )
     }
 
-    func testBakedUniformPreparationPreservesDecodedRGBAWithoutProjection() throws {
-        let team = try XCTUnwrap(
-            LaunchCatalog.approved.team(id: LaunchTeamID.novaCityComets)
-        )
-        let root = try XCTUnwrap(
-            GameplayJerseyAssetRoot(
-                teamID: team.id,
-                jerseyID: team.primaryJersey.id
-            )
-        )
+    func testEveryBakedUniformPreparationPreservesDecodedRGBAWithoutProjection()
+        throws
+    {
+        let catalog = LaunchCatalog.approved
         let genericFramePath = "characters/qb-idle.webp"
-        let bakedFramePath = try XCTUnwrap(root.framePath(for: genericFramePath))
-        let decoded = try XCTUnwrap(
-            BakedUniformRasterPreprocessor.loadRaster(relativePath: bakedFramePath)
-        )
-        let prepared = try XCTUnwrap(
-            BakedUniformRasterPreprocessor.prepare(
-                UniformTexturePreparationRequest(
-                    relativePath: bakedFramePath,
-                    developmentFallbackRelativePath: nil,
-                    cacheKey: UniformTextureCacheKey(
-                        assetRoot: root,
-                        genericFramePath: genericFramePath
+        var verifiedUniforms = 0
+
+        for team in catalog.teams {
+            for jersey in team.jerseys {
+                let root = try XCTUnwrap(
+                    GameplayJerseyAssetRoot(
+                        teamID: team.id,
+                        jerseyID: jersey.id,
+                        catalog: catalog
                     )
                 )
-            )
-        )
+                let bakedFramePath = try XCTUnwrap(
+                    root.framePath(for: genericFramePath)
+                )
+                let decoded = try XCTUnwrap(
+                    BakedUniformRasterPreprocessor.loadRaster(
+                        relativePath: bakedFramePath
+                    )
+                )
+                let prepared = try XCTUnwrap(
+                    BakedUniformRasterPreprocessor.prepare(
+                        UniformTexturePreparationRequest(
+                            relativePath: bakedFramePath,
+                            developmentFallbackRelativePath: nil,
+                            cacheKey: UniformTextureCacheKey(
+                                assetRoot: root,
+                                genericFramePath: genericFramePath
+                            )
+                        )
+                    )
+                )
 
-        XCTAssertEqual(prepared.width, decoded.width)
-        XCTAssertEqual(prepared.height, decoded.height)
-        XCTAssertEqual(prepared.bytesPerRow, decoded.bytesPerRow)
-        XCTAssertEqual(prepared.rgbaData, Data(decoded.bytes))
+                XCTAssertEqual(prepared.width, decoded.width, bakedFramePath)
+                XCTAssertEqual(prepared.height, decoded.height, bakedFramePath)
+                XCTAssertEqual(
+                    prepared.bytesPerRow,
+                    decoded.bytesPerRow,
+                    bakedFramePath
+                )
+                XCTAssertEqual(
+                    prepared.rgbaData,
+                    Data(decoded.bytes),
+                    bakedFramePath
+                )
+                verifiedUniforms += 1
+            }
+        }
+
+        XCTAssertEqual(verifiedUniforms, 32)
     }
 
     func testGenericUniformFallbackRequiresExplicitDevelopmentRequest() throws {
@@ -1351,7 +1323,7 @@ final class LaunchVisualIdentityTests: XCTestCase {
 
     @MainActor
     func testEveryGameplayFieldStackResolvesAndPreloadsInExactOrder() async throws {
-        let catalog = makeExpansionVisualCatalog()
+        let catalog = LaunchCatalog.approved
         let preloader = RecordingUniformTexturePreloader()
         let library = TextureLibrary(uniformTexturePreloader: preloader)
         var endZonePaths = Set<String>()
@@ -1781,8 +1753,12 @@ final class LaunchVisualIdentityTests: XCTestCase {
     @MainActor
     func testGameSceneExposesReadinessBeforeStartingCountdown() async throws {
         let catalog = LaunchCatalog.approved
-        let offense = try XCTUnwrap(catalog.team(id: LaunchTeamID.highMesaHelions))
-        let defense = try XCTUnwrap(catalog.team(id: LaunchTeamID.novaCityComets))
+        let offense = try XCTUnwrap(
+            catalog.team(id: LaunchTeamID.obsidianValeQuasars)
+        )
+        let defense = try XCTUnwrap(
+            catalog.team(id: LaunchTeamID.emeraldSpireVortices)
+        )
         let configuration = RunConfiguration(
             runID: RunID(),
             randomSeed: 17,

@@ -43,7 +43,7 @@ requests.
 - Test both 667 x 375 and 932 x 430 compact landscape geometry.
 - Keep all controls inside safe-area insets, including the Dynamic Island side.
 - Protect the playfield from menu, matchup, readiness, and exit chrome.
-- Verify primary and alternate palettes for all eight teams and both footballs.
+- Verify primary and alternate palettes for all 16 teams and both footballs.
 - Check large Dynamic Type, VoiceOver labels, reduced motion, mute, and pause on
   physical iPhone and iPad hardware before release.
 
@@ -53,6 +53,38 @@ Economy values are release rules, not casual feel knobs. Any change must update
 the product charter, deterministic ledger tests, store presentation, App Store
 product metadata, and balancing evidence together. Never change an identifier
 for an already shipped ledger mutation or StoreKit product.
+
+## Launch catalog V1 to V2 transition
+
+`LaunchCatalogTransitionV1ToV2` is the additive Version 1.1 contract for moving
+from Build 160's eight teams to the permanent 16-team catalog. The original
+eight descriptors, IDs, ownership, unlock items, footballs, and prices remain
+unchanged. Nova City, High Mesa, Foundry Reach, and Rainport remain the only
+initially owned teams. All eight expansion teams start locked; every locked team
+costs 1,500 coins, every alternate jersey costs 500 coins, and the alternate
+football remains 750 coins.
+
+The frozen V1 predecessor material contains exactly 292 components and has the
+length-prefixed SHA-256 digest
+`74420bf94ecb3707676b6a784a9a1df36f784faac8b83f792b8cabee786d024b`.
+The V2 material contains exactly 915 components, including the complete
+transition contract, and has digest
+`8b3414aed40d704d8cb6688e0ac99116b8b05391dcc6fe48e6995433efd74e8d`.
+
+The roster expansion does not change the local profile envelope. Existing
+eight-team inventories, remembered jerseys, selections, unlock ledgers,
+receipts, and completed-run configurations remain valid as written. Missing
+remembered-jersey entries for locked expansion teams are valid; selecting or
+unlocking one may seed its primary jersey without granting any additional
+ownership. Historical opponents must never be regenerated from their seeds.
+
+The cloud replica scope does change. PM-owned persistence and service code must
+reconstruct the Build 160 source scope with
+`LaunchCatalogTransitionV1ToV2.sourcePersistedFingerprintMaterial`, construct
+the Version 1.1 target scope with the live V2 material, preserve all unrelated
+profile state and queues, and retire the predecessor checkpoint only through
+the existing versioned scope-transition path. This scope change is distinct
+from a local envelope migration.
 
 ## Launch achievements
 
